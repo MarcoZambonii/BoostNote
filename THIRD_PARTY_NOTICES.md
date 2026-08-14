@@ -59,9 +59,9 @@ THE SOFTWARE.
 
 ## Servizi esterni (non in bundle)
 
-- **Desmos API v1.9**: caricata da rete con la chiave dell'utente (la chiave nel
-  codice è la demo pubblica di Desmos — sostituirla prima della distribuzione,
-  vedi https://www.desmos.com/my-api).
+- **Desmos API v1.10**: caricata da rete con la chiave gratuita che Desmos
+  offre per i progetti personali (https://www.desmos.com/my-api); l'abbonamento
+  è richiesto solo per prodotti a pagamento.
 - **Wolfram Alpha API**, **Google Gemini API**, **Anthropic API**: usate con la
   chiave personale che l'utente inserisce nel Profilo; nessuna chiave nel codice.
 - **WeBeep/Moodle**: protocollo Moodle mobile dei server di ateneo.

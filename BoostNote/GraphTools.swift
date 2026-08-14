@@ -225,12 +225,14 @@ struct DesmosGraphView: UIViewRepresentable {
             <!DOCTYPE html><html><head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
             <style>html,body,#calc{margin:0;padding:0;width:100%;height:100%;}</style>
-            <!-- ATTENZIONE PRIMA DELLA PUBBLICAZIONE: questa è la chiave
-                 DEMO di Desmos (quella degli esempi della documentazione),
-                 ammessa solo in sviluppo. Per l'App Store va sostituita
-                 con una chiave propria, gratuita, da desmos.com/my-api —
-                 la demo è condivisa da tutti e Desmos può revocarla in
-                 qualunque momento, spegnendo il pannello per ogni utente. -->
+            <!-- Chiave API Desmos: verificata il 2026-08-14 su
+                 desmos.com/my-api con l'account dell'utente — è la
+                 chiave gratuita UFFICIALE per i progetti personali
+                 ("Passa a un abbonamento se vuoi usare l'API come parte
+                 di un'impresa o di un prodotto per cui richiedi un
+                 pagamento"). BoostNote è gratuita per vincolo fondante,
+                 quindi va bene così; servirebbe l'abbonamento solo se
+                 l'app diventasse a pagamento. -->
             <script src="https://www.desmos.com/api/v1.10/calculator.js?apiKey=6082933e64ed490ea87245e7a3df87fb"></script>
             </head><body>
             <div id="calc"></div>

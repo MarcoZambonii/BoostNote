@@ -61,9 +61,10 @@ costi variabili scalano sull'utente, mai sullo sviluppatore**:
 
 Di conseguenza il progetto non ha segreti nel codice: le chiavi API (Gemini,
 Claude, Wolfram) le inserisce l'utente nel Profilo e vivono solo sul dispositivo.
-La chiave Desmos presente nel codice è la chiave demo pubblica di Desmos, da
-sostituire con una propria (gratuita, [desmos.com/my-api](https://www.desmos.com/my-api))
-prima di una distribuzione.
+La chiave Desmos nel codice è la chiave gratuita ufficiale che Desmos offre per
+i progetti personali ([desmos.com/my-api](https://www.desmos.com/my-api)):
+l'abbonamento è richiesto solo per prodotti a pagamento, e BoostNote è gratuita
+per vincolo fondante.
 
 ## Architettura in breve
 
