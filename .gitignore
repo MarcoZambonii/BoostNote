@@ -4,3 +4,6 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 .DS_Store
+
+# Claude Code
+.claude/

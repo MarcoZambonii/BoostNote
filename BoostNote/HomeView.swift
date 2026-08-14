@@ -48,7 +48,7 @@ struct HomeView: View {
                     quickActionCard(title: "Nuova cartella", subtitle: "Organizza", icon: "folder.badge.plus", color: DesignColor.success) {
                         showingNewFolderSheet = true
                     }
-                    quickActionCard(title: "Importa PDF", subtitle: "Come foglio o widget", icon: "doc.badge.plus", color: DesignColor.toolWolfram) {
+                    quickActionCard(title: "Importa PDF", subtitle: "Come pagine su cui scrivere", icon: "doc.badge.plus", color: DesignColor.toolWolfram) {
                         showingPDFImporter = true
                     }
                 }

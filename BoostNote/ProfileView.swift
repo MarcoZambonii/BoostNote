@@ -265,7 +265,7 @@ struct ProfileView: View {
     private var wolframSection: some View {
         sectionCard(title: "Wolfram Alpha") {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                Text("Usata dalla penna magica (azione \"Wolfram\") per risolvere le espressioni cerchiate, e dal widget Wolfram inserito nelle note.")
+                Text("Usata dalla penna magica (azione \"Wolfram\") per risolvere le espressioni cerchiate, e dallo strumento Wolfram del pannello laterale della nota.")
                     .font(.system(size: 13))
                     .foregroundStyle(DesignColor.textTertiary)
                 HStack {
