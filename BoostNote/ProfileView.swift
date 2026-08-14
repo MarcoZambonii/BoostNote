@@ -6,7 +6,13 @@ import PhotosUI
 struct ProfileView: View {
     @AppStorage("profileName") private var name = ""
     @AppStorage("profileSurname") private var surname = ""
+    // SOLO per migrare: la foto stava qui come base64, ma sopra i 4 MB
+    // CFPreferences protesta ("Attempting to store >= 4194304 bytes...
+    // This is a bug") — una foto della libreria li supera facilmente.
+    // Ora vive su disco (ProfilePhotoStore); questa chiave si svuota
+    // alla prima apertura e resta solo per chi ha il vecchio valore.
     @AppStorage("profilePhotoData") private var photoDataBase64 = ""
+    @State private var profilePhoto: UIImage?
 
     @AppStorage("syncICloud") private var syncICloud = false
     @AppStorage("syncObsidian") private var syncObsidian = false
@@ -47,6 +53,7 @@ struct ProfileView: View {
                 aiSection
                 wolframSection
                 anthropicSection
+                scritturaSection
                 aboutSection
             }
             .padding(DesignSpace.s6)
@@ -54,6 +61,7 @@ struct ProfileView: View {
             .frame(maxWidth: .infinity)
         }
         .task {
+            loadProfilePhoto()
             if let token = webeepToken { await loadWebeepSiteInfo(token: token) }
         }
         .background(DesignColor.surfacePage)
@@ -84,8 +92,19 @@ struct ProfileView: View {
     }
 
     private var photoImage: Image? {
-        guard let data = Data(base64Encoded: photoDataBase64), let uiImage = UIImage(data: data) else { return nil }
-        return Image(uiImage: uiImage)
+        profilePhoto.map { Image(uiImage: $0) }
+    }
+
+    private func loadProfilePhoto() {
+        if !photoDataBase64.isEmpty {
+            // Migrazione una tantum dal vecchio base64 in UserDefaults.
+            if let data = Data(base64Encoded: photoDataBase64) {
+                profilePhoto = ProfilePhotoStore.save(data)
+            }
+            photoDataBase64 = ""
+        } else if profilePhoto == nil {
+            profilePhoto = ProfilePhotoStore.load()
+        }
     }
 
     private var profileSection: some View {
@@ -107,7 +126,7 @@ struct ProfileView: View {
                     guard let newItem else { return }
                     Task {
                         if let data = try? await newItem.loadTransferable(type: Data.self) {
-                            photoDataBase64 = data.base64EncodedString()
+                            profilePhoto = ProfilePhotoStore.save(data)
                         }
                     }
                 }
@@ -124,6 +143,36 @@ struct ProfileView: View {
                 }
             }
         }
+    }
+
+    // Taratura della penna: valori di default scelti a mano su iPad
+    // (2026-08-14). I cursori stanno su una pagina propria (il Profilo è
+    // dentro un NavigationStack): qui solo la voce che ci porta.
+    private var scritturaSection: some View {
+        NavigationLink {
+            PenTuningPage()
+        } label: {
+            sectionCard(title: "Scrittura") {
+                HStack(spacing: DesignSpace.s3) {
+                    Image(systemName: "pencil.tip")
+                        .font(.system(size: 18))
+                        .foregroundStyle(DesignColor.brandPrimary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Taratura della penna")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(DesignColor.textPrimary)
+                        Text("Pressione, fluidità del tratto")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesignColor.textTertiary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var syncSection: some View {
@@ -386,5 +435,144 @@ struct ProfileView: View {
                 .padding(DesignSpace.s4)
                 .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
         }
+    }
+}
+
+// Pagina "Scrittura": i cursori su una schermata dedicata, spinta dal
+// NavigationStack che contiene il Profilo.
+private struct PenTuningPage: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DesignSpace.s6) {
+                PenTuningControls()
+                    .padding(DesignSpace.s5)
+                    .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+            }
+            .padding(DesignSpace.s6)
+            .frame(maxWidth: 560, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        .background(DesignColor.surfacePage)
+        .navigationTitle("Scrittura")
+    }
+}
+
+// Cursori della curva pressione→spessore e della fluidità del tratto.
+// La verità vive nelle statiche InkPressure/InkSmoothing (persistite in
+// UserDefaults): qui solo lo specchio locale per i binding SwiftUI.
+private struct PenTuningControls: View {
+    @State private var floor = Double(InkPressure.floor)
+    @State private var gamma = Double(InkPressure.gamma)
+    @State private var smoothing = Double(InkSmoothing.minPointDistance)
+
+    // Anteprima sullo spessore di partenza della penna: qui non c'è una
+    // penna selezionata di cui leggere il valore vero.
+    private let previewWidth: CGFloat = PenTool.pen.defaultWidth
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s3) {
+            HStack {
+                Text("Come risponde la penna alla pressione e quanto viene levigato il tratto.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesignColor.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if floor != InkPressure.defaultFloor || gamma != InkPressure.defaultGamma
+                    || smoothing != InkSmoothing.defaultDistance {
+                    Button("Ripristina") {
+                        floor = InkPressure.defaultFloor
+                        gamma = InkPressure.defaultGamma
+                        smoothing = InkSmoothing.defaultDistance
+                    }
+                    .font(.system(size: 12))
+                }
+            }
+
+            labeledValue("Tratto a tocco leggero", floor.formatted(.percent.precision(.fractionLength(0))))
+            Slider(value: $floor, in: 0.15...1.0, step: 0.05)
+                .tint(DesignColor.brandPrimary)
+            captions("sottile", "pressione ignorata")
+
+            labeledValue("Risposta alla pressione", gamma.formatted(.number.precision(.fractionLength(1))))
+            Slider(value: $gamma, in: 0.5...2.5, step: 0.1)
+                .tint(DesignColor.brandPrimary)
+            captions("reattiva", "graduale")
+
+            labeledValue("Fluidità", smoothing.formatted(.number.precision(.fractionLength(1))))
+            Slider(value: $smoothing, in: 0...5, step: 0.5)
+                .tint(DesignColor.brandPrimary)
+            captions("fedele al polso", "morbida")
+
+            HStack(spacing: DesignSpace.s3) {
+                previewStroke("leggero", width: previewWidth * floor)
+                previewStroke("deciso", width: previewWidth)
+            }
+        }
+        .onChange(of: floor) { _, newValue in InkPressure.floor = CGFloat(newValue) }
+        .onChange(of: gamma) { _, newValue in InkPressure.gamma = CGFloat(newValue) }
+        .onChange(of: smoothing) { _, newValue in InkSmoothing.minPointDistance = CGFloat(newValue) }
+    }
+
+    private func labeledValue(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(DesignColor.textSecondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(DesignColor.textTertiary)
+        }
+    }
+
+    private func captions(_ leading: String, _ trailing: String) -> some View {
+        HStack {
+            Text(leading)
+            Spacer()
+            Text(trailing)
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(DesignColor.textTertiary)
+    }
+
+    private func previewStroke(_ label: String, width: CGFloat) -> some View {
+        VStack(spacing: 2) {
+            Capsule()
+                .fill(DesignColor.textPrimary)
+                .frame(height: max(1, min(width, 26)))
+                .frame(maxWidth: .infinity)
+                .animation(.easeOut(duration: 0.12), value: width)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(DesignColor.textTertiary)
+        }
+    }
+}
+
+// La foto profilo vive su DISCO, non in UserDefaults: una foto della
+// libreria supera facilmente i 4 MB e CFPreferences oltre quella soglia
+// è dichiaratamente un bug ("Attempting to store >= 4194304 bytes").
+// È un avatar: si ridimensiona a 512 pt e si salva come JPEG.
+private enum ProfilePhotoStore {
+    private static var url: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("profile-photo.jpg")
+    }
+
+    @discardableResult
+    static func save(_ data: Data) -> UIImage? {
+        guard let image = UIImage(data: data) else { return nil }
+        let maxSide: CGFloat = 512
+        let scale = min(1, maxSide / max(image.size.width, image.size.height))
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        try? resized.jpegData(compressionQuality: 0.85)?.write(to: url, options: .atomic)
+        return resized
+    }
+
+    static func load() -> UIImage? {
+        (try? Data(contentsOf: url)).flatMap(UIImage.init(data:))
     }
 }

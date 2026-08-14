@@ -161,6 +161,26 @@ enum PageSize: String, CaseIterable, Codable {
     var height: CGFloat { width * 1.41421356 }
 }
 
+// Unità REALI: le pagine sono in scala 96 dpi (A4 = 794 pt = 210 mm),
+// quindi 1 mm = 96/25,4 ≈ 3,78 punti, per qualunque formato. Spessori e
+// spaziature restano salvati in punti; i millimetri sono solo il modo
+// umano di mostrarli — come sui quaderni e sulle penne vere.
+enum RealUnits {
+    static let pointsPerMM: CGFloat = 96.0 / 25.4
+
+    static func mm(fromPoints points: CGFloat) -> Double {
+        Double(points / pointsPerMM)
+    }
+
+    // "0,8 mm", con al massimo un decimale (due sotto il mezzo
+    // millimetro, dove il decimale singolo appiattirebbe le differenze).
+    static func mmLabel(fromPoints points: CGFloat) -> String {
+        let value = mm(fromPoints: points)
+        let decimals = value < 0.95 ? 2 : 1
+        return value.formatted(.number.precision(.fractionLength(0...decimals))) + " mm"
+    }
+}
+
 // MARK: - Media
 
 enum NoteMediaKind: String, Codable {

@@ -1,15 +1,16 @@
 # Piano di lavoro — Ambiente "Studio"
 
-Stato: la v1 della schermata è implementata e funzionante con generazione **mock**;
-il layer AI provider-agnostico (`AIService.swift`) è attivo e la generazione reale
-parte da sola quando un provider è configurato nel Profilo.
-Questo documento tiene il piano complessivo, l'architettura per la generazione AI
-reale e per i temi d'esame da WeBeep, e le raccomandazioni sui punti aperti.
+Stato (aggiornato 2026-08-14): la generazione AI reale è **attiva e completa**
+per riassunti, flashcard, punti di ripasso ed esercizi, con la checklist
+anti-allucinazione implementata (grounding, JSON validato, citazioni verificate,
+correttore opzionale sugli esercizi). Il mock resta solo come rete di sicurezza
+quando nessun provider è configurato. Questo documento tiene lo stato reale,
+l'architettura e ciò che manca, in ordine di priorità.
 
 ## 0. Vincolo architetturale: gratuità a larga scala
 
-L'app deve restare gratuita anche con molti utenti: **i costi variabili scalano con
-l'utente, non con lo sviluppatore**. In pratica:
+L'app deve restare gratuita anche con molti utenti: **i costi variabili scalano
+con l'utente, non con lo sviluppatore**. In pratica:
 
 1. **Inferenza AI lato client** (`AIService.swift`): Gemini free tier come default
    consigliato (chiave gratuita che l'utente crea su aistudio.google.com), BYOK
@@ -20,124 +21,129 @@ l'utente, non con lo sviluppatore**. In pratica:
 3. **Local-first**: dati sul dispositivo (SwiftData); sync opzionale via Drive
    dell'utente; backend minimo (free tier Supabase/Cloudflare) solo per auth e
    feature community, quando/se serviranno.
-4. **Premium aggiungibile senza ristrutturare** (es. doppio passaggio "correttore"
-   sempre attivo, generazioni batch), ma il core di studio resta gratuito.
+4. **Premium aggiungibile senza ristrutturare** (es. correttore sempre attivo,
+   generazioni batch), ma il core di studio resta gratuito.
 
-## 1. Cosa esiste già (v1, agosto 2026)
+## 1. Cosa esiste (agosto 2026)
 
 | File | Ruolo |
 | --- | --- |
-| `BoostNote/StudioModels.swift` | SwiftData: `Study`, `StudyModule`, `ExerciseAttempt` + payload Codable dei moduli |
-| `BoostNote/StudioGenerationService.swift` | Generazione mock; unico seam (`generateContent`) dove innestare l'AI reale |
-| `BoostNote/StudioEnvironmentView.swift` | Sidebar "Studi" per materia (o strip compatta sotto 620pt) + switching pannelli |
-| `BoostNote/StudioCreateFlow.swift` | Flusso "Crea nuovo studio": nome/materia → materiali (note, WeBeep, PDF) → moduli+opzioni |
-| `BoostNote/StudyDetailView.swift` | Dettaglio studio + viewer: Riassunto, player Esercizi (soluzione guidata, autovalutazione), Punti di ripasso, Flashcard |
+| `BoostNote/StudioModels.swift` | SwiftData: `Study`, `StudyModule`, `StudyMaterial` (testo estratto persistito), `ExerciseAttempt` + payload Codable dei moduli |
+| `BoostNote/StudioGenerationService.swift` | Pipeline di generazione reale: prompt, validazione, verifica citazioni, correttore esercizi |
+| `BoostNote/AIService.swift` | Layer provider-agnostico: Gemini (catena di modelli), Claude BYOK, Apple on-device |
+| `BoostNote/StudioEnvironmentView.swift` | Ambiente Studio; gli studi vivono nell'albero della barra laterale principale |
+| `BoostNote/StudioCreateFlow.swift` | Crea studio: nome/materia → materiali (note, WeBeep, PDF, con download ed estrazione testo alla selezione) → moduli+opzioni |
+| `BoostNote/StudyDetailView.swift` | Viewer moduli: Markdown+LaTeX (KaTeX), badge "Fonte verificata", player esercizi con autovalutazione |
+| `BoostNote/ExerciseReportSheet.swift` | "Segnala errore" su un esercizio |
 | `BoostNote/StudioProgressView.swift` | Analisi dei progressi (Swift Charts) da `ExerciseAttempt` |
 
-Principi architetturali:
-- **Moduli estensibili**: un tipo nuovo = un caso in `StudyModuleKind` + un payload
-  Codable + un viewer. Il contenuto vive in `contentJSON` (pattern `NoteWidget.dataJSON`),
-  quindi niente migrazioni di schema.
-- **Materiali come metadati** (`StudySourceMaterial`): le note per UUID, WeBeep/PDF per
-  titolo. Il testo si risolve al momento della generazione (`resolveSources`).
-- **Progressi denormalizzati**: ogni autovalutazione scrive un `ExerciseAttempt`
-  (argomento, difficoltà, categoria, durata, esito) — i grafici non rileggono i moduli.
+### La pipeline di generazione, com'è davvero
 
-## 2. Prossimi passi in ordine di dipendenza
+- **Materiali con testo estratto on-device alla selezione** (`StudyMaterial.extractedText`):
+  caselle di testo delle note, scrittura a mano via OCR, PDF via PDFKit. La
+  generazione non rilegge le note al volo. Budget prompt: **100.000 caratteri**
+  distribuiti tra i materiali, con troncamento dichiarato nel prompt e avviso
+  visibile sulla card dello studio.
+- **Catena di modelli Gemini** (quota per-modello, quindi le quote si sommano:
+  ~1.060 richieste/giorno sul free tier): alias `-latest` in testa perché mai
+  ritirati, versioni fisse dopo (un 404 fa proseguire la catena). Modelli
+  separati per scopo; 429 disambiguato tra limite al minuto (attesa e retry
+  stesso modello) e quota giornaliera (si scende nella catena). Gemma esclusa:
+  non rispetta il JSON.
+- **Un modulo per chiamata, moduli in parallelo** (TaskGroup), temperatura bassa.
+- **JSON validato dal decoder**: risposta malformata → un secondo tentativo
+  (i modelli sotto carico degradano più spesso di quanto falliscano); array
+  nudi o con chiave sbagliata recuperati (`rewrapArray`); escape LaTeX
+  protetti dalla decodifica JSON (`protectLaTeXEscapes` — la classe di bug
+  della corruzione silenziosa: `\frac` letto come form feed + "rac").
+- **Citazioni verificate davvero**: la citazione si cerca letteralmente nel
+  materiale; seconda chance con normalizzazione (via marcatori Markdown/LaTeX
+  e spazi) per il caso "il modello ha riscritto la notazione"; le parafrasi e
+  le citazioni inventate NON passano. Il badge "Fonte verificata" compare solo
+  su riscontro reale; `reverifyCitations` riallinea i contenuti già generati.
+- **Regola del verbatim**: la formattazione (Markdown/LaTeX) si applica solo al
+  testo del modello; il campo `quote` resta testuale identico alla fonte — è
+  ciò che rende possibile la verifica letterale.
+- **Correttore sugli esercizi** (opt-in, `options.verifyExercises`): seconda
+  chiamata "da correttore severo" che risolve da zero e giudica la risposta
+  proposta; consuma quota, quindi lo attiva l'utente.
+- **Resa matematica**: KaTeX + marked in bundle; la matematica (inclusi gli
+  ambienti nudi tipo `pmatrix`) viene schermata prima del parser Markdown,
+  altrimenti `\\` e `_` vengono mangiati e una matrice 3×3 diventa un vettore
+  riga senza alcun errore.
+- **Ultima rete: l'utente.** Autovalutazione nel player e "Segnala errore" sui
+  contenuti generati.
 
-1. **Estrazione testo dai PDF** (PDFKit, `PDFDocument.string`): prerequisito per
-   generare da slide/dispense/temi d'esame veri. Copiare il PDF nello studio
-   (`.externalStorage`) al momento della selezione, non tenerne solo il titolo.
-2. **Download WeBeep nel flusso di creazione**: oggi si prendono solo i metadati;
-   riusare `WebeepService.downloadFile` alla conferma, con gli stessi errori parlanti.
-3. **Generazione AI reale** dietro il seam (vedi §3): FATTO in prima versione —
-   `AIService` (Gemini free tier / Claude BYOK / Apple locale, selezione nel Profilo)
-   con grounding e JSON validato, fallback automatico al mock. Mancano: doppio
-   passaggio "correttore", citazioni con `sourceRange`, pulsante "Segnala errore".
-4. **Spaced repetition sulle flashcard** (SM-2 semplificato): aggiungere al payload
-   `Flashcard` i campi `easiness/interval/dueDate` e un filtro "da ripassare oggi".
-   È la voce storica del backlog: ora ha una base su cui poggiare.
-5. **Collegamento nota → studio** (idea già in backlog): pulsante nella nota che apre
-   lo studio che la usa come materiale (ricerca per `noteID` nei `sources`).
-6. **Rigenerazione mirata / aggiunta moduli a studio esistente** (il menu contestuale
-   "Rigenera" c'è già; manca "aggiungi modulo" dopo la creazione).
+## 2. Cosa manca, in ordine di priorità
 
-## 3. Generazione AI precisa e non allucinata
+1. **Chunking dei materiali lunghi**: con un corso intero si tronca comunque a
+   100k. Generare per blocchi e unire moltiplica le chiamate → va incrociata
+   con le quote free tier; insieme, valutare un contatore di consumo nel Profilo.
+2. **Citazioni puntuali (`sourceRange`)**: oggi la citazione porta il titolo del
+   materiale e il testo verificato; manca il riferimento a pagina/posizione per
+   aprire il passaggio originale accanto alla generazione.
+3. **Spaced repetition sulle flashcard** (SM-2 semplificato): campi
+   `easiness/interval/dueDate` nel payload + filtro "da ripassare oggi".
+4. **Collegamento nota → studio**: dalla nota, saltare allo studio che la usa
+   come materiale (ricerca per `noteID` nei materiali).
+5. **Aggiunta moduli a uno studio esistente** ("Rigenera" c'è già).
+6. **Estrazione con modello vision per le pagine con formule**: Vision on-device
+   va bene sulla prosa ma sulla matematica è scarso (un integrale definito
+   diventa "xdx"). Il modello vision è già integrato per la penna magica:
+   passarci anche le pagine dense di formule. Costo: una pagina = una chiamata.
+7. **Wolfram come oracolo** sulla risposta finale degli esercizi numerici/simbolici
+   (già integrato per la penna magica): verifica fuori dal modello dove possibile.
+
+## 3. Principi anti-allucinazione (implementati, da mantenere)
 
 Il rischio vero per un'app di studio è generare cose *plausibili ma sbagliate*.
-Linee guida per l'implementazione dietro `StudioGenerationService.generateContent`:
+Le difese elencate in §1 discendono da questi principi, validi anche per i
+moduli futuri:
 
-1. **Grounding stretto**: il prompt include SOLO il testo estratto dai materiali,
-   con istruzione esplicita "usa esclusivamente questo testo; se l'informazione non
-   c'è, dillo". Mai chiedere al modello di 'completare' la teoria da conoscenza propria
-   per i riassunti/punti di ripasso.
-2. **Citazioni obbligatorie**: ogni sezione di riassunto / punto di ripasso / risposta
-   porta un riferimento al materiale e (quando possibile) alla pagina — il payload ha
-   già `sourceTitle`; aggiungere `sourceRange`. In UI, un tap mostra il passaggio
-   originale accanto alla generazione: l'utente verifica in un colpo d'occhio.
-3. **Output strutturato**: chiedere JSON conforme ai payload Codable (schema nel
-   prompt) e validare col decoder: ciò che non decodifica si scarta e si rigenera,
-   non si mostra.
-4. **Doppio passaggio per gli esercizi**: (a) genera esercizio+soluzione; (b) seconda
-   chiamata "da correttore" che risolve l'esercizio da zero e confronta i risultati.
-   Se divergono, l'esercizio si butta. Costa il doppio ma solo sugli esercizi.
-5. **Matematica: verificare fuori dal modello** quando si può: espressioni numeriche
-   e simboliche passano da Wolfram (già integrato per la penna magica) come oracolo
-   di verifica della risposta finale.
-6. **Temperature basse e compiti piccoli**: un modulo per chiamata, un materiale per
-   sezione; i compiti estrattivi (riassunto, flashcard) allucinano molto meno dei
-   compiti generativi aperti.
-7. **Provider secondo il vincolo di gratuità (§0)**: default consigliato Gemini
-   free tier (alias `gemini-flash-latest`, chiave gratuita dell'utente,
-   temperatura 0.2). **Usare sempre l'alias, mai una versione fissa**: Google
-   ritira le versioni puntuali per i nuovi utenti (gemini-2.5-flash risponde
-   404 "no longer available to new users") e l'app si romperebbe in silenzio
-   per chi crea una chiave oggi. Niente `thinkingConfig`: i flash correnti lo
-   rifiutano con 400. Claude solo BYOK;
-   Claude solo BYOK per chi ce l'ha; Apple locale come fallback zero-config
-   etichettato "on-device" (ok per flashcard/riassunti estrattivi, debole sugli
-   esercizi). Il doppio passaggio del punto 4 consuma quota free tier: renderlo
-   attivabile dall'utente (ed è il candidato naturale per un futuro premium).
-8. **L'autovalutazione è l'ultima rete**: il player chiede comunque all'utente se la
-   soluzione torna; un pulsante "Segnala errore" sui contenuti generati chiude il cerchio
-   (e in futuro alimenta la rigenerazione).
+1. **Grounding stretto**: nel prompt SOLO il testo dei materiali, con istruzione
+   esplicita di non completare dalla conoscenza propria del modello.
+2. **Ciò che non si può verificare non si mostra come verificato**: il badge
+   segue il riscontro letterale, mai la fiducia nel modello.
+3. **Output strutturato e validato**: ciò che non decodifica non si mostra.
+4. **Compiti piccoli**: un modulo per chiamata; i compiti estrattivi allucinano
+   meno dei generativi aperti.
+5. **La verifica costosa è opt-in** (correttore): il free tier dell'utente è un
+   budget, la sicurezza extra si sceglie.
 
 ## 4. WeBeep e temi d'esame
 
-- **Autenticazione: già risolta correttamente.** Il flusso Moodle mobile
-  (`WebeepAuthView` + `WebeepService`) fa fare il login sulla vera pagina Polimi
-  (SSO + MFA inclusi) in un browser incorporato e riceve solo il token: l'app non
-  vede mai la password. Non serve altro; NON fare scraping HTML della pagina di login.
-- **Recupero materiali: REST Moodle, non scraping.** `core_course_get_contents` copre
-  slide/dispense/temi d'esame pubblicati nel corso. Il "webscraping" vero serve solo
-  se i temi d'esame stanno fuori da WeBeep; in quel caso meglio il caricamento manuale
-  del PDF (già supportato) che un parser HTML fragile.
-- **Classificazione temi d'esame**: euristica sul nome (`tema|esame|appello|prova|tde`)
-  già attiva nel picker, correggibile a mano col toggle. Basta così per ora.
+- **Autenticazione: risolta correttamente.** Flusso Moodle mobile
+  (`WebeepAuthView` + `WebeepService`): login sulla vera pagina Polimi (SSO +
+  MFA) in un browser incorporato, all'app arriva solo il token (Keychain).
+  NON fare scraping HTML della pagina di login.
+- **Recupero materiali: REST Moodle** (`core_course_get_contents`), struttura
+  reale a sezioni/moduli. Il picker WeBeep è riusato anche per importare PDF
+  come pagine nelle note (pannello Documenti e barra strumenti).
+- **Classificazione temi d'esame**: euristica sul nome
+  (`tema|esame|appello|prova|tde`) nel picker, correggibile col toggle.
 - **Rischi/limiti**: token che scade (gestito: errori espliciti e re-login);
   nomi multilang (gestito con `stripMultilang`); PDF scansionati senza testo →
-  servirebbe OCR (Vision) come fallback nell'estrazione; rate: scaricare on-demand,
-  non sincronizzare interi corsi. Sul piano regole: i materiali restano sul
+  OCR Vision come fallback nell'estrazione; scaricare on-demand, non
+  sincronizzare interi corsi. Sul piano regole: i materiali restano sul
   dispositivo dell'utente per uso personale di studio — stessa classe d'uso
   dell'app Moodle ufficiale; non ridistribuire contenuti.
 
 ## 5. Raccomandazioni sui punti aperti
 
-- **MATLAB: no all'esecuzione embedded.** Non esiste un runtime MATLAB su iPad
-  integrabile gratis; le alternative realistiche sono (a) link "Apri in MATLAB
-  Mobile/Online" precompilando lo snippet negli esercizi pratici, (b) widget di
-  calcolo già esistenti (Wolfram/GeoGebra) per la parte numerica. Rimandare
-  qualunque cosa oltre questo: costo alto, valore incerto.
-- **Ristrutturazione Ricerca**: rimandarla finché Studio non è consolidato; l'unica
-  modifica a basso costo che vale subito è permettere "manda a Studio" dai risultati
-  di ricerca (un articolo diventa materiale di uno studio).
-- **Import note da altri**: la leva più concreta è l'export/import di una nota come
-  pacchetto (`.boostnote` = zip con JSON del modello + PDF/media) condivisibile via
-  AirDrop/file. PDF import esiste già; formati proprietari altrui (Notability,
-  GoodNotes) non hanno formati aperti affidabili → non inseguirli.
-- **Community/PoliNetwork**: non costruire una sezione Community in-app ora (moderazione,
-  backend, massa critica). Scope minimo sensato: condivisione di *mazzi/studi* via
-  file (stesso meccanismo dell'export note). Per la visibilità: contattare PoliNetwork
-  (progetto studentesco, canali Telegram molto seguiti al Polimi) per una segnalazione
-  dell'app; sul lato istituzionale il canale realistico è "Passion in Action" /
-  i rappresentanti degli studenti, non i canali ufficiali dell'ateneo.
+- **MATLAB: no all'esecuzione embedded.** Nessun runtime MATLAB gratis su iPad;
+  le alternative realistiche sono (a) link "Apri in MATLAB Mobile/Online" con
+  snippet precompilato negli esercizi pratici, (b) gli strumenti di calcolo già
+  esistenti (Wolfram/Desmos) per la parte numerica.
+- **Ristrutturazione Ricerca**: rimandata; l'unica modifica a basso costo che
+  vale subito è "manda a Studio" dai risultati (un articolo diventa materiale).
+- **Import note da altri**: la leva concreta è l'export/import come pacchetto
+  (`.boostnote` = zip con JSON del modello + PDF/media) via AirDrop/file.
+  Formati proprietari altrui (Notability, GoodNotes) non hanno formati aperti
+  affidabili → non inseguirli.
+- **Community/PoliNetwork**: niente sezione Community in-app ora (moderazione,
+  backend, massa critica). Scope minimo: condivisione di mazzi/studi via file.
+  Per la visibilità: PoliNetwork e "Passion in Action" / rappresentanti degli
+  studenti, non i canali ufficiali dell'ateneo.
+- **Informativa privacy in-app** prima di distribuire ad altri studenti: sul
+  free tier Gemini i contenuti inviati possono essere usati per l'addestramento;
+  va detto dentro l'app, non solo a voce.

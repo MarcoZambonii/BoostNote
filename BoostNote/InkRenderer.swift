@@ -16,11 +16,17 @@ import PencilKit
 // non tocca niente di ciò che già funziona.
 enum InkRenderer {
 
-    // Densità di campionamento della spline, in punti di contenuto. Più
-    // si è ingranditi, più fitto: il passo va misurato in pixel finali,
-    // altrimenti a zoom alto si vedono i "grani" degli stampi.
-    private static func samplingStep(for scale: CGFloat) -> CGFloat {
-        max(0.15, 0.6 / max(scale, 1))
+    // Passo di campionamento della spline, in punti di contenuto e
+    // MISURATO LUNGO LA CURVA (`.distance`), non nel parametro. Il passo
+    // parametrico dava al massimo uno stampo per campione di tocco: sui
+    // tratti veloci i campioni distano anche 5-8 pt e i raccordi dritti
+    // fra stampi lontani si vedevano come una spezzata ("a tratti").
+    // A distanza costante la B-spline viene percorsa davvero, comunque
+    // sia stata scritta. Più si è ingranditi, più fitto (pixel finali);
+    // il budget sul tratto chilometrico evita decine di migliaia di
+    // stampi a ogni ridisegno.
+    private static func samplingStep(for scale: CGFloat, length: CGFloat) -> CGFloat {
+        max(max(0.3, 0.75 / max(scale, 1)), length / 6000)
     }
 
     // Dal punto della spline al pennino davvero disegnato.
@@ -87,7 +93,9 @@ enum InkRenderer {
     }
 
     static func draw(_ stroke: PKStroke, in context: CGContext, scale: CGFloat = 1) {
-        let points = sampledPoints(of: stroke)
+        let length = stroke.renderBounds.width + stroke.renderBounds.height
+        let step = samplingStep(for: scale, length: length)
+        let points = sampledPoints(of: stroke, step: step)
         guard !points.isEmpty else { return }
 
         context.saveGState()
@@ -131,7 +139,6 @@ enum InkRenderer {
         context.setFillColor(color.withAlphaComponent(1).cgColor)
 
         let inkType = stroke.ink.inkType
-        let step = samplingStep(for: scale)
         var previous: (point: PKStrokePoint, nib: CGSize)?
         for point in points {
             let nib = nibSize(for: point, ink: inkType)
@@ -199,12 +206,8 @@ enum InkRenderer {
         context.fillPath()
     }
 
-    private static func sampledPoints(of stroke: PKStroke) -> [PKStrokePoint] {
+    private static func sampledPoints(of stroke: PKStroke, step: CGFloat) -> [PKStrokePoint] {
         var points: [PKStrokePoint] = []
-        // Un tratto lunghissimo campionato troppo fitto costerebbe
-        // centinaia di migliaia di stampi: il passo si allarga da solo.
-        let length = stroke.renderBounds.width + stroke.renderBounds.height
-        let step = max(0.2, min(1.0, 800 / max(length, 1)))
         stroke.path.forEach(sampleAt: step) { points.append($0) }
         return points
     }
@@ -216,9 +219,16 @@ enum InkRenderer {
 
 private extension PKStrokePath {
     // `interpolatedPoints(by:)` restituisce una sequenza pigra: questo
-    // wrapper la percorre a passo costante nel parametro della spline.
+    // wrapper la percorre a passo costante LUNGO LA CURVA.
+    //
+    // Il passo parametrico che c'era prima era ingannevole: l'unità del
+    // parametro è l'intervallo fra due punti di controllo, cioè fra due
+    // campioni di tocco. Con passo 1 si otteneva uno stampo per campione
+    // e la spline non veniva percorsa affatto — a mano veloce i campioni
+    // distano parecchi punti e il tratto degenerava nella spezzata dei
+    // raccordi dritti. `.distance` è indipendente da come si è scritto.
     func forEach(sampleAt step: CGFloat, _ body: (PKStrokePoint) -> Void) {
-        for point in interpolatedPoints(by: .parametricStep(step)) {
+        for point in interpolatedPoints(by: .distance(step)) {
             body(point)
         }
     }

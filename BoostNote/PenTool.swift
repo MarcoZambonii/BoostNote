@@ -89,7 +89,63 @@ enum PenTool: String, CaseIterable, Identifiable {
     // 0,25 -> 39/255, 0,4 -> 55/255, 0,5 -> 79/255 (grigio chiaro).
     // 0,4 tiene il giallo pieno e il testo scuro.
     static let markerOpacity: CGFloat = 0.4
+}
 
+// Curva di risposta alla pressione della penna:
+//
+//     larghezza = base · (floor + (1 − floor) · force^gamma)
+//
+// `floor` è lo spessore relativo a tocco leggerissimo (1 = pressione
+// ignorata, tratto costante); `gamma` piega la curva: sopra 1 serve
+// premere di più perché lo spessore cresca, sotto 1 risponde già ai
+// tocchi leggeri. Regolabile dai cursori nel popover della penna per
+// la taratura dal vivo; i valori restano in UserDefaults.
+enum InkPressure {
+    private static let floorKey = "inkPressureFloor"
+    private static let gammaKey = "inkPressureGamma"
+    // Tarati a mano su iPad dall'utente il 2026-08-14.
+    static let defaultFloor: Double = 0.3
+    static let defaultGamma: Double = 1.4
+
+    // Letti fino a 240 volte al secondo durante la scrittura: la verità
+    // sta in queste variabili, UserDefaults solo al primo accesso e
+    // quando i cursori scrivono.
+    static var floor: CGFloat = initial(floorKey, defaultFloor) {
+        didSet { UserDefaults.standard.set(Double(floor), forKey: floorKey) }
+    }
+    static var gamma: CGFloat = initial(gammaKey, defaultGamma) {
+        didSet { UserDefaults.standard.set(Double(gamma), forKey: gammaKey) }
+    }
+
+    private static func initial(_ key: String, _ fallback: Double) -> CGFloat {
+        CGFloat(UserDefaults.standard.object(forKey: key) as? Double ?? fallback)
+    }
+
+    static func width(base: CGFloat, force: CGFloat) -> CGFloat {
+        base * (floor + (1 - floor) * pow(force, gamma))
+    }
+}
+
+// Fluidità del tratto: distanza minima fra due punti di controllo della
+// B-spline, in punti di contenuto. A 240 Hz i campioni ricalcano ogni
+// tremolio del polso e la spline, passando vicino a tutti, lo insegue;
+// diradandoli la curva smette di inseguire il jitter e lo MEDIA — è la
+// levigatura alla Notability, senza filtri che ritardano la punta.
+// 0 = nessun diradamento (fedele al polso), 5 = molto morbido ma le
+// asole strette delle lettere iniziano ad arrotondarsi.
+enum InkSmoothing {
+    private static let key = "inkMinPointDistance"
+    // Tarata a mano su iPad dall'utente il 2026-08-14.
+    static let defaultDistance: Double = 1.5
+
+    static var minPointDistance: CGFloat = CGFloat(
+        UserDefaults.standard.object(forKey: key) as? Double ?? defaultDistance
+    ) {
+        didSet { UserDefaults.standard.set(Double(minPointDistance), forKey: key) }
+    }
+}
+
+extension PenTool {
     func pkTool(color: Color, width: CGFloat, eraserType: PKEraserTool.EraserType, eraserWidth: CGFloat) -> PKTool {
         switch self {
         case .eraser:

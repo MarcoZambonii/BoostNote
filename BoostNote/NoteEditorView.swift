@@ -70,6 +70,9 @@ struct NoteEditorView: View {
     @AppStorage("tool.inkSettings") private var storedInkSettings = ""
     @AppStorage("tool.eraserType") private var storedEraserType = "bitmap"
     @AppStorage("tool.eraserWidth") private var storedEraserWidth = 30.0
+    // Anche lo STRUMENTO selezionato sopravvive: riaprendo l'app si
+    // riparte da dove si era rimasti, non sempre dalla penna.
+    @AppStorage("tool.selected") private var storedSelectedTool = PenTool.pen.rawValue
     @State private var toolBeforeEraser: PenTool?
     @State private var toolBeforeLasso: PenTool?
     @State private var magicAction: MagicAction?
@@ -901,6 +904,7 @@ struct NoteEditorView: View {
         }
         storedEraserType = eraserType == .vector ? "vector" : "bitmap"
         storedEraserWidth = eraserWidth
+        storedSelectedTool = selectedTool.rawValue
     }
 
     // Rilegge colori/spessori salvati all'apertura della nota. Uno
@@ -926,6 +930,9 @@ struct NoteEditorView: View {
         }
         eraserType = storedEraserType == "vector" ? .vector : .bitmap
         eraserWidth = storedEraserWidth
+        if let tool = PenTool(rawValue: storedSelectedTool) {
+            selectedTool = tool
+        }
     }
 
     // MARK: - Strumenti temporanei (gomma, Apple Pencil)

@@ -283,6 +283,13 @@ struct PenToolbarView: View {
         return 1
     }
 
+    private func snappedRange(_ range: ClosedRange<CGFloat>) -> ClosedRange<CGFloat> {
+        let lower = range.lowerBound.rounded(.up)
+        let upper = range.upperBound.rounded(.down)
+        guard lower < upper else { return range }
+        return lower...upper
+    }
+
     private func colorBinding(for tool: PenTool) -> Binding<Color> {
         Binding(
             get: { inkColors[tool] ?? tool.defaultColor },
@@ -427,6 +434,8 @@ struct PenToolbarView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(DesignColor.textSecondary)
                     Spacer()
+                    // In punti: i millimetri qui confondevano (deciso
+                    // dall'utente); restano sul passo dei quadretti.
                     Text(Double(width.wrappedValue).formatted(.number.precision(.fractionLength(0...1))))
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundStyle(DesignColor.textTertiary)
@@ -434,7 +443,12 @@ struct PenToolbarView: View {
                 // Passo proporzionale all'intervallo: con `step: 1` fisso
                 // il tratto fisso (0,5-4) aveva quattro sole posizioni
                 // utili, mentre l'acquerello (10-80) ne aveva settanta.
-                Slider(value: width, in: widthRange, step: sliderStep(for: widthRange))
+                //
+                // Estremi arrotondati al numero tondo: l'intervallo nativo
+                // di PencilKit parte da valori spuri (la penna da 0,9) e a
+                // passi interi il decimale restava inchiodato — "2,9",
+                // "3,9" — sembrando un secondo numero fisso senza senso.
+                Slider(value: width, in: snappedRange(widthRange), step: sliderStep(for: widthRange))
                     .tint(DesignColor.brandPrimary)
                 // Anteprima del tratto: scegliere uno spessore leggendo un
                 // numero significa provare e disfare finché non è giusto.
@@ -475,8 +489,11 @@ struct PenToolbarView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(DesignColor.textTertiary)
 
-            // Una sola gomma, a oggetti: quella parziale è spenta finché
-            // non torna affidabile — meglio nessuna opzione che una rotta.
+            // Una sola gomma, a oggetti. La "Precisa" (parziale) è stata
+            // riprovata il 2026-08-14 con la pagina attiva sul motore
+            // sincrono e non funziona ancora: rispenta su decisione
+            // dell'utente, senza indagare oltre per ora. Il codice di
+            // divisione (InkEraser.split) resta, dormiente.
             Text("Toglie il tratto intero che tocchi.")
                 .font(.system(size: 11))
                 .foregroundStyle(DesignColor.textTertiary)

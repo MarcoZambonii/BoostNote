@@ -142,16 +142,135 @@ final class TiledPDFPageView: UIView {
     }
 }
 
-// Inchiostro di penna disegnato dal NOSTRO renderer (vedi InkRenderer):
-// una vista draw(_:)-based si ridisegna alla contentScaleFactor imposta,
-// quindi sotto zoom resta nitida — è la differenza con la bitmap di
-// PencilKit, che viene solo stirata. Stesso principio già usato per gli
-// sfondi PDF e per il pattern.
+// Inchiostro committato su TESSERE (CATiledLayer), come lo sfondo PDF.
+//
+// La bitmap a pagina intera che c'era prima costringeva a ridisegnare
+// TUTTA la pagina sul main thread a ogni cambio di zoom, con la scala
+// tenuta bassa apposta per non esplodere in memoria: era il motivo per
+// cui il PDF sotto zoom era nitido e fluido e l'inchiostro no. Con le
+// tessere CoreAnimation ridisegna solo le regioni visibili, al livello
+// di dettaglio dello zoom, sui suoi thread in background — i tratti
+// sono vettoriali, quindi ogni tessera esce nitida a qualunque zoom.
 final class PageInkView: UIView {
-    // Array puro, non PKDrawing: il percorso caldo (gomma, anteprime)
-    // non deve toccare la macchineria interna di PencilKit.
+    // NIENTE dissolvenza sulle tessere dell'inchiostro: al distacco
+    // della penna la tessera ridisegnata cross-fadava sotto il tratto
+    // vivo ancora acceso, e il tratto sembrava "ri-renderizzarsi". Il
+    // fade serve al PDF che scorre, non all'inchiostro che deve
+    // apparire già pronto sotto la copertura del live.
+    private final class QuickFadeInkLayer: CATiledLayer {
+        override class func fadeDuration() -> CFTimeInterval { 0 }
+    }
+    override class var layerClass: AnyClass { QuickFadeInkLayer.self }
+
+    // I thread delle tessere leggono i tratti mentre il main li
+    // sostituisce (la gomma fino a 240 volte al secondo): l'accesso
+    // passa da un lock e il disegno lavora sulla copia presa lì dentro
+    // (economica: array copy-on-write di struct).
+    private let strokesLock = NSLock()
+    private var lockedStrokes: [PKStroke] = []
+    // Generazione dei tratti: serve al passaggio di consegne qui sotto
+    // per ignorare tessere partite PRIMA dell'ultimo commit.
+    private var strokesGeneration = 0
+    var strokes: [PKStroke] {
+        get {
+            strokesLock.lock(); defer { strokesLock.unlock() }
+            return lockedStrokes
+        }
+        set {
+            strokesLock.lock()
+            lockedStrokes = newValue
+            strokesGeneration += 1
+            strokesLock.unlock()
+        }
+    }
+
+    // PASSAGGIO DI CONSEGNE live→tessere. Le tessere disegnano in
+    // asincrono e non offrono un "ho finito": ma il disegno passa da
+    // draw(_:) NOSTRO, quindi possiamo accorgerci di quando le tessere
+    // hanno coperto la regione del tratto appena committato — è il
+    // momento esatto in cui il tratto vivo può spegnersi senza buco
+    // (spegnerlo prima = lampo) né doppio disegno (spegnerlo dopo =
+    // l'evidenziatore si scurisce per la sovrapposizione dei multiply).
+    private var handoffRegion: CGRect?
+    private var handoffDrawn: CGRect = .null
+    private var handoffGeneration = 0
+    private var handoffCompletion: (() -> Void)?
+
+    func notifyWhenCovered(_ region: CGRect, completion: @escaping () -> Void) {
+        strokesLock.lock()
+        // Fuori dai bounds le tessere non disegnano mai, e il pelo di
+        // margine tolto ai bordi evita che un confine di tessera a
+        // filo della regione non faccia MAI scattare la copertura
+        // (si finirebbe sempre sul timer di ripiego, che è visibile).
+        handoffRegion = region.insetBy(dx: 1, dy: 1).intersection(bounds)
+        handoffDrawn = .null
+        handoffGeneration = strokesGeneration
+        handoffCompletion = completion
+        strokesLock.unlock()
+    }
+    // Compatibilità con i chiamanti: la densità di campionamento ora la
+    // detta la scala della tessera (LOD), non una scala imposta da fuori.
+    var renderScale: CGFloat = 1
+
+    // Letta nei draw su thread CA: UIScreen si interroga solo qui, sul main.
+    private let screenScale = UIScreen.main.scale
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        isOpaque = false
+        if let tiled = layer as? CATiledLayer {
+            tiled.tileSize = CGSize(width: 512 * screenScale, height: 512 * screenScale)
+            tiled.levelsOfDetail = 3
+            tiled.levelsOfDetailBias = 2
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        strokesLock.lock()
+        let snapshot = lockedStrokes
+        let generation = strokesGeneration
+        strokesLock.unlock()
+        // La scala vera della tessera (LOD × densità schermo) sta nella
+        // CTM: a zoom alto arrivano tessere più dense e il campionamento
+        // della spline si infittisce da solo, senza plumbing esterno.
+        let scale = abs(ctx.ctm.a) / screenScale
+        InkRenderer.draw(snapshot, in: ctx, scale: max(scale, 0.5), clipTo: rect)
+
+        // Copertura del passaggio di consegne: la generazione scarta le
+        // tessere partite con i tratti di PRIMA del commit (avrebbero
+        // segnalato copertura senza contenere il tratto nuovo).
+        strokesLock.lock()
+        var completion: (() -> Void)?
+        if let region = handoffRegion, generation == handoffGeneration {
+            handoffDrawn = handoffDrawn.union(rect)
+            if handoffDrawn.contains(region) {
+                completion = handoffCompletion
+                handoffRegion = nil
+                handoffCompletion = nil
+            }
+        }
+        strokesLock.unlock()
+        if let completion { DispatchQueue.main.async(execute: completion) }
+    }
+}
+
+// L'inchiostro della PAGINA ATTIVA (quella su cui si sta scrivendo),
+// su una vista sincrona a pagina intera — il motore "pesante" di prima.
+//
+// Divisione del lavoro proposta dall'utente e adottata: la pagina dove
+// la penna sta scrivendo usa questa vista sincrona (distacco del tratto
+// perfetto PER COSTRUZIONE: live e commit nello stesso fotogramma, come
+// nel motore a bitmap originale), tutte le altre pagine stanno sulle
+// tessere (leggerezza e nitidezza da PDF sulle dispense lunghe). Il
+// travaso verso le tessere avviene UNA volta, quando si lascia la
+// pagina — un momento in cui nessuno sta guardando il tratto.
+final class PageActiveInkView: UIView {
     var strokes: [PKStroke] = []
-    // Densità di campionamento della spline al livello di zoom corrente.
     var renderScale: CGFloat = 1
 
     override init(frame: CGRect) {
@@ -159,7 +278,6 @@ final class PageInkView: UIView {
         isUserInteractionEnabled = false
         backgroundColor = .clear
         isOpaque = false
-        contentMode = .redraw
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
@@ -167,6 +285,11 @@ final class PageInkView: UIView {
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
         InkRenderer.draw(strokes, in: ctx, scale: renderScale, clipTo: rect)
+    }
+
+    func clearContents() {
+        strokes = []
+        layer.contents = nil
     }
 }
 
@@ -216,8 +339,16 @@ final class NotePageView: UIView {
     let backgroundView = TemplateBackgroundView()
     private let pdfPageView = TiledPDFPageView()
     let penInkView = PageInkView()
+    // L'inchiostro sincrono della pagina attiva (vedi PageActiveInkView).
+    let activeInkView = PageActiveInkView()
     // Il tratto in corso, su una vista sua (vedi PageLiveStrokeView).
     let liveStrokeView = PageLiveStrokeView()
+    // Pagina in modalità scrittura: l'inchiostro sta su activeInkView
+    // (sincrono), le tessere sono spente. Vedi beginWriting/endWriting.
+    private(set) var isActiveForWriting = false
+    // Regione toccata mentre la pagina era attiva: è ciò che le tessere
+    // devono ridisegnare al travaso.
+    private var activeDirtyRegion = CGRect.null
     private(set) var pdfPageData: Data?
     // Ultimi dati-disegno applicati/salvati per questa pagina: permette a
     // sync() di saltare il confronto via dataRepresentation() (serializza
@@ -259,6 +390,10 @@ final class NotePageView: UIView {
         penInkView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(penInkView)
 
+        activeInkView.frame = bounds
+        activeInkView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(activeInkView)
+
         liveStrokeView.frame = bounds
         liveStrokeView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(liveStrokeView)
@@ -268,8 +403,23 @@ final class NotePageView: UIView {
 
     // MARK: - Inchiostro
 
+    // Aggiornamento dei tratti (gomma, lasso, undo, caricamento). Sulla
+    // pagina ATTIVA tutto passa dalla vista sincrona — è il vecchio
+    // motore, feedback nello stesso fotogramma; sulle altre pagine si
+    // aggiornano le tessere.
     func setStrokes(_ newStrokes: [PKStroke], invalidating rect: CGRect? = nil) {
         strokes = newStrokes
+        if isActiveForWriting {
+            if let rect, !rect.isNull { activeDirtyRegion = activeDirtyRegion.union(rect) } else { activeDirtyRegion = bounds }
+            activeInkView.strokes = newStrokes
+            activeInkView.isHidden = !isResident
+            if let rect, !rect.isNull {
+                activeInkView.setNeedsDisplay(rect.insetBy(dx: -8, dy: -8))
+            } else {
+                activeInkView.setNeedsDisplay()
+            }
+            return
+        }
         penInkView.strokes = newStrokes
         // Una pagina senza inchiostro non paga nessuna bitmap: la vista
         // resta nascosta e il suo backing store non nasce proprio — sui
@@ -280,6 +430,66 @@ final class NotePageView: UIView {
         } else {
             penInkView.setNeedsDisplay()
         }
+    }
+
+    // Percorso APPEND del commit di penna: sempre su pagina attiva
+    // (l'overlay la attiva al primo tocco), sincrono nello stesso
+    // fotogramma in cui il live si spegne.
+    func appendCommittedStroke(_ stroke: PKStroke, invalidating rect: CGRect) {
+        if !isActiveForWriting { beginWriting() }
+        strokes.append(stroke)
+        activeDirtyRegion = activeDirtyRegion.union(rect)
+        activeInkView.strokes = strokes
+        activeInkView.isHidden = !isResident
+        activeInkView.setNeedsDisplay(rect)
+    }
+
+    // Entra in modalità scrittura: la vista sincrona prende TUTTI i
+    // tratti della pagina e le tessere si spengono, nella stessa
+    // transazione — le due viste mostrano gli stessi pixel, lo scambio
+    // non si vede. Da qui in poi il distacco è quello del motore vecchio.
+    func beginWriting() {
+        guard !isActiveForWriting else { return }
+        isActiveForWriting = true
+        activeDirtyRegion = .null
+        activeInkView.renderScale = zoomForInk
+        if lastAppliedRenderTarget > 0 { activeInkView.contentScaleFactor = lastAppliedRenderTarget }
+        activeInkView.strokes = strokes
+        activeInkView.isHidden = !isResident
+        activeInkView.setNeedsDisplay()
+        penInkView.isHidden = true
+    }
+
+    // Lascia la modalità scrittura: i tratti tornano alle tessere. La
+    // vista sincrona resta accesa finché le tessere non hanno disegnato
+    // E composto la regione cambiata — mai un buco; la sovrapposizione
+    // dura un fotogramma su una pagina che si sta LASCIANDO.
+    func endWriting() {
+        guard isActiveForWriting else { return }
+        isActiveForWriting = false
+        let dirty = activeDirtyRegion
+        activeDirtyRegion = .null
+        penInkView.strokes = strokes
+        penInkView.isHidden = strokes.isEmpty || !isResident
+        guard !dirty.isNull else {
+            // Niente è cambiato: le tessere sono già giuste.
+            activeInkView.clearContents()
+            activeInkView.isHidden = true
+            return
+        }
+        let region = dirty.insetBy(dx: -8, dy: -8)
+        penInkView.setNeedsDisplay(region)
+        let finish: () -> Void = { [weak self] in
+            guard let self, !self.isActiveForWriting else { return }
+            self.activeInkView.clearContents()
+            self.activeInkView.isHidden = true
+        }
+        penInkView.notifyWhenCovered(region) {
+            CATransaction.setCompletionBlock(finish)
+        }
+        // Rete di sicurezza se una tessera non arriva (pagina ormai
+        // fuori schermo); doppia esecuzione innocua.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: finish)
     }
 
     func setResident(_ resident: Bool) {
@@ -300,10 +510,20 @@ final class NotePageView: UIView {
             penInkView.isHidden = true
             // layer.contents = nil è ciò che RESTITUISCE la memoria:
             // nascondere non basta, il backing store resterebbe allocato.
+            // (L'inchiostro ora è su CATiledLayer come il PDF: le sue
+            // tessere fuori schermo le libera CoreAnimation da sola,
+            // toccare `contents` di una tiled layer non si fa.)
             pdfPageView.suspendRendering()
             backgroundView.layer.contents = nil
-            penInkView.layer.contents = nil
             liveStrokeView.clearContents()
+            // La pagina attiva si scarica nelle tessere in silenzio:
+            // fuori dalla finestra di residenza nessuno vede il travaso,
+            // e la bitmap sincrona torna libera.
+            isActiveForWriting = false
+            activeDirtyRegion = .null
+            penInkView.strokes = strokes
+            activeInkView.clearContents()
+            activeInkView.isHidden = true
         }
     }
 
@@ -357,13 +577,15 @@ final class NotePageView: UIView {
         pdfPageView.setRenderScale(target)
         backgroundView.contentScaleFactor = target
         backgroundView.setNeedsDisplay()
-        // L'inchiostro si ridisegna alla risoluzione dello zoom: è QUI
-        // che smette di sgranare quando si ingrandisce.
-        penInkView.contentScaleFactor = target
-        penInkView.renderScale = zoomForInk
-        penInkView.setNeedsDisplay()
+        // L'inchiostro committato non ha più bisogno di questa scala:
+        // sta su tessere con LOD, la nitidezza sotto zoom la gestisce
+        // CoreAnimation come per il PDF. Restano da scalare le viste
+        // sincrone: tratto vivo e tratti recenti.
         liveStrokeView.contentScaleFactor = target
         liveStrokeView.renderScale = zoomForInk
+        activeInkView.contentScaleFactor = target
+        activeInkView.renderScale = zoomForInk
+        if !activeInkView.strokes.isEmpty { activeInkView.setNeedsDisplay() }
     }
 
     // Altezza naturale della pagina: quella del PDF (scalata alla
@@ -474,6 +696,10 @@ final class LiveInkCaptureOverlay: UIView {
         points = []
         previousTailRect = .null
         if case .erase = mode {
+            // Anche la gomma mette la pagina sul motore sincrono: il
+            // feedback per campione (specie con la gomma precisa, che
+            // ridisegna tratti divisi) non deve passare dalle tessere.
+            container.setActiveWritingPage(page)
             eraseStrokesAtPassStart = page.strokes
             eraseWorkingStrokes = page.strokes
             eraseChanged = false
@@ -481,6 +707,9 @@ final class LiveInkCaptureOverlay: UIView {
         } else if case .lasso = mode {
             lassoBegan(touch, on: page)
         } else {
+            // La pagina toccata entra in modalità scrittura (motore
+            // sincrono); quella attiva prima travasa nelle tessere.
+            container.setActiveWritingPage(page)
             page.liveStrokeView.isHidden = false
             let added = append(touch, event: event)
             updateLive(with: event, appended: added)
@@ -511,7 +740,7 @@ final class LiveInkCaptureOverlay: UIView {
             // poteva spostare.
             activePage = nil
         } else {
-            _ = append(touch, event: event)
+            _ = append(touch, event: event, keepLast: true)
             commitStroke()
         }
     }
@@ -578,13 +807,27 @@ final class LiveInkCaptureOverlay: UIView {
 
     // Aggiunge i campioni del tocco e ritorna il rettangolo che coprono,
     // in coordinate di pagina: è la base dell'invalidazione mirata.
-    private func append(_ touch: UITouch, event: UIEvent?) -> CGRect {
+    //
+    // I campioni più vicini di InkSmoothing.minPointDistance all'ultimo
+    // punto accettato si scartano: sono il tremolio, non il gesto.
+    // `keepLast` forza l'ultimo campione (il sollevamento): senza, il
+    // tratto si fermerebbe a mezza distanza dalla punta — e un punto
+    // fermo (che produce campioni tutti coincidenti) non arriverebbe
+    // mai ai 2 punti minimi per fare un tratto.
+    private func append(_ touch: UITouch, event: UIEvent?, keepLast: Bool = false) -> CGRect {
         guard let page = activePage else { return .null }
         var box = CGRect.null
         // I coalesced contengono ANCHE il tocco principale.
         let samples = event?.coalescedTouches(for: touch) ?? [touch]
-        for sample in samples {
+        let minDistance = InkSmoothing.minPointDistance
+        for (index, sample) in samples.enumerated() {
             let point = strokePoint(from: sample, in: page)
+            let isForced = keepLast && index == samples.count - 1
+            if !isForced, minDistance > 0, let last = points.last {
+                let dx = point.location.x - last.location.x
+                let dy = point.location.y - last.location.y
+                if dx * dx + dy * dy < minDistance * minDistance { continue }
+            }
             points.append(point)
             box = box.union(CGRect(origin: point.location, size: .zero))
         }
@@ -639,10 +882,14 @@ final class LiveInkCaptureOverlay: UIView {
             live.isHidden = true
             return
         }
-        // Il commit passa dal contenitore: salvataggio, crescita pagine e
-        // undo in un punto solo. Lo specchio riceve il tratto nella stessa
-        // transazione di rendering in cui il live sparisce — niente lampo.
-        container?.commitStrokes(page.strokes + [stroke], on: page, invalidating: stroke.renderBounds.insetBy(dx: -32, dy: -32))
+        // Il commit passa dal contenitore: salvataggio, crescita pagine
+        // e undo in un punto solo. Col percorso append il tratto entra
+        // nella vista recente SINCRONA nella stessa transazione in cui
+        // il live qui sotto si spegne: il distacco è di nuovo senza
+        // asincronia, come nel motore a bitmap — niente lampi, niente
+        // "ricomposizioni". La migrazione nelle tessere avviene dopo, a
+        // si lascia la pagina (NotePageView.endWriting).
+        container?.commitStrokes(page.strokes + [stroke], on: page, invalidating: stroke.renderBounds.insetBy(dx: -32, dy: -32), appended: stroke)
         let cleared = live.stroke?.renderBounds ?? stroke.renderBounds
         live.stroke = nil
         live.setNeedsDisplay(cleared.insetBy(dx: -32, dy: -32))
@@ -663,7 +910,9 @@ final class LiveInkCaptureOverlay: UIView {
         let location = touch.location(in: page)
         let maxForce = touch.maximumPossibleForce > 0 ? touch.maximumPossibleForce : 1
         let force = touch.type == .pencil ? min(touch.force / maxForce, 1) : 0.5
-        let width = pressureSensitive ? baseWidth * (0.45 + 0.55 * force) : baseWidth
+        // La curva pressione→spessore è centralizzata in InkPressure ed
+        // è regolabile dai cursori di taratura nel popover della penna.
+        let width = pressureSensitive ? InkPressure.width(base: baseWidth, force: force) : baseWidth
         // La grandezza scritta nel punto segue la legge misurata della
         // penna (larghezza = 2·size − 4).
         let size = max(1, (width + 4) / 2)
@@ -889,6 +1138,16 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
     // quando questa cambia, non a ogni aggiornamento della vista.
     private var contentLayoutSize: CGSize = .zero
     weak var lastActivePageView: NotePageView?
+    // La pagina in modalità scrittura (motore sincrono); cambiando
+    // pagina la precedente travasa i tratti nelle tessere.
+    private weak var activeWritingPage: NotePageView?
+
+    func setActiveWritingPage(_ page: NotePageView) {
+        guard activeWritingPage !== page else { return }
+        activeWritingPage?.endWriting()
+        activeWritingPage = page
+        page.beginWriting()
+    }
     // Segnalibro automatico: pagina da cui ripartire alla prima
     // apertura, applicata appena il layout ha dimensioni reali.
     var pendingInitialPage: Int?
@@ -916,6 +1175,11 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         bouncesZoom = true
         backgroundColor = .clear
         delegate = self
+        // Toccare il bordo alto dello schermo NON deve riportare a
+        // inizio nota: su un canvas di scrittura il gesto di sistema
+        // scatta per sbaglio (si tocca vicino alla barra strumenti) e
+        // butta via la posizione di lettura.
+        scrollsToTop = false
         addSubview(contentHost)
 
         // La cattura del tratto sta sotto l'overlay di testo/media: un
@@ -1125,9 +1389,9 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
     var onPageDataChanged: ((Int, Data) -> Void)?
     var onNeedsMorePages: (() -> Void)?
 
-    func commitStrokes(_ strokes: [PKStroke], previous explicitPrevious: [PKStroke]? = nil, on page: NotePageView, invalidating rect: CGRect? = nil) {
+    func commitStrokes(_ strokes: [PKStroke], previous explicitPrevious: [PKStroke]? = nil, on page: NotePageView, invalidating rect: CGRect? = nil, appended: PKStroke? = nil) {
         let previous = explicitPrevious ?? page.strokes
-        applyStrokes(strokes, on: page, invalidating: rect)
+        applyStrokes(strokes, on: page, invalidating: rect, appended: appended)
         inkUndoManager.registerUndo(withTarget: self) { container in
             container.undoableApply(previous, on: page)
         }
@@ -1141,8 +1405,15 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         }
     }
 
-    private func applyStrokes(_ strokes: [PKStroke], on page: NotePageView, invalidating rect: CGRect? = nil) {
-        page.setStrokes(strokes, invalidating: rect)
+    private func applyStrokes(_ strokes: [PKStroke], on page: NotePageView, invalidating rect: CGRect? = nil, appended: PKStroke? = nil) {
+        // Il commit di penna passa dal percorso append (vista recente
+        // sincrona: distacco senza asincronia); tutto il resto — gomma,
+        // lasso, undo — riscrive le tessere per intero.
+        if let appended, let rect {
+            page.appendCommittedStroke(appended, invalidating: rect)
+        } else {
+            page.setStrokes(strokes, invalidating: rect)
+        }
         lastActivePageView = page
         // L'UNICO PKDrawing del giro: serializzazione per lo storage.
         let data = PKDrawing(strokes: strokes).dataRepresentation()
@@ -1446,9 +1717,10 @@ struct PagedNoteCanvasView: UIViewRepresentable {
             if overlayActive {
                 switch parent.tool {
                 case .eraser:
-                    // SOLO gomma a oggetti: quella parziale crashava e per
-                    // ora è fuori dal gioco (il codice di divisione resta,
-                    // spento, per quando la riprenderemo).
+                    // SOLO gomma a oggetti. La parziale è stata riprovata
+                    // (2026-08-14, pagina attiva sincrona) e non funziona
+                    // ancora: rispenta per decisione dell'utente, il
+                    // codice di divisione resta per quando si riprenderà.
                     container.liveInkOverlay.mode = .erase(
                         radius: parent.eraserWidth / 2,
                         partial: false

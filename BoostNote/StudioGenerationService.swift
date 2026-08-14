@@ -174,9 +174,10 @@ enum StudioGenerationService {
     // grounding stretto (solo testo dei materiali nel prompt, con
     // istruzione esplicita di non inventare), JSON validato dal decoder
     // (ciò che non decodifica si scarta e si ripiega sul mock), compiti
-    // piccoli (un modulo per chiamata) e temperatura bassa (in AIService).
-    // Doppio passaggio "correttore" e sourceRange/citazioni puntuali:
-    // ancora da aggiungere quando arriva l'estrazione testo dai PDF.
+    // piccoli (un modulo per chiamata) e temperatura bassa (in AIService),
+    // citazioni verificate letteralmente contro i materiali, doppio
+    // passaggio "correttore" sugli esercizi (opt-in, `verifyExercises`).
+    // Manca solo `sourceRange` per le citazioni puntuali alla pagina.
 
     // Esito della generazione reale: contenuto pronto o motivo del fallimento
     // (una String, non un Error: finisce dritta in UI).

@@ -49,6 +49,13 @@ struct RootView: View {
                 ProfileView()
             }
         }
+        // Nella nota niente ora/batteria: il modificatore DEVE stare qui
+        // alla radice — dentro il detail della NavigationSplitView la
+        // preferenza non risale fino al view controller che comanda la
+        // barra di stato e veniva ignorata in silenzio. (Serve comunque
+        // UIRequiresFullScreen nell'Info.plist: le app con Split View
+        // non possono nascondere la barra per regola di iPadOS.)
+        .statusBarHidden(selectedNote != nil)
         .task { migrateSubjectsToFolders() }
         .onChange(of: selectedNote) { _, newValue in
             // Non tocca selectedFolder: chiudendo la nota si torna alla

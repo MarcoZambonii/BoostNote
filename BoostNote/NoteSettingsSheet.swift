@@ -110,7 +110,9 @@ struct NoteSettingsSheet: View {
 
                     if note.template != .blank {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Dimensione pattern — \(String(format: "%.1f", note.patternScale))×")
+                            // In millimetri veri: il passo base del pattern è
+                            // 24 pt = 6,35 mm, moltiplicato per la scala.
+                            Text("Dimensione pattern — \(RealUnits.mmLabel(fromPoints: 24 * note.patternScale))")
                                 .font(.caption)
                                 .foregroundStyle(DesignColor.textSecondary)
                             Slider(value: $note.patternScale, in: 0.5...2.0, step: 0.1)
