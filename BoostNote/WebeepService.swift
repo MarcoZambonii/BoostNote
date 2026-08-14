@@ -63,13 +63,40 @@ enum WebeepService {
         }
     }
 
-    static func downloadFile(_ file: WebeepFile, token: String) async -> Data? {
-        guard var components = URLComponents(string: file.fileurl) else { return nil }
+    // Prima gli errori venivano inghiottiti da un `try?`, quindi un 401/403
+    // (token scaduto) o una pagina di errore HTML restituita con status 200
+    // sembravano identici a un errore di rete: nessun modo di distinguerli
+    // e mostrare un messaggio utile. Qui invece si propaga il motivo reale.
+    static func downloadFile(_ file: WebeepFile, token: String) async throws -> Data {
+        guard var components = URLComponents(string: file.fileurl) else {
+            throw WebeepDownloadError.invalidURL
+        }
         var items = components.queryItems ?? []
         items.append(URLQueryItem(name: "token", value: token))
         components.queryItems = items
-        guard let url = components.url else { return nil }
-        return try? await URLSession.shared.data(from: url).0
+        guard let url = components.url else { throw WebeepDownloadError.invalidURL }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(from: url)
+        } catch {
+            throw WebeepDownloadError.network(error.localizedDescription)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw WebeepDownloadError.network("Risposta del server non valida")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw WebeepDownloadError.httpStatus(http.statusCode)
+        }
+        // Moodle a volte risponde 200 con una pagina HTML (login/errore)
+        // invece del file vero, quando il token non è valido per quel file.
+        let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? ""
+        if contentType.contains("text/html") {
+            throw WebeepDownloadError.notAFile
+        }
+        return data
     }
 
     // Moodle inserisce spesso i nomi multilingua con il filtro "multilang":
@@ -105,6 +132,28 @@ enum WebeepService {
         guard let url = components?.url else { return nil }
         guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
+    }
+}
+
+enum WebeepDownloadError: Error {
+    case invalidURL
+    case network(String)
+    case httpStatus(Int)
+    case notAFile
+
+    var message: String {
+        switch self {
+        case .invalidURL:
+            "L'indirizzo del file non è valido."
+        case .network(let reason):
+            "Errore di rete: \(reason)"
+        case .httpStatus(let code) where code == 401 || code == 403:
+            "Il server ha rifiutato l'accesso (\(code)): la sessione WeBeep è probabilmente scaduta. Riaccedi da WeBeep e riprova."
+        case .httpStatus(let code):
+            "Il server ha risposto con un errore (\(code))."
+        case .notAFile:
+            "Il server ha restituito una pagina invece del file: la sessione WeBeep è probabilmente scaduta. Riaccedi da WeBeep e riprova."
+        }
     }
 }
 

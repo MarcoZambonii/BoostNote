@@ -17,6 +17,12 @@ struct ProfileView: View {
     @AppStorage("anthropicAPIKey") private var anthropicAPIKey = ""
     @State private var anthropicDraft = ""
 
+    @AppStorage("aiProviderKind") private var aiProviderRaw = AIProviderKind.appleLocal.rawValue
+    @AppStorage("geminiModelTier_reading") private var readingTierRaw = AIPurpose.reading.defaultTier.rawValue
+    @AppStorage("geminiModelTier_generation") private var generationTierRaw = AIPurpose.generation.defaultTier.rawValue
+    @State private var geminiDraft = AIService.geminiKey ?? ""
+    @State private var geminiSaved = AIService.geminiKey != nil
+
     @State private var photosPickerItem: PhotosPickerItem?
 
     @State private var webeepToken: String? = WebeepService.savedToken
@@ -30,6 +36,7 @@ struct ProfileView: View {
                 profileSection
                 syncSection
                 webeepSection
+                aiSection
                 wolframSection
                 anthropicSection
                 aboutSection
@@ -169,6 +176,92 @@ struct ProfileView: View {
         }
     }
 
+    // Provider per la generazione AI dello Studio. Vincolo dell'app:
+    // l'inferenza avviene sempre dal dispositivo con la chiave dell'utente
+    // (o col modello Apple locale) — nessun server centralizzato, così
+    // l'app resta gratuita a prescindere da quanti utenti ha.
+    private var aiSection: some View {
+        sectionCard(title: "AI per lo Studio") {
+            VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                Text("Genera riassunti, esercizi, punti di ripasso e flashcard nell'ambiente Studio. Senza provider configurato vengono mostrati contenuti d'esempio.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesignColor.textTertiary)
+
+                Picker("Provider", selection: $aiProviderRaw) {
+                    ForEach(AIProviderKind.allCases, id: \.rawValue) { kind in
+                        Text(kind.label).tag(kind.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if let kind = AIProviderKind(rawValue: aiProviderRaw) {
+                    Text(kind.hint)
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+
+                if aiProviderRaw == AIProviderKind.gemini.rawValue {
+                    Divider()
+
+                    // La scelta NON è "quanto è bravo" ma "quante chiamate
+                    // al giorno": sul piano gratuito il Flash pieno ne
+                    // concede ~20, il Lite ~500. Lettura e generazione
+                    // sono separate perché hanno profili opposti.
+                    modelTierPicker(for: .reading, selection: $readingTierRaw)
+                    modelTierPicker(for: .generation, selection: $generationTierRaw)
+
+                    Label("Se la quota di un modello finisce, l'app passa da sola all'altro.", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.success)
+
+                    Divider()
+
+                    HStack {
+                        SecureField("Chiave API Gemini", text: $geminiDraft)
+                            .textFieldStyle(.plain)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .padding(DesignSpace.s3)
+                            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md))
+                        Button("Salva") {
+                            AIService.saveGeminiKey(geminiDraft)
+                            geminiSaved = AIService.geminiKey != nil
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    if geminiSaved {
+                        Label("Chiave salvata in Keychain", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(DesignColor.success)
+                    }
+                }
+            }
+        }
+    }
+
+    private func modelTierPicker(for purpose: AIPurpose, selection: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s2) {
+            Text(purpose.label.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(DesignColor.textTertiary)
+            Text(purpose.explanation)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignColor.textTertiary)
+            Picker(purpose.label, selection: selection) {
+                ForEach(GeminiModelTier.allCases, id: \.rawValue) { tier in
+                    Text(tier.label).tag(tier.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            if let tier = GeminiModelTier(rawValue: selection.wrappedValue) {
+                Text(tier.hint)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignColor.textTertiary)
+            }
+        }
+    }
+
     private var wolframSection: some View {
         sectionCard(title: "Wolfram Alpha") {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
@@ -225,11 +318,14 @@ struct ProfileView: View {
 
     private var aboutSection: some View {
         sectionCard(title: "About") {
-            VStack(alignment: .leading, spacing: DesignSpace.s1) {
-                Text("BoostNote").font(.system(size: 14, weight: .semibold))
-                Text("Versione 0.1 — app di note per iPad con Apple Pencil.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(DesignColor.textTertiary)
+            VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                VStack(alignment: .leading, spacing: DesignSpace.s1) {
+                    Text("BoostNote").font(.system(size: 14, weight: .semibold))
+                    Text("Versione 0.1 — app di note per iPad con Apple Pencil.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+
             }
         }
     }

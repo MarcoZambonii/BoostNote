@@ -2,6 +2,7 @@ import Foundation
 import SwiftData
 import SwiftUI
 import PDFKit
+import PencilKit
 
 // MARK: - Cartella
 // Rappresenta una cartella nell'organizzazione delle note.
@@ -73,6 +74,14 @@ final class Note {
     // Caselle di testo posizionate sul foglio, serializzate come JSON.
     var textBoxesData: Data?
 
+    // Elementi della to-do list del pannello laterale, serializzati come
+    // JSON — per nota, così ogni nota mantiene la sua lista.
+    var todoItemsData: Data?
+
+    // Ultima pagina guardata: riaprendo la nota si riparte da lì, non
+    // dalla prima (né dall'ultima) — come un segnalibro automatico.
+    var lastViewedPage: Int = 0
+
     // Modello del foglio (quadretti, righe, crocette, bianco), salvato come rawValue.
     // Il default qui (non solo nell'init) serve alla migrazione automatica di SwiftData.
     var templateRaw: String = NoteTemplate.blank.rawValue
@@ -85,24 +94,34 @@ final class Note {
     var pageSizeRaw: String = PageSize.a4.rawValue
     var patternScale: Double = 1.0
 
-    // Widget interattivi inseriti sul foglio (grafici, to-do, pomodoro, wolfram).
+    // LEGACY: i widget flottanti sul foglio sono stati eliminati (tutti
+    // gli strumenti vivono nel pannello laterale destro). La relazione e
+    // il tipo NoteWidget restano dichiarati solo per compatibilità con lo
+    // store già scritto su disco — non rimuoverli senza una migrazione.
     @Relationship(deleteRule: .cascade, inverse: \NoteWidget.note)
     var widgets: [NoteWidget] = []
 
-    // Tratti PencilKit dell'intero foglio (lavagna o nota): un unico
-    // scorrimento continuo, non pagine separate — vedi InfiniteCanvasView.
+    // Campi legacy: usati solo per migrare al volo le note create prima
+    // del modello a pagine reali (vedi migrateLegacyContentToPages). La
+    // lavagna infinita (isWhiteboard) resta l'unica a disegnare da questi,
+    // dato che non ha pagine.
     var drawingData: Data?
-    // Se la nota è nata da un PDF importato "come foglio", questo è lo
-    // sfondo (multi-pagina) su cui si annota, mostrato in scorrimento
-    // verticale continuo al posto del pattern quadretti/righe/crocette.
     @Attribute(.externalStorage) var pdfBackgroundData: Data?
 
-    // NotePage non è più usato dall'editor (si è tornati a un unico
-    // PKDrawing continuo): la relazione resta dichiarata solo per
-    // compatibilità con lo store già scritto su disco durante la breve
-    // sperimentazione con pagine reali indipendenti.
+    // Pagine reali della nota: ognuna con il proprio PKDrawing e un
+    // eventuale sfondo PDF (una singola pagina di un PDF importato), in
+    // scorrimento continuo verticale — come Notability. Permette di avere
+    // pagine scritte a mano prima e dopo un PDF importato, non solo un
+    // unico sfondo per l'intera nota. Non usate dalla lavagna infinita.
     @Relationship(deleteRule: .cascade, inverse: \NotePage.note)
     var pages: [NotePage] = []
+
+    // Strumenti aperti nel pannello laterale destro, come JSON di
+    // rawValue. Stanno sulla NOTA e non nella view: il pannello è parte
+    // del foglio su cui stai lavorando — la to-do list di Analisi non ha
+    // senso mentre apri Economia — e così sopravvive anche alla chiusura
+    // e riapertura della nota.
+    var sidePanelToolsRaw: String = "[]"
 
     // Nota creata come "Lavagna infinita" dal menu Nuovo documento: stesso
     // foglio a scorrimento infinito, ma pensata come tela libera (bianca,
@@ -147,6 +166,10 @@ enum PageSize: String, CaseIterable, Codable {
 enum NoteMediaKind: String, Codable {
     case image
     case pdf
+    // Formula composta dalla penna magica: tecnicamente un'immagine, ma
+    // sul foglio deve comportarsi come un tratto di penna — niente
+    // cornice né sfondo, che su una formula sembrerebbero un errore.
+    case formula
 }
 
 // Un'immagine o un PDF posizionato liberamente sul foglio della nota,
@@ -161,6 +184,10 @@ final class NoteMedia {
     var height: Double
     var kindRaw: String = NoteMediaKind.image.rawValue
     @Attribute(.externalStorage) var data: Data = Data()
+    // Sorgente da cui l'immagine è stata generata (il LaTeX di una
+    // formula): senza, una formula composta sarebbe pixel e basta, non
+    // più correggibile. È ciò che rende la formula "modificabile".
+    var sourceText: String?
     var note: Note?
 
     var kind: NoteMediaKind {
@@ -168,18 +195,32 @@ final class NoteMedia {
         set { kindRaw = newValue.rawValue }
     }
 
-    init(x: Double, y: Double, width: Double = 260, height: Double = 200, kind: NoteMediaKind, data: Data, note: Note? = nil) {
+    init(x: Double, y: Double, width: Double = 260, height: Double = 200, kind: NoteMediaKind, data: Data, sourceText: String? = nil, note: Note? = nil) {
         self.x = x
         self.y = y
         self.width = width
         self.height = height
         self.kindRaw = kind.rawValue
         self.data = data
+        self.sourceText = sourceText
         self.note = note
     }
 }
 
 extension Note {
+    var sidePanelTools: [String] {
+        get {
+            guard let data = sidePanelToolsRaw.data(using: .utf8),
+                  let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+            return list
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let string = String(data: data, encoding: .utf8) else { return }
+            sidePanelToolsRaw = string
+        }
+    }
+
     var template: NoteTemplate {
         get { NoteTemplate(rawValue: templateRaw) ?? .blank }
         set { templateRaw = newValue.rawValue }
@@ -201,20 +242,134 @@ extension Note {
         }
     }
 
-    // Aggiunge le pagine di un PDF importato in coda a quelle già presenti
-    // come sfondo del foglio (o le imposta se non c'era ancora uno
-    // sfondo) — un secondo import si accoda in fondo, non sostituisce.
-    func appendPDFPages(from data: Data) {
-        guard let newDocument = PDFDocument(data: data), newDocument.pageCount > 0 else { return }
-        guard let existingData = pdfBackgroundData, let existingDocument = PDFDocument(data: existingData) else {
-            pdfBackgroundData = data
+    var todoItems: [ChecklistItem] {
+        get {
+            guard let todoItemsData else { return [] }
+            return (try? JSONDecoder().decode([ChecklistItem].self, from: todoItemsData)) ?? []
+        }
+        set {
+            todoItemsData = try? JSONEncoder().encode(newValue)
+            updatedAt = .now
+        }
+    }
+
+    var sortedPages: [NotePage] { pages.sorted { $0.order < $1.order } }
+
+    // Se la nota non ha ancora pagine reali (creata prima di questo
+    // modello, o mai aperta da quando è tornato), ne genera dai vecchi
+    // campi drawingData/pdfBackgroundData — una pagina per ogni pagina del
+    // PDF legacy, o una sola pagina bianca con l'inchiostro esistente se
+    // non c'era un PDF. Chiamata da sola all'apertura della nota, così i
+    // contenuti già scritti non si perdono.
+    // Le nuove pagine vanno agganciate mutando il lato genitore
+    // (pages.append) e MAI solo impostando page.note: con SwiftData la
+    // mutazione fatta solo sul lato figlio può non notificare
+    // l'osservazione di `pages` sul genitore, e la vista non si aggiorna —
+    // era il motivo per cui pagine nuove (PDF importati, pagine bianche)
+    // non comparivano mai a schermo.
+    private func attach(_ page: NotePage, in context: ModelContext) {
+        context.insert(page)
+        pages.append(page)
+    }
+
+    // Estrae la pagina `index` come PDF a sé stante SENZA spostare
+    // l'oggetto pagina in un nuovo documento: `PDFDocument().insert(page)`
+    // perde le annotazioni (restano legate al documento d'origine), e la
+    // scrittura a mano dei PDF esportati dalle app di note È fatta di
+    // annotazioni — si importavano le righe/quadretti della pagina ma non
+    // la calligrafia. Qui si parte da una copia del documento intero e si
+    // eliminano le altre pagine: nulla attraversa i documenti, nulla si perde.
+    static func singlePagePDFData(from data: Data, pageIndex: Int) -> Data? {
+        guard let copy = PDFDocument(data: data), copy.pageCount > pageIndex else { return nil }
+        for other in stride(from: copy.pageCount - 1, through: 0, by: -1) where other != pageIndex {
+            copy.removePage(at: other)
+        }
+        return copy.dataRepresentation()
+    }
+
+    @discardableResult
+    func migrateLegacyContentToPages(in context: ModelContext) -> [NotePage] {
+        guard pages.isEmpty else { return sortedPages }
+
+        if let legacyPDF = pdfBackgroundData, let document = PDFDocument(data: legacyPDF), document.pageCount > 0 {
+            var created: [NotePage] = []
+            for index in 0..<document.pageCount {
+                let page = NotePage(
+                    order: index,
+                    drawingData: index == 0 ? drawingData : nil,
+                    pdfPageData: Note.singlePagePDFData(from: legacyPDF, pageIndex: index)
+                )
+                attach(page, in: context)
+                created.append(page)
+            }
+            return created
+        }
+
+        let page = NotePage(order: 0, drawingData: drawingData)
+        attach(page, in: context)
+        return [page]
+    }
+
+    // Aggiunge una pagina per ciascuna pagina del PDF in coda alle pagine
+    // esistenti — così un PDF importato dopo aver già scritto diventa
+    // pagine vere in fondo, e si può continuare a scrivere ancora dopo.
+    // Restituisce false se `data` non è un PDF valido (es. WeBeep ha
+    // restituito una pagina di errore/login invece del file vero): prima
+    // veniva ignorato in silenzio e la nota restava vuota senza spiegazioni.
+    @discardableResult
+    func appendPages(fromPDF data: Data, in context: ModelContext) -> Bool {
+        guard let document = PDFDocument(data: data), document.pageCount > 0 else { return false }
+        migrateLegacyContentToPages(in: context)
+        var nextOrder = (sortedPages.last?.order ?? -1) + 1
+        for index in 0..<document.pageCount {
+            // autoreleasepool: l'estrazione di ogni pagina apre una copia
+            // dell'INTERO documento. Senza svuotare il pool a ogni giro,
+            // su una dispensa da 60+ pagine le copie si accumulavano tutte
+            // insieme e l'app moriva di memoria già durante l'import.
+            autoreleasepool {
+                let page = NotePage(order: nextOrder, pdfPageData: Note.singlePagePDFData(from: data, pageIndex: index))
+                attach(page, in: context)
+                nextOrder += 1
+            }
+        }
+        return true
+    }
+
+    func appendBlankPage(in context: ModelContext) {
+        migrateLegacyContentToPages(in: context)
+        let page = NotePage(order: (sortedPages.last?.order ?? -1) + 1)
+        attach(page, in: context)
+    }
+
+    // Scorrimento continuo alla Notability: sotto l'ultima pagina con del
+    // contenuto ce n'è sempre una vuota pronta, così non si sbatte mai
+    // contro un "muro" e c'è sempre spazio dove continuare a scrivere.
+    func ensureTrailingBlankPage(in context: ModelContext) {
+        migrateLegacyContentToPages(in: context)
+        guard let last = sortedPages.last else {
+            appendBlankPage(in: context)
             return
         }
-        for index in 0..<newDocument.pageCount {
-            guard let page = newDocument.page(at: index) else { continue }
-            existingDocument.insert(page, at: existingDocument.pageCount)
+        let lastHasInk: Bool = {
+            guard let data = last.drawingData, let drawing = try? PKDrawing(data: data) else { return false }
+            return !drawing.strokes.isEmpty
+        }()
+        if last.pdfPageData != nil || lastHasInk {
+            appendBlankPage(in: context)
         }
-        pdfBackgroundData = existingDocument.dataRepresentation()
+    }
+
+    // Inserisce una pagina bianca in una posizione precisa (es. prima o
+    // dopo una pagina PDF importata), spostando avanti l'ordine di tutte
+    // le pagine successive — non solo in fondo come appendBlankPage.
+    func insertBlankPage(at index: Int, in context: ModelContext) {
+        migrateLegacyContentToPages(in: context)
+        let clampedIndex = max(0, min(index, pages.count))
+        for page in sortedPages where page.order >= clampedIndex {
+            page.order += 1
+        }
+        let page = NotePage(order: clampedIndex)
+        attach(page, in: context)
     }
 }
 
@@ -299,4 +454,10 @@ struct TodoWidgetState: Codable {
 
 struct PomodoroWidgetState: Codable {
     var durationMinutes: Int = 25
+}
+
+struct WolframWidgetState: Codable {
+    var expression: String = ""
+    var result: String?
+    var imageURLs: [URL] = []
 }

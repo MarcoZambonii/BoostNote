@@ -2,6 +2,50 @@ import SwiftUI
 import SwiftData
 import PencilKit
 import PhotosUI
+import PDFKit
+
+// Conversione Color <-> stringa esadecimale per salvare le preferenze
+// strumento in AppStorage (Color non è direttamente persistibile).
+extension Color {
+    var hexString: String? {
+        guard let components = UIColor(self).cgColor.components, components.count >= 3 else { return nil }
+        let r = Int((components[0] * 255).rounded())
+        let g = Int((components[1] * 255).rounded())
+        let b = Int((components[2] * 255).rounded())
+        return String(format: "#%02X%02X%02X", r, g, b)
+    }
+
+    init?(hexString: String) {
+        var hex = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        guard hex.count == 6, let value = UInt64(hex, radix: 16) else { return nil }
+        self.init(
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255
+        )
+    }
+}
+
+// Lettore PDF di sola lettura per il pannello "Documento": consultazione
+// a fianco della nota, non tocca il contenuto della nota stessa.
+struct PDFKitPreviewView: UIViewRepresentable {
+    let data: Data
+
+    func makeUIView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayDirection = .vertical
+        view.document = PDFDocument(data: data)
+        return view
+    }
+
+    func updateUIView(_ uiView: PDFView, context: Context) {
+        if uiView.document?.dataRepresentation() != data {
+            uiView.document = PDFDocument(data: data)
+        }
+    }
+}
 
 struct NoteEditorView: View {
     @Bindable var note: Note
@@ -10,35 +54,75 @@ struct NoteEditorView: View {
     @Environment(\.openURL) private var openURL
 
     @State private var selectedTool: PenTool = .pen
-    @State private var penColor: Color = .black
-    @State private var penWidth: CGFloat = 4
-    @State private var markerColor: Color = .yellow
-    @State private var markerWidth: CGFloat = 14
-    @State private var pencilColor: Color = .black
-    @State private var pencilWidth: CGFloat = 3
+    // Un colore e uno spessore PER STRUMENTO: tornando all'evidenziatore
+    // si ritrova il giallo spesso lasciato lì, non l'ultimo colore usato
+    // con la penna.
+    @State private var inkColors: [PenTool: Color] = [:]
+    @State private var inkWidths: [PenTool: CGFloat] = [:]
     @State private var eraserType: PKEraserTool.EraserType = .bitmap
     @State private var eraserWidth: CGFloat = 30
+
+    // Colori e spessori scelti dall'utente sopravvivono alla chiusura
+    // della nota: senza, a ogni apertura si ripartiva dai default e
+    // andava rifatta la stessa configurazione ogni volta. Un'unica
+    // stringa JSON invece di due proprietà per strumento, così
+    // aggiungerne uno non tocca la persistenza.
+    @AppStorage("tool.inkSettings") private var storedInkSettings = ""
+    @AppStorage("tool.eraserType") private var storedEraserType = "bitmap"
+    @AppStorage("tool.eraserWidth") private var storedEraserWidth = 30.0
     @State private var toolBeforeEraser: PenTool?
+    @State private var toolBeforeLasso: PenTool?
     @State private var magicAction: MagicAction?
+    @State private var isMagicProcessing = false
     @State private var toolbarDock: ToolbarDock = .top
     @State private var dragPreviewDock: ToolbarDock?
     @StateObject private var drawingController = DrawingController()
 
     @State private var showingPhotosPicker = false
     @State private var photosPickerItem: PhotosPickerItem?
-    @State private var showingPDFImporter = false
-    @State private var pendingPDFData: Data?
+    // UN SOLO fileImporter con destinazione esplicita: due .fileImporter
+    // in catena sulla stessa vista sono un bug noto di SwiftUI — solo
+    // l'ultimo si presenta, il primo (l'import PDF della barra) non si
+    // apriva MAI. Era questo il motivo per cui "non faceva niente".
+    enum PDFPickerTarget { case notePages, documentPanel }
+    @State private var pdfPickerTarget: PDFPickerTarget = .notePages
+    @State private var showingPDFPicker = false
+
+    // Il pannello "Documento" è un lettore PDF di consultazione a fianco
+    // della nota (per leggere le slide mentre si scrive): scegliere un
+    // PDF qui NON lo importa nella nota, resta solo nel pannello.
+    @State private var documentPreviewData: Data?
+    @State private var documentPreviewName: String = ""
 
     @State private var showingToolsPicker = false
-    // Calcolatrice/Ricerca/Documento vivono in un pannello laterale
-    // persistente, non in un foglio modale: restano aperti mentre si
-    // continua a scrivere, e si chiudono con un pulsante esplicito.
-    @State private var sidePanelTool: NoteTool?
+    // TUTTI gli strumenti vivono nel pannello laterale persistente (non
+    // più widget flottanti sul foglio): resta aperto mentre si scrive e
+    // si chiude con un pulsante esplicito.
+    // Strumenti aperti nel pannello destro: una PILA (calcolatrice e
+    // grafico insieme), letta e scritta sulla NOTA — vedi Note.sidePanelTools.
+    // Il pannello si può nascondere SENZA smontarne il contenuto: le view
+    // restano nella gerarchia con larghezza zero, così quello che hai
+    // scritto nella calcolatrice o cercato su Wolfram è ancora lì quando
+    // lo riapri. Solo la X su uno strumento lo rimuove davvero.
+    @State private var isSidePanelHidden = false
+    @State private var showingRename = false
+    @State private var renameText = ""
+    @State private var sidePanelDragOffset: CGFloat = 0
     @State private var researchModel = ArxivSearchModel()
+    // Stato con cui la penna magica precompila i pannelli Grafici/Wolfram.
+    @State private var panelGraphExpression = "x^2 - 9"
+    @State private var panelWolframPrefill: String?
     @State private var showingSettings = false
     @State private var showingSearch = false
+    @State private var showingWebeepDocPicker = false
+    // Dove finisce il PDF scelto da WeBeep: pannello di lettura oppure
+    // pagine della nota (import dalla float bar). Stesso schema del
+    // fileImporter, per lo stesso motivo.
+    @State private var webeepPickerTarget: PDFPickerTarget = .documentPanel
 
     @State private var magicResult: MagicResult?
+    // Formula sul foglio aperta per la correzione del suo LaTeX.
+    @State private var editingFormula: NoteMedia?
 
     // "Pagine": segmenti virtuali di altezza `pageHeight` calcolati sull'unico
     // scorrimento continuo del foglio — non pagine reali separate.
@@ -46,19 +130,35 @@ struct NoteEditorView: View {
 
     // Colore/spessore dello strumento a inchiostro attualmente attivo.
     private var activeColor: Color {
-        switch selectedTool {
-        case .marker: markerColor
-        case .pencil: pencilColor
-        default: penColor
-        }
+        inkColors[selectedTool] ?? selectedTool.defaultColor
     }
 
     private var activeInkWidth: CGFloat {
-        switch selectedTool {
-        case .marker: markerWidth
-        case .pencil: pencilWidth
-        default: penWidth
+        inkWidths[selectedTool] ?? selectedTool.defaultWidth
+    }
+
+    // Strumenti aperti su QUESTA nota.
+    private var sidePanelTools: [NoteTool] {
+        note.sidePanelTools.compactMap(NoteTool.init(rawValue:))
+    }
+
+    private var currentPanelWidth: CGFloat {
+        isSidePanelHidden ? sidePanelDragOffset : (380 + sidePanelDragOffset)
+    }
+
+    private func openSidePanel(_ tool: NoteTool) {
+        isSidePanelHidden = false
+        var tools = note.sidePanelTools
+        if let index = tools.firstIndex(of: tool.rawValue) {
+            // Già aperto: lo si porta in cima invece di duplicarlo.
+            tools.remove(at: index)
         }
+        tools.insert(tool.rawValue, at: 0)
+        note.sidePanelTools = tools
+    }
+
+    private func closeSidePanel(_ tool: NoteTool) {
+        note.sidePanelTools = note.sidePanelTools.filter { $0 != tool.rawValue }
     }
 
     var body: some View {
@@ -67,20 +167,70 @@ struct NoteEditorView: View {
                 .background(DesignColor.surfacePage)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if let sidePanelTool {
+            if !sidePanelTools.isEmpty {
                 Divider()
-                sidePanel(for: sidePanelTool)
-                    .frame(width: 380)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .opacity(isSidePanelHidden ? 0 : 1)
+                sidePanelStack
+                    // Larghezza a zero invece di rimuovere la view: è ciò
+                    // che permette al contenuto di sopravvivere alla
+                    // chiusura del pannello.
+                    .frame(width: max(0, currentPanelWidth))
+                    .clipped()
+                    // `.clipped()` ritaglia il DISEGNO ma NON i tocchi: il
+                    // pannello restava largo 380pt come area sensibile
+                    // anche da chiuso, e si mangiava tutta la fascia
+                    // destra del foglio — non ci si poteva né scrivere né
+                    // toccare. Queste due righe sono la correzione vera.
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(currentPanelWidth > 1)
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: sidePanelTool)
+        .alert("Titolo della nota", isPresented: $showingRename) {
+            TextField("Titolo", text: $renameText)
+            Button("Annulla", role: .cancel) { }
+            Button("Salva") {
+                let trimmed = renameText.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty { note.title = trimmed }
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .ignoresSafeArea()
+        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: sidePanelTools)
+        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: isSidePanelHidden)
+        .overlay(alignment: .trailing) {
+            // Maniglia per aprire/chiudere con uno swipe quando il
+            // pannello è nascosto ma ha ancora contenuti dentro.
+            if !sidePanelTools.isEmpty && isSidePanelHidden {
+                sidePanelHandle
+            }
+        }
+        .onAppear {
+            // Nota creata prima del modello a pagine reali (o mai aperta
+            // da quando è tornato): genera le pagine dai campi legacy.
+            // Poi garantisce sempre una pagina vuota in fondo, così lo
+            // scorrimento continua oltre l'ultimo contenuto (Notability).
+            if !note.isWhiteboard {
+                note.migrateLegacyContentToPages(in: context)
+                note.ensureTrailingBlankPage(in: context)
+            }
+            restoreToolPreferences()
+        }
+        .onDisappear {
+            // Segnalibro automatico: alla prossima apertura si riparte da qui.
+            if !note.isWhiteboard {
+                note.lastViewedPage = drawingController.currentPageIndex(pageHeight: pageHeight)
+            }
+            saveToolPreferences()
+        }
         .onChange(of: note.title) { note.updatedAt = .now }
         .onChange(of: note.drawingData) { note.updatedAt = .now }
         .onChange(of: note.textBoxesData) { note.updatedAt = .now }
         .onChange(of: selectedTool) { oldValue, newValue in
             if newValue == .eraser, oldValue != .eraser {
                 toolBeforeEraser = oldValue
+            }
+            if newValue == .lasso, oldValue != .lasso {
+                toolBeforeLasso = oldValue
             }
         }
         .photosPicker(isPresented: $showingPhotosPicker, selection: $photosPickerItem, matching: .images)
@@ -93,31 +243,26 @@ struct NoteEditorView: View {
                 photosPickerItem = nil
             }
         }
-        .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf]) { result in
+        .fileImporter(isPresented: $showingPDFPicker, allowedContentTypes: [.pdf]) { result in
             guard case .success(let url) = result else { return }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            if let data = try? Data(contentsOf: url) {
-                pendingPDFData = data
-            }
-        }
-        .confirmationDialog(
-            "Come vuoi inserire questo PDF?",
-            isPresented: pdfImportDialogPresented,
-            titleVisibility: .visible
-        ) {
-            Button("Come widget spostabile") {
-                if let data = pendingPDFData { insertMedia(kind: .pdf, data: data) }
-                pendingPDFData = nil
-            }
-            Button("Come foglio della nota") {
-                if let data = pendingPDFData {
-                    note.appendPDFPages(from: data)
-                    note.updatedAt = .now
+            guard let data = try? Data(contentsOf: url) else { return }
+            switch pdfPickerTarget {
+            case .notePages:
+                // Import diretto come pagine in coda alla nota aperta: si
+                // continua a scrivere prima e dopo. Su lavagna diventa lo
+                // sfondo del foglio.
+                if note.isWhiteboard {
+                    note.pdfBackgroundData = data
+                } else {
+                    note.appendPages(fromPDF: data, in: context)
                 }
-                pendingPDFData = nil
+                note.updatedAt = .now
+            case .documentPanel:
+                documentPreviewData = data
+                documentPreviewName = url.deletingPathExtension().lastPathComponent
             }
-            Button("Annulla", role: .cancel) { pendingPDFData = nil }
         }
         .sheet(isPresented: $showingSettings) {
             NoteSettingsSheet(note: note, drawingController: drawingController) { index in
@@ -125,87 +270,315 @@ struct NoteEditorView: View {
             }
         }
         .sheet(item: $magicResult) { result in
-            MagicResultSheet(result: result) {
-                insertMagicResult(result)
+            MagicResultSheet(
+                result: result,
+                onInsert: { toPanel in
+                    insertMagicResult(result, toPanel: toPanel)
+                },
+                onRetry: { editedText in
+                    // L'utente ha corretto a mano il testo riconosciuto:
+                    // riesegue la stessa azione sul testo corretto,
+                    // saltando il riconoscimento.
+                    isMagicProcessing = true
+                    Task {
+                        defer { isMagicProcessing = false }
+                        if let newResult = await processMagic(
+                            action: result.action,
+                            text: editedText,
+                            latexAlreadyConverted: false,
+                            rect: result.captureRect,
+                            via: "corretto a mano"
+                        ) {
+                            magicResult = newResult
+                        }
+                    }
+                }
+            )
+        }
+        .sheet(item: $editingFormula) { media in
+            FormulaEditSheet(media: media) { note.updatedAt = .now }
+        }
+        .sheet(isPresented: $showingWebeepDocPicker) {
+            WebeepFilePickerSheet { data, name in
+                switch webeepPickerTarget {
+                case .notePages:
+                    // Import diretto come pagine in coda, come dai File.
+                    if note.isWhiteboard {
+                        note.pdfBackgroundData = data
+                    } else {
+                        note.appendPages(fromPDF: data, in: context)
+                    }
+                    note.updatedAt = .now
+                case .documentPanel:
+                    documentPreviewData = data
+                    documentPreviewName = name
+                }
             }
         }
     }
 
-    private var pdfImportDialogPresented: Binding<Bool> {
-        Binding(get: { pendingPDFData != nil }, set: { if !$0 { pendingPDFData = nil } })
-    }
 
     // MARK: - Pannello laterale (Calcolatrice / Ricerca / Documento)
 
     @ViewBuilder
-    private func sidePanel(for tool: NoteTool) -> some View {
+    // Pila degli strumenti aperti: ognuno con la propria X, che è
+    // l'UNICO modo di rimuoverlo davvero. Nascondere il pannello (swipe o
+    // maniglia) non tocca il contenuto.
+    private var sidePanelStack: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: DesignSpace.s2) {
+                Button {
+                    withAnimation { isSidePanelHidden = true }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(DesignColor.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DesignColor.surfacePage, in: Circle())
+                        .contentShape(Rectangle().inset(by: -8))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Nascondi pannello")
+
+                Text(sidePanelTools.count == 1 ? "Strumento" : "\(sidePanelTools.count) strumenti")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DesignColor.textTertiary)
+                Spacer()
+            }
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s2)
+            .contentShape(Rectangle())
+            // Lo swipe vive SOLO qui: sull'intero pannello competeva con
+            // i pulsanti interni e rendeva i tocchi inaffidabili.
+            .gesture(panelDragGesture)
+
+            Divider()
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(sidePanelTools, id: \.rawValue) { tool in
+                        sidePanelSection(for: tool)
+                    }
+                }
+            }
+        }
+        .frame(width: 380, alignment: .leading)
+        .background(DesignColor.surfaceSunken)
+    }
+
+    // Ogni strumento è una card a sé: con più pannelli aperti, dei
+    // semplici divisori non facevano capire dove finiva uno e iniziava
+    // l'altro. L'intestazione colorata del tipo fa da appiglio visivo.
+    private func sidePanelSection(for tool: NoteTool) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: tool.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(DesignColor.brandPrimary)
+                    .frame(width: 26, height: 26)
+                    .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 Text(tool.label)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(DesignColor.textPrimary)
                 Spacer()
                 Button {
-                    sidePanelTool = nil
+                    withAnimation { closeSidePanel(tool) }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(DesignColor.textTertiary)
-                        .frame(width: 26, height: 26)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(DesignColor.textSecondary)
+                        .frame(width: 28, height: 28)
                         .background(DesignColor.surfaceSunken, in: Circle())
+                        // Area sensibile più larga del cerchio: 28pt di
+                        // grafica sono belli ma sotto il minimo comodo per
+                        // il dito, e la chiusura mancava spesso.
+                        .contentShape(Rectangle().inset(by: -8))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Chiudi")
+                .accessibilityLabel("Rimuovi \(tool.label)")
             }
-            .padding(DesignSpace.s4)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
-            }
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s2 + 2)
+
+            Divider().opacity(0.6)
 
             Group {
                 switch tool {
-                case .calculator:
-                    CalculatorContentView()
-                case .research:
-                    ResearchContentView(model: researchModel)
-                case .document:
-                    documentPanelContent
-                default:
-                    EmptyView()
+                case .calculator: CalculatorContentView()
+                case .research: ResearchContentView(model: researchModel)
+                case .document: documentPanelContent
+                case .graphing: GraphPanelContent(expression: $panelGraphExpression)
+                case .todo: TodoPanelContent(note: note)
+                case .pomodoro: PomodoroPanelContent()
+                case .wolfram:
+                    WolframPanelContent(prefill: panelWolframPrefill)
+                        .id(panelWolframPrefill)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(DesignSpace.s3)
         }
-        .background(DesignColor.surfacePage)
+        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous)
+                .stroke(DesignColor.borderSubtle, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
+        .padding(.horizontal, DesignSpace.s3)
+        .padding(.vertical, DesignSpace.s2)
     }
 
-    private var documentPanelContent: some View {
-        VStack(spacing: DesignSpace.s4) {
-            Spacer()
-            Image(systemName: "doc.badge.plus")
-                .font(.system(size: 32))
-                .foregroundStyle(DesignColor.textTertiary)
-            Text("Importa un PDF come pagina della nota o come widget spostabile.")
-                .font(.system(size: 13))
+    // Maniglia sul bordo destro quando il pannello è nascosto: si tira
+    // verso sinistra per riaprirlo.
+    // Maniglia per riaprire il pannello nascosto. È un PULSANTE, non una
+    // zona sensibile al trascinamento: la versione precedente estendeva
+    // l'area di 18pt per lato e ci agganciava un DragGesture, che sul
+    // bordo destro del foglio si mangiava i tratti della penna — lì non
+    // si riusciva più né a scrivere né a toccare. Lo swipe per chiudere
+    // resta sull'intestazione del pannello, dove non c'è nulla da
+    // disegnare.
+    private var sidePanelHandle: some View {
+        Button {
+            withAnimation { isSidePanelHidden = false }
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(DesignColor.textSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, DesignSpace.s5)
-            Button {
-                showingPDFImporter = true
-            } label: {
-                Text("Scegli PDF")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, DesignSpace.s5)
-                    .padding(.vertical, DesignSpace.s3)
-                    .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            Spacer()
+                .frame(width: 22, height: 44)
+                .background(.ultraThinMaterial, in: UnevenRoundedRectangle(
+                    topLeadingRadius: DesignRadius.md,
+                    bottomLeadingRadius: DesignRadius.md
+                ))
+                .overlay(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: DesignRadius.md,
+                        bottomLeadingRadius: DesignRadius.md
+                    )
+                    .stroke(DesignColor.borderDefault.opacity(0.6), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.08), radius: 6, x: -2)
         }
-        .frame(maxWidth: .infinity)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Mostra pannello strumenti")
+    }
+
+    // Swipe orizzontale per aprire/chiudere: verso sinistra apre, verso
+    // destra chiude, con il pannello che segue il dito.
+    private var panelDragGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                if isSidePanelHidden {
+                    sidePanelDragOffset = min(380, max(0, -value.translation.width))
+                } else {
+                    sidePanelDragOffset = min(0, max(-380, -value.translation.width))
+                }
+            }
+            .onEnded { value in
+                let travelled = abs(value.translation.width)
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                    if travelled > 80 {
+                        isSidePanelHidden = value.translation.width > 0
+                    }
+                    sidePanelDragOffset = 0
+                }
+            }
+    }
+
+    // Lettore PDF di sola consultazione, per leggere slide/dispense a
+    // fianco mentre si scrive: sceglierne uno qui NON lo tocca mai come
+    // contenuto della nota (per quello c'è il pulsante PDF della barra).
+    @ViewBuilder
+    private var documentPanelContent: some View {
+        if let documentPreviewData {
+            VStack(spacing: 0) {
+                HStack(spacing: DesignSpace.s2) {
+                    Text(documentPreviewName.isEmpty ? "Documento" : documentPreviewName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(DesignColor.textSecondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Menu("Cambia") {
+                        Button {
+                            pdfPickerTarget = .documentPanel
+                            showingPDFPicker = true
+                        } label: {
+                            Label("Da file", systemImage: "folder")
+                        }
+                        Button {
+                            webeepPickerTarget = .documentPanel
+                            showingWebeepDocPicker = true
+                        } label: {
+                            Label("Da WeBeep", systemImage: "graduationcap")
+                        }
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    Button {
+                        self.documentPreviewData = nil
+                        documentPreviewName = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(DesignColor.textTertiary)
+                    }
+                }
+                .padding(.horizontal, DesignSpace.s4)
+                .padding(.vertical, DesignSpace.s3)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
+                }
+
+                PDFKitPreviewView(data: documentPreviewData)
+                    .frame(maxWidth: .infinity)
+                    // Altezza ESPLICITA, stessa lezione di Desmos: la card
+                    // vive nella ScrollView del pannello, dove "riempi
+                    // tutto" collassa a zero — il PDF si apriva in un
+                    // riquadro invisibile.
+                    .frame(height: 620)
+            }
+        } else {
+            VStack(spacing: DesignSpace.s4) {
+                Spacer()
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 32))
+                    .foregroundStyle(DesignColor.textTertiary)
+                Text("Apri un PDF qui per leggerlo a fianco mentre scrivi — resta nel pannello, non entra nella nota.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesignColor.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, DesignSpace.s5)
+                // Le due provenienze reali dei PDF: i File dell'iPad e i
+                // corsi WeBeep — quest'ultima senza passare dal download
+                // manuale e re-import.
+                HStack(spacing: DesignSpace.s3) {
+                    Button {
+                        pdfPickerTarget = .documentPanel
+                        showingPDFPicker = true
+                    } label: {
+                        Label("Da file", systemImage: "folder")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, DesignSpace.s4)
+                            .padding(.vertical, DesignSpace.s3)
+                            .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        webeepPickerTarget = .documentPanel
+                        showingWebeepDocPicker = true
+                    } label: {
+                        Label("Da WeBeep", systemImage: "graduationcap")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(DesignColor.brandPrimary)
+                            .padding(.horizontal, DesignSpace.s4)
+                            .padding(.vertical, DesignSpace.s3)
+                            .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+        }
     }
 
     // MARK: - Foglio
@@ -214,33 +587,70 @@ struct NoteEditorView: View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
                 // Il testo è opzionale: si aggiunge con lo strumento "Aa".
-                // Immagini, PDF e widget si inseriscono dalla barra e
-                // restano trascinabili sul foglio.
-                DrawingCanvasView(
-                    drawingData: $note.drawingData,
-                    textBoxes: $note.textBoxes,
-                    media: note.media,
-                    widgets: note.widgets,
-                    tool: selectedTool,
-                    color: activeColor,
-                    inkWidth: activeInkWidth,
-                    eraserType: eraserType,
-                    eraserWidth: eraserWidth,
-                    template: note.template,
-                    patternScale: note.patternScale,
-                    pageWidth: note.pageSize.width,
-                    pageHeight: pageHeight,
-                    pdfBackgroundData: note.pdfBackgroundData,
-                    isWhiteboard: note.isWhiteboard,
-                    magicAction: magicAction,
-                    controller: drawingController,
-                    onDeleteMedia: deleteMedia,
-                    onDeleteWidget: deleteWidget,
-                    onWidgetUpdate: { note.updatedAt = .now },
-                    onMagicCapture: handleMagicCapture,
-                    onEraseStrokeCompleted: handleEraseStrokeCompleted,
-                    onPencilDoubleTap: handlePencilDoubleTap
-                )
+                // Immagini e PDF si inseriscono dalla barra e restano
+                // trascinabili sul foglio; gli strumenti vivono nel
+                // pannello laterale, non più come widget sul foglio.
+                if note.isWhiteboard {
+                    DrawingCanvasView(
+                        drawingData: $note.drawingData,
+                        textBoxes: $note.textBoxes,
+                        media: note.media,
+                        tool: selectedTool,
+                        color: activeColor,
+                        inkWidth: activeInkWidth,
+                        eraserType: eraserType,
+                        eraserWidth: eraserWidth,
+                        template: note.template,
+                        patternScale: note.patternScale,
+                        pageWidth: note.pageSize.width,
+                        pageHeight: pageHeight,
+                        pdfBackgroundData: note.pdfBackgroundData,
+                        isWhiteboard: true,
+                        magicAction: magicAction,
+                        controller: drawingController,
+                        onDeleteMedia: deleteMedia,
+                        onEditMedia: { editingFormula = $0 },
+                        onMagicCapture: handleMagicCapture,
+                        onEraseStrokeCompleted: handleEraseStrokeCompleted,
+                        onPencilDoubleTap: handlePencilDoubleTap
+                    )
+                } else {
+                    PagedNoteCanvasView(
+                        pages: note.sortedPages,
+                        initialPage: note.lastViewedPage,
+                        textBoxes: $note.textBoxes,
+                        media: note.media,
+                        tool: selectedTool,
+                        color: activeColor,
+                        inkWidth: activeInkWidth,
+                        eraserType: eraserType,
+                        eraserWidth: eraserWidth,
+                        template: note.template,
+                        patternScale: note.patternScale,
+                        pageWidth: note.pageSize.width,
+                        defaultPageHeight: pageHeight,
+                        magicAction: magicAction,
+                        controller: drawingController,
+                        onDeleteMedia: deleteMedia,
+                        onEditMedia: { editingFormula = $0 },
+                        onMagicCapture: handleMagicCapture,
+                        onEraseStrokeCompleted: handleEraseStrokeCompleted,
+                        onLassoFinished: handleLassoFinished,
+                        onPencilDoubleTap: handlePencilDoubleTap,
+                        onPageDrawingChanged: { page, data in
+                            page.drawingData = data
+                            note.updatedAt = .now
+                            // Appena l'ultima pagina riceve inchiostro, ne
+                            // spunta una vuota sotto: si può sempre
+                            // continuare a scrivere senza sbattere contro
+                            // un muro.
+                            note.ensureTrailingBlankPage(in: context)
+                        },
+                        onNeedMorePages: {
+                            note.appendBlankPage(in: context)
+                        }
+                    )
+                }
 
                 // Placeholder "aggancio" ai 4 lati, visibili solo mentre si
                 // trascina la barra — non intercettano tocchi.
@@ -252,16 +662,19 @@ struct NoteEditorView: View {
                 // Fissa in alto a sinistra: back + titolo della nota.
                 HStack(spacing: 8) {
                     backButton
-                    titlePill
                 }
                 .padding(8)
+                .safeAreaPadding(.top)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
                 // Fissa in alto a destra indipendentemente da dove è
                 // agganciata la barra della penna (che invece si sposta).
                 topRightToolbar
                     .padding(8)
+                    .safeAreaPadding(.top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+
+
             }
             .coordinateSpace(name: "canvasArea")
         }
@@ -272,27 +685,31 @@ struct NoteEditorView: View {
     private func toolbar(geometry: GeometryProxy) -> some View {
         PenToolbarView(
             selectedTool: $selectedTool,
-            penColor: $penColor,
-            penWidth: $penWidth,
-            markerColor: $markerColor,
-            markerWidth: $markerWidth,
-            pencilColor: $pencilColor,
-            pencilWidth: $pencilWidth,
+            inkColors: $inkColors,
+            inkWidths: $inkWidths,
             eraserType: $eraserType,
             eraserWidth: $eraserWidth,
             magicAction: $magicAction,
+            isMagicProcessing: isMagicProcessing,
             dock: $toolbarDock,
             dragPreviewDock: $dragPreviewDock,
             containerSize: geometry.size,
             onInsertImage: { showingPhotosPicker = true },
-            onInsertPDF: { showingPDFImporter = true }
+            onInsertPDF: { pdfPickerTarget = .notePages; showingPDFPicker = true },
+            onInsertPDFFromWebeep: { webeepPickerTarget = .notePages; showingWebeepDocPicker = true },
+            onClearPage: { drawingController.clearCurrentPage() },
+            onClearHighlighter: { drawingController.clearHighlighterOnCurrentPage() }
         )
-        .padding(.horizontal, 8)
         .padding(.bottom, 8)
-        // Agganciata sopra, resta sotto la riga fissa titolo/strumenti
-        // così le due barre non si sovrappongono mai — il gap è il
-        // minimo indispensabile, non uno spazio vuoto sprecato.
-        .padding(.top, toolbarDock == .top ? headerRowHeight + 12 : 8)
+        // In alto la barra condivide la riga con i controlli agli angoli:
+        // si centra nello spazio LIBERO tra il pulsante indietro e la
+        // barra a destra, invece che sull'intera larghezza. Centrandola
+        // sullo schermo, in verticale finiva sotto i pulsanti d'angolo e
+        // se li rubava a vicenda.
+        .padding(.leading, toolbarDock == .top ? 64 : 8)
+        .padding(.trailing, toolbarDock == .top ? 216 : 8)
+        .padding(.top, 8)
+        .safeAreaPadding(.top)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: toolbarDock.alignment)
     }
 
@@ -346,34 +763,27 @@ struct NoteEditorView: View {
         .accessibilityLabel("Indietro")
     }
 
-    // Stesso stile "pillola" della barra a destra.
-    private var titlePill: some View {
-        TextField("Titolo", text: $note.title)
-            .font(.system(size: 15, weight: .semibold))
-            .textFieldStyle(.plain)
-            .foregroundStyle(DesignColor.textPrimary)
-            .padding(.horizontal, DesignSpace.s3 + 2)
-            .frame(height: headerRowHeight)
-            .frame(minWidth: 160, maxWidth: 280)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().stroke(DesignColor.borderDefault, lineWidth: 1))
-            .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
-    }
+    // Il titolo non compare più sul foglio mentre scrivi: si rinomina
+    // dal menu della barra in alto a destra.
 
     // Barra fissa in alto a destra (non si sposta con la floatbar della
     // penna): annulla/ripeti, strumenti/widget, ricerca, impostazioni.
     private var topRightToolbar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 2) {
             // "Avanti/indietro" come azione (annulla/ripeti), non come
             // scorrimento tra pagine — quello resta nelle miniature delle
             // impostazioni foglio.
             Button(action: drawingController.undo) {
                 Image(systemName: "arrow.uturn.backward")
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Annulla")
 
             Button(action: drawingController.redo) {
                 Image(systemName: "arrow.uturn.forward")
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Ripeti")
 
@@ -383,16 +793,14 @@ struct NoteEditorView: View {
                 showingToolsPicker = true
             } label: {
                 Image(systemName: "square.grid.2x2.fill")
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
             }
-            .accessibilityLabel("Strumenti e widget")
+            .accessibilityLabel("Strumenti")
             .popover(isPresented: $showingToolsPicker) {
                 ToolsPickerSheet { tool in
                     showingToolsPicker = false
-                    if let kind = tool.widgetKind {
-                        insertWidget(kind: kind)
-                    } else {
-                        sidePanelTool = tool
-                    }
+                    openSidePanel(tool)
                 }
                 .presentationCompactAdaptation(.popover)
             }
@@ -401,6 +809,8 @@ struct NoteEditorView: View {
                 showingSearch = true
             } label: {
                 Image(systemName: "magnifyingglass")
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Cerca nella nota")
             .popover(isPresented: $showingSearch) {
@@ -416,27 +826,49 @@ struct NoteEditorView: View {
                 .presentationCompactAdaptation(.popover)
             }
 
-            Button {
-                showingSettings = true
+            Menu {
+                Button {
+                    renameText = note.title
+                    showingRename = true
+                } label: {
+                    Label("Rinomina nota", systemImage: "textformat")
+                }
+                Button {
+                    showingSettings = true
+                } label: {
+                    Label("Impostazioni foglio", systemImage: "slider.horizontal.3")
+                }
             } label: {
                 Image(systemName: "slider.horizontal.3")
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
             }
-            .accessibilityLabel("Impostazioni foglio")
+            .accessibilityLabel("Impostazioni e rinomina")
         }
         .font(.system(size: 15, weight: .medium))
         .foregroundStyle(DesignColor.textPrimary)
         .buttonStyle(.plain)
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        // Ogni voce diventa un bersaglio quadrato pieno invece della sola
+        // icona: prima l'area sensibile era grande quanto il glifo e
+        // mancare il tocco era la norma.
+        .padding(.horizontal, DesignSpace.s2)
         .frame(height: headerRowHeight)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().stroke(DesignColor.borderDefault, lineWidth: 1))
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(DesignColor.borderDefault.opacity(0.6), lineWidth: 1))
+        .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
     }
 
     // Inizio verticale della pagina attualmente visibile, per inserire i
     // nuovi elementi lì invece che sempre in cima al foglio.
     private var currentPageTop: Double {
         Double(drawingController.visibleContentRect?.minY ?? 0) + 60
+    }
+
+    private func insertTextBox(_ text: String, at rect: CGRect) {
+        var box = NoteTextBox(x: rect.minX, y: rect.maxY + 12)
+        box.text = text
+        note.textBoxes.append(box)
+        note.updatedAt = .now
     }
 
     private func insertMedia(kind: NoteMediaKind, data: Data) {
@@ -451,29 +883,49 @@ struct NoteEditorView: View {
         note.updatedAt = .now
     }
 
-    private func insertWidget(kind: NoteWidgetKind) {
-        // I widget compaiono come card fluttuanti sulla destra della
-        // pagina attualmente visibile, non sempre in cima al foglio.
-        let offset = Double(note.widgets.count % 6) * 24
-        let size = defaultSize(for: kind)
-        let x = max(24, note.pageSize.width - size.width - 32) - offset
-        let widget = NoteWidget(x: x, y: currentPageTop + offset, width: size.width, height: size.height, kind: kind, note: note)
-        context.insert(widget)
-        note.updatedAt = .now
-    }
-
-    private func defaultSize(for kind: NoteWidgetKind) -> CGSize {
-        switch kind {
-        case .graph: CGSize(width: 260, height: 240)
-        case .todo: CGSize(width: 240, height: 260)
-        case .pomodoro: CGSize(width: 240, height: 220)
-        case .wolfram: CGSize(width: 260, height: 180)
+    // Scrive colori/spessori scelti alla chiusura della nota (un solo
+    // punto di salvataggio: otto onChange separati mandavano in timeout
+    // il type-checker di SwiftUI).
+    private func saveToolPreferences() {
+        var colors: [String: String] = [:]
+        var widths: [String: Double] = [:]
+        for tool in PenTool.inkTools {
+            if let hex = (inkColors[tool] ?? tool.defaultColor).hexString {
+                colors[tool.rawValue] = hex
+            }
+            widths[tool.rawValue] = Double(inkWidths[tool] ?? tool.defaultWidth)
         }
+        if let data = try? JSONEncoder().encode(StoredInkSettings(colors: colors, widths: widths)),
+           let string = String(data: data, encoding: .utf8) {
+            storedInkSettings = string
+        }
+        storedEraserType = eraserType == .vector ? "vector" : "bitmap"
+        storedEraserWidth = eraserWidth
     }
 
-    private func deleteWidget(_ item: NoteWidget) {
-        context.delete(item)
-        note.updatedAt = .now
+    // Rilegge colori/spessori salvati all'apertura della nota. Uno
+    // strumento mai configurato prende i propri default: è anche il
+    // caso di chi aggiorna l'app e si ritrova i nuovi inchiostri.
+    private func restoreToolPreferences() {
+        let stored = storedInkSettings.data(using: .utf8)
+            .flatMap { try? JSONDecoder().decode(StoredInkSettings.self, from: $0) }
+        for tool in PenTool.inkTools {
+            if let hex = stored?.colors[tool.rawValue], let color = Color(hexString: hex) {
+                inkColors[tool] = color
+            } else {
+                inkColors[tool] = tool.defaultColor
+            }
+            // Uno spessore salvato può stare fuori dall'intervallo valido
+            // dell'inchiostro (per esempio una matita a 1, da prima che
+            // gli intervalli venissero presi da PencilKit): si riporta
+            // dentro, altrimenti lo slider mostrerebbe un numero che il
+            // tratto non rispetta.
+            let range = tool.widthRange
+            let width = stored?.widths[tool.rawValue].map { CGFloat($0) } ?? tool.defaultWidth
+            inkWidths[tool] = min(max(width, range.lowerBound), range.upperBound)
+        }
+        eraserType = storedEraserType == "vector" ? .vector : .bitmap
+        eraserWidth = storedEraserWidth
     }
 
     // MARK: - Strumenti temporanei (gomma, Apple Pencil)
@@ -484,6 +936,14 @@ struct NoteEditorView: View {
         guard selectedTool == .eraser, let previous = toolBeforeEraser else { return }
         selectedTool = previous
         toolBeforeEraser = nil
+    }
+
+    // Dopo uno spostamento (o un'eliminazione) col lasso, torna allo
+    // strumento di prima: stessa meccanica della gomma.
+    private func handleLassoFinished() {
+        guard selectedTool == .lasso, let previous = toolBeforeLasso else { return }
+        selectedTool = previous
+        toolBeforeLasso = nil
     }
 
     // Doppio tap sulla Apple Pencil: passa tra lo strumento corrente e la gomma.
@@ -499,90 +959,176 @@ struct NoteEditorView: View {
     // MARK: - Penna magica
 
     private func handleMagicCapture(action: MagicAction, rect: CGRect, image: UIImage) {
+        // Un uso e via: senza, restava attiva e un tocco successivo
+        // veniva letto come un altro cerchio invece che tornare a disegnare.
+        magicAction = nil
+        isMagicProcessing = true
         Task {
-            let recognizedText = await MagicPenService.recognizeText(in: image)
-            var result = MagicResult(action: action, recognizedText: recognizedText, captureRect: rect)
+            defer { isMagicProcessing = false }
+            // Riconoscimento: se il provider AI selezionato legge le
+            // immagini (Gemini/Claude), l'inchiostro va DIRETTO al modello
+            // — molto più affidabile di Vision OCR sulla notazione
+            // matematica (frazioni, esponenti, integrali). Vision resta il
+            // fallback istantaneo/offline e l'unico col modello Apple locale.
+            var recognizedText: String?
+            var aiRecognized = false
+            var cloudFailureReason: String?
+            let transcriptionPrompt = action == .latex
+                ? "Trascrivi la matematica scritta a mano in questa immagine in codice LaTeX valido. Rispondi SOLO con il codice LaTeX, senza delimitatori $ né spiegazioni."
+                : "Trascrivi esattamente ciò che è scritto a mano in questa immagine. Se contiene notazione matematica, trascrivila in testo lineare comprensibile da Wolfram Alpha (esempi: 'integrate x^2 dx from 0 to 1', 'solve x^2+3x-2=0'); se è una semplice funzione di x, scrivila come espressione (es. 'x^2 - 9'). Rispondi SOLO con la trascrizione, senza commenti né virgolette."
+            switch await AIService.generate(prompt: transcriptionPrompt, image: image) {
+            case .success(let text):
+                let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleaned.isEmpty {
+                    recognizedText = cleaned
+                    aiRecognized = true
+                }
+            case .failure(let error):
+                // Il motivo del fallback (quota finita, chiave non valida,
+                // rete...) va mostrato, non inghiottito.
+                if AIService.selectedProvider != .appleLocal {
+                    cloudFailureReason = error.message
+                }
+            }
+            if recognizedText == nil {
+                recognizedText = await MagicPenService.recognizeText(in: image)
+            }
+            let via: String
+            if aiRecognized {
+                via = "\(AIService.selectedProvider.label) · cloud"
+            } else if let cloudFailureReason {
+                via = "Vision · locale (\(AIService.selectedProvider.label): \(cloudFailureReason))"
+            } else {
+                via = "Vision · locale"
+            }
 
             guard let text = recognizedText, !text.isEmpty else {
+                var result = MagicResult(action: action, recognizedText: nil, captureRect: rect)
+                result.recognizedVia = via
                 result.errorMessage = "Non sono riuscito a riconoscere la scrittura. Prova a scrivere più in stampatello e cerchia di nuovo."
                 magicResult = result
                 return
             }
 
-            switch action {
-            case .wolfram:
-                let appID = UserDefaults.standard.string(forKey: "wolframAlphaAppID") ?? ""
-                if appID.isEmpty {
-                    result.errorMessage = "Aggiungi la tua chiave Wolfram Alpha nel Profilo per usare questa funzione."
-                } else {
-                    result.resultText = await MagicPenService.queryWolfram(text: text, appID: appID)
-                    if result.resultText == nil {
-                        result.errorMessage = "Wolfram Alpha non ha risposto. Controlla la connessione o la chiave."
-                    }
-                }
-
-            case .draw:
-                if (try? MathExpression(text)) != nil {
-                    result.graphExpression = text
-                } else {
-                    result.errorMessage = "Non sono riuscito a interpretare un'espressione matematica valida da \"\(text)\"."
-                }
-
-            case .latex:
-                result.resultText = text
-
-            case .explain:
-                // Prova prima il modello Apple locale (gratis, on-device);
-                // se non disponibile e c'è una chiave Anthropic salvata,
-                // usa Claude via API come alternativa.
-                switch await MagicPenService.explainLocally(text: text) {
-                case .success(let explanation):
-                    result.resultText = explanation
-                case .failure(let reason):
-                    let apiKey = UserDefaults.standard.string(forKey: "anthropicAPIKey") ?? ""
-                    if !apiKey.isEmpty {
-                        result.resultText = await MagicPenService.queryClaude(text: text, apiKey: apiKey)
-                        if result.resultText == nil {
-                            result.errorMessage = "Claude non ha risposto. Controlla la connessione o la chiave."
-                        }
-                    } else {
-                        result.errorMessage = reason.message
-                    }
-                }
-
-            case .search:
-                if let url = MagicPenService.searchURL(for: text) {
-                    openURL(url)
-                }
-                return
+            if let result = await processMagic(action: action, text: text, latexAlreadyConverted: aiRecognized && action == .latex, rect: rect, via: via) {
+                magicResult = result
             }
-
-            magicResult = result
         }
     }
 
-    private func insertMagicResult(_ result: MagicResult) {
+    // Esegue l'azione della penna magica su un testo già riconosciuto (o
+    // corretto a mano dall'utente nel foglio dei risultati). Restituisce
+    // nil per le azioni senza foglio (Cerca apre il browser e basta).
+    private func processMagic(action: MagicAction, text: String, latexAlreadyConverted: Bool, rect: CGRect, via: String?) async -> MagicResult? {
+        var result = MagicResult(action: action, recognizedText: text, captureRect: rect)
+        result.recognizedVia = via
+
+        switch action {
+        case .wolfram:
+            let appID = UserDefaults.standard.string(forKey: "wolframAlphaAppID") ?? ""
+            if appID.isEmpty {
+                result.errorMessage = "Aggiungi la tua chiave Wolfram Alpha nel Profilo per usare questa funzione."
+            } else {
+                switch await MagicPenService.queryWolfram(text: text, appID: appID) {
+                case .success(let wolframResult):
+                    result.resultText = wolframResult.text
+                    result.resultImageURLs = wolframResult.imageURLs
+                case .failure(let reason):
+                    result.errorMessage = "Wolfram Alpha: \(reason.message)"
+                }
+            }
+
+        case .draw:
+            if (try? MathExpression(text)) != nil {
+                result.graphExpression = text
+            } else {
+                result.errorMessage = "Non sono riuscito a interpretare un'espressione matematica valida da \"\(text)\"."
+            }
+
+        case .latex:
+            if latexAlreadyConverted {
+                // Il modello vision ha già trascritto direttamente in
+                // LaTeX: nessuna seconda conversione (che ripartirebbe
+                // dal testo lineare, reintroducendo errori).
+                result.resultText = text
+            } else {
+                switch await AIService.generate(prompt: MagicPenService.latexPrompt(for: text), purpose: .reading) {
+                case .success(let latex):
+                    result.resultText = MagicPenService.cleanLaTeX(latex)
+                case .failure(let error):
+                    result.errorMessage = error.message
+                }
+            }
+
+        case .explain:
+            // Passa da AIService come il resto dell'app: usa il provider
+            // che l'utente ha davvero scelto (Apple locale, Gemini o
+            // Claude) invece di tentare solo il locale, e riporta il
+            // motivo vero dell'errore (quota, chiave, rete).
+            switch await AIService.generate(prompt: MagicPenService.explainPrompt(for: text)) {
+            case .success(let explanation):
+                result.resultText = explanation
+            case .failure(let error):
+                result.errorMessage = error.message
+            }
+
+        case .search:
+            if let url = MagicPenService.searchURL(for: text) {
+                openURL(url)
+            }
+            return nil
+        }
+
+        return result
+    }
+
+    // `toPanel`: il risultato apre lo strumento corrispondente nel
+    // pannello laterale (precompilato) — i widget sul foglio non
+    // esistono più.
+    private func insertMagicResult(_ result: MagicResult, toPanel: Bool = false) {
         switch result.action {
         case .draw:
             if let expression = result.graphExpression {
-                let widget = NoteWidget(
-                    x: result.captureRect.minX,
-                    y: result.captureRect.maxY + 12,
-                    width: 260, height: 220,
-                    kind: .graph, note: note
-                )
-                widget.encode(GraphWidgetState(expression: expression))
-                context.insert(widget)
+                panelGraphExpression = expression
+                openSidePanel(.graphing)
             }
-        case .wolfram, .latex, .explain:
+        case .wolfram where toPanel:
+            panelWolframPrefill = result.recognizedText
+            openSidePanel(.wolfram)
+        case .latex:
+            // Sul foglio va la formula COMPOSTA, non il codice sorgente:
+            // il LaTeX grezzo si copia col pulsante apposta. Se la
+            // composizione fallisce si ripiega sul testo, così l'inserimento
+            // non diventa un tocco a vuoto.
+            guard let text = result.resultText else { break }
+            let rect = result.captureRect
+            Task { @MainActor in
+                if let image = await LaTeXImageRenderer.image(for: text),
+                   let data = image.pngData() {
+                    let item = NoteMedia(
+                        x: rect.minX,
+                        y: rect.maxY + 12,
+                        width: Double(image.size.width),
+                        height: Double(image.size.height),
+                        kind: .formula,
+                        data: data,
+                        // Il sorgente resta attaccato all'immagine: è ciò
+                        // che permette di riaprirla e correggerla.
+                        sourceText: text,
+                        note: note
+                    )
+                    context.insert(item)
+                    note.updatedAt = .now
+                } else {
+                    insertTextBox(text, at: rect)
+                }
+            }
+        case .wolfram, .explain:
             if let text = result.resultText {
-                var box = NoteTextBox(x: result.captureRect.minX, y: result.captureRect.maxY + 12)
-                box.text = text
-                note.textBoxes.append(box)
+                insertTextBox(text, at: result.captureRect)
             }
         case .search:
             break
         }
-        note.updatedAt = .now
     }
 }

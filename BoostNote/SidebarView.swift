@@ -46,6 +46,10 @@ struct SidebarView: View {
     @Binding var environment: AppEnvironment
     @Binding var selectedNote: Note?
     @Binding var selectedFolder: Folder?
+    @Binding var selectedStudy: Study?
+    @Binding var selectedStudyModule: StudyModule?
+    @Binding var showingStudioProgress: Bool
+    var onCreateStudy: () -> Void
     var onOpenProfile: () -> Void
 
     @Query(filter: #Predicate<Folder> { $0.parent == nil }, sort: \Folder.name)
@@ -76,6 +80,11 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             header
             navSection
+
+            // La barra laterale contiene SOLO le cartelle delle note.
+            // Gli studi vivono nella pagina di Studio (StudioHomeView):
+            // stavano qui in fondo, ma ci si arrivava cliccando in alto,
+            // ed erano governati da quattro icone indistinguibili.
             folderListHeader
 
             List(selection: $selectedNote) {
@@ -197,6 +206,14 @@ struct SidebarView: View {
                     if env == .home {
                         selectedNote = nil
                         selectedFolder = nil
+                    }
+                    // Toccare "Studio" torna sempre alla sua pagina
+                    // iniziale: senza questo, chi era dentro a uno studio
+                    // ci restava e il pulsante sembrava non fare nulla.
+                    if env == .studio {
+                        selectedStudy = nil
+                        selectedStudyModule = nil
+                        showingStudioProgress = false
                     }
                 } label: {
                     HStack(spacing: 10) {
@@ -327,9 +344,17 @@ struct SidebarView: View {
                     selectedFolder = folder
                 } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: "folder.fill")
-                            .font(.system(size: 15))
-                            .foregroundStyle(folder.folderColor.color)
+                        // Icona in una tessera colorata come le card degli
+                        // studi: dà peso visivo alla cartella e rende i
+                        // due ambienti riconoscibilmente parenti.
+                        RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                            .fill(folder.folderColor.color.opacity(0.14))
+                            .frame(width: 26, height: 26)
+                            .overlay(
+                                Image(systemName: "folder.fill")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(folder.folderColor.color)
+                            )
                         Text(folder.name)
                             .font(.system(size: 14, weight: selectedFolder == folder ? .semibold : .medium))
                             .foregroundStyle(selectedFolder == folder ? DesignColor.brandPrimary : DesignColor.textPrimary)
@@ -341,8 +366,11 @@ struct SidebarView: View {
 
                 if !folder.notes.isEmpty {
                     Text("\(folder.notes.count)")
-                        .font(.system(size: 12))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(DesignColor.textTertiary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(DesignColor.surfacePage, in: Capsule())
                 }
                 newDocumentMenu(folder: folder) {
                     Image(systemName: "plus.circle.fill")
@@ -355,11 +383,15 @@ struct SidebarView: View {
             .padding(.horizontal, DesignSpace.s2 + 2)
             .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
             .listRowSeparator(.hidden)
-            .listRowBackground(
-                dropTargetFolderID == folder.persistentModelID
-                    ? DesignColor.brandPrimarySubtle
-                    : (selectedFolder == folder ? DesignColor.brandPrimarySubtle.opacity(0.5) : Color.clear)
+            .background(
+                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                    .fill(
+                        dropTargetFolderID == folder.persistentModelID
+                            ? DesignColor.brandPrimarySubtle
+                            : (selectedFolder == folder ? DesignColor.brandPrimarySubtle.opacity(0.6) : Color.clear)
+                    )
             )
+            .listRowBackground(Color.clear)
             .dropDestination(for: String.self) { items, _ in
                 handleNoteDropStrings(items, into: folder)
                 return true
@@ -394,10 +426,17 @@ struct SidebarView: View {
         case .note(let note):
             let isSelected = selectedNote == note
             HStack(spacing: 10) {
-                Image(systemName: "note.text")
-                    .font(.system(size: 15))
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                    .fill(DesignColor.surfacePage)
+                    .frame(width: 26, height: 26)
+                    .overlay(
+                        Image(systemName: "note.text")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.textSecondary)
+                    )
                 Text(note.title.isEmpty ? "Senza titolo" : note.title)
                     .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                    .lineLimit(1)
                 Spacer()
             }
             .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.textPrimary)

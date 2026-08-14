@@ -106,7 +106,7 @@ struct ToolsPickerSheet: View {
             Button {
                 onSelect(tool)
             } label: {
-                Text(tool.isInsertableWidget ? "Aggiungi alla nota" : "Apri")
+                Text("Apri nel pannello")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)

@@ -43,8 +43,83 @@ final class ArxivSearchModel {
     }
 }
 
+// Paper consultato di recente (PDF aperto o aggiunto a una nota).
+// Cronologia di sola consultazione: vive in UserDefaults come JSON,
+// niente SwiftData — non è un dato dell'utente da sincronizzare.
+struct RecentPaper: Codable, Identifiable, Equatable {
+    var title: String
+    var authors: String
+    var link: URL?
+    var viewedAt: Date
+
+    var id: String { link?.absoluteString ?? title }
+
+    var pdfLink: URL? {
+        guard let link else { return nil }
+        return URL(string: link.absoluteString.replacingOccurrences(of: "/abs/", with: "/pdf/"))
+    }
+}
+
+enum RecentPapersStore {
+    private static let key = "researchRecentPapers"
+    private static let maxCount = 8
+
+    static func load() -> [RecentPaper] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let list = try? JSONDecoder().decode([RecentPaper].self, from: data) else { return [] }
+        return list
+    }
+
+    // In testa, senza duplicati (rivedere un paper lo riporta su).
+    static func record(_ paper: ArxivPaper) -> [RecentPaper] {
+        let entry = RecentPaper(title: paper.title, authors: paper.authors, link: paper.link, viewedAt: .now)
+        var list = load().filter { $0.id != entry.id }
+        list.insert(entry, at: 0)
+        list = Array(list.prefix(maxCount))
+        save(list)
+        return list
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    private static func save(_ list: [RecentPaper]) {
+        guard let data = try? JSONEncoder().encode(list) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
+// Paper fissati dall'utente: stessa forma dei recenti (RecentPaper) ma
+// lista separata, senza cap e senza rotazione — restano finché non si
+// tolgono. Anche questa in UserDefaults: è una scorciatoia, non un dato.
+enum PinnedPapersStore {
+    private static let key = "researchPinnedPapers"
+
+    static func load() -> [RecentPaper] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let list = try? JSONDecoder().decode([RecentPaper].self, from: data) else { return [] }
+        return list
+    }
+
+    static func toggle(_ paper: ArxivPaper) -> [RecentPaper] {
+        let entry = RecentPaper(title: paper.title, authors: paper.authors, link: paper.link, viewedAt: .now)
+        var list = load()
+        if list.contains(where: { $0.id == entry.id }) {
+            list.removeAll { $0.id == entry.id }
+        } else {
+            list.insert(entry, at: 0)
+        }
+        guard let data = try? JSONEncoder().encode(list) else { return list }
+        UserDefaults.standard.set(data, forKey: key)
+        return list
+    }
+}
+
 // Contenuto condiviso: usato sia dal pannello Strumenti (dentro una nota,
 // come sheet) sia dall'ambiente "Ricerca" a tutta pagina nella sidebar.
+// Layout dal mock ResearchScreen.jsx del design system: colonna centrata
+// (max 640), righe con tile icona 36×36 e separatori sottili.
 struct ResearchContentView: View {
     @Bindable var model: ArxivSearchModel
     var onImported: (Note) -> Void = { _ in }
@@ -52,72 +127,50 @@ struct ResearchContentView: View {
     @Environment(\.openURL) private var openURL
 
     @State private var pendingPaper: ArxivPaper?
+    // Presentazione separata dai dati: vedi nota in WebeepEnvironmentView —
+    // il Binding calcolato azzerava pendingPaper prima che il Task lo leggesse.
+    @State private var showingImportChoice = false
     @State private var showingNotePicker = false
     @State private var isImporting = false
     @State private var importErrorMessage: String?
+    @State private var recents: [RecentPaper] = RecentPapersStore.load()
+    @State private var pinned: [RecentPaper] = PinnedPapersStore.load()
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: DesignSpace.s2) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(DesignColor.textTertiary)
-                TextField("Cerca paper (es. neural networks)", text: $model.query)
-                    .textFieldStyle(.plain)
-                    .onSubmit { Task { await model.search() } }
-                if model.isSearching {
-                    ProgressView()
-                }
-            }
-            .padding(DesignSpace.s3)
-            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
-            .padding(DesignSpace.s4)
+        ScrollView {
+            VStack(alignment: .leading, spacing: DesignSpace.s5) {
+                searchField
 
-            if let errorMessage = model.errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(DesignColor.textSecondary)
-                    .padding(.bottom, DesignSpace.s2)
-            }
-
-            List(model.results) { paper in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(paper.title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(DesignColor.textPrimary)
-                    Text(paper.authors)
+                if let errorMessage = model.errorMessage {
+                    Text(errorMessage)
                         .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.textTertiary)
-
-                    HStack(spacing: DesignSpace.s4) {
-                        if let pdfLink = paper.pdfLink {
-                            Button {
-                                openURL(pdfLink)
-                            } label: {
-                                Label("Apri PDF", systemImage: "doc.text")
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                        }
-                        Button {
-                            pendingPaper = paper
-                        } label: {
-                            Label("Aggiungi a una nota", systemImage: "plus.circle")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .disabled(paper.pdfLink == nil || isImporting)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(DesignColor.brandPrimary)
+                        .foregroundStyle(DesignColor.textSecondary)
+                        .padding(.horizontal, DesignSpace.s1)
                 }
-                .padding(.vertical, 4)
-                .listRowSeparator(.hidden)
+
+                if !model.results.isEmpty {
+                    resultsSection
+                } else if !model.isSearching {
+                    if !pinned.isEmpty {
+                        pinnedSection
+                    }
+                    if !visibleRecents.isEmpty {
+                        recentsSection
+                    }
+                    if pinned.isEmpty && visibleRecents.isEmpty {
+                        emptyState
+                    }
+                }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
+            .padding(.horizontal, DesignSpace.s6)
+            .padding(.vertical, DesignSpace.s6)
+            .frame(maxWidth: 640)
+            .frame(maxWidth: .infinity)
         }
-        .background(DesignColor.surfaceSunken)
+        .background(DesignColor.surfacePage)
         .confirmationDialog(
             "Come vuoi aggiungere questo paper?",
-            isPresented: Binding(get: { pendingPaper != nil && !showingNotePicker }, set: { if !$0 { pendingPaper = nil } }),
+            isPresented: $showingImportChoice,
             titleVisibility: .visible
         ) {
             Button("In una nuova nota") { Task { await importPaper(target: .newNote) } }
@@ -135,6 +188,163 @@ struct ResearchContentView: View {
         } message: {
             Text(importErrorMessage ?? "")
         }
+    }
+
+    // MARK: - Sottoviste
+
+    private var searchField: some View {
+        HStack(spacing: DesignSpace.s2) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(DesignColor.textTertiary)
+            TextField("Cerca su arXiv (es. neural networks)", text: $model.query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .submitLabel(.search)
+                .onSubmit { Task { await model.search() } }
+            if model.isSearching {
+                ProgressView()
+                    .controlSize(.small)
+            } else if !model.query.isEmpty {
+                Button {
+                    model.query = ""
+                    model.results = []
+                    model.errorMessage = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Svuota ricerca")
+            }
+        }
+        .padding(.horizontal, DesignSpace.s3)
+        .padding(.vertical, DesignSpace.s3)
+        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous)
+                .strokeBorder(DesignColor.borderSubtle)
+        )
+    }
+
+    // I recenti già fissati non si ripetono sotto: vivono nella sezione
+    // "Fissati" finché restano tali.
+    private var visibleRecents: [RecentPaper] {
+        let pinnedIDs = Set(pinned.map(\.id))
+        return recents.filter { !pinnedIDs.contains($0.id) }
+    }
+
+    private func isPinned(id: String) -> Bool {
+        pinned.contains { $0.id == id }
+    }
+
+    private var resultsSection: some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s2) {
+            sectionHeader("Risultati")
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(model.results) { paper in
+                    paperRow(for: paper, tileIcon: "doc.text")
+                    if paper.id != model.results.last?.id {
+                        Divider().overlay(DesignColor.borderSubtle)
+                    }
+                }
+            }
+        }
+    }
+
+    private var pinnedSection: some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s2) {
+            sectionHeader("Fissati")
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(pinned) { entry in
+                    paperRow(for: entry.asArxivPaper, tileIcon: "pin")
+                    if entry.id != pinned.last?.id {
+                        Divider().overlay(DesignColor.borderSubtle)
+                    }
+                }
+            }
+        }
+    }
+
+    private var recentsSection: some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s2) {
+            HStack {
+                sectionHeader("Visti di recente")
+                Spacer()
+                Button("Svuota") {
+                    RecentPapersStore.clear()
+                    recents = []
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DesignColor.textTertiary)
+                .buttonStyle(.plain)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(visibleRecents) { recent in
+                    paperRow(for: recent.asArxivPaper, tileIcon: "clock")
+                    if recent.id != visibleRecents.last?.id {
+                        Divider().overlay(DesignColor.borderSubtle)
+                    }
+                }
+            }
+        }
+    }
+
+    // Riga unica per risultati, fissati e recenti: cambia solo l'icona del
+    // tile, così pin/import/apri si comportano identici ovunque.
+    private func paperRow(for paper: ArxivPaper, tileIcon: String) -> some View {
+        let rowID = paper.link?.absoluteString ?? paper.title
+        return PaperRow(
+            title: paper.title,
+            subtitle: paper.authors,
+            tileIcon: tileIcon,
+            isPinned: isPinned(id: rowID),
+            canImport: paper.pdfLink != nil && !isImporting,
+            onTogglePin: {
+                withAnimation(.snappy(duration: 0.2)) {
+                    pinned = PinnedPapersStore.toggle(paper)
+                }
+            },
+            onOpenPDF: paper.pdfLink.map { pdfLink in
+                { openPDF(pdfLink, recording: paper) }
+            },
+            onImport: {
+                pendingPaper = paper
+                showingImportChoice = true
+            }
+        )
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: DesignSpace.s3) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(DesignColor.textTertiary)
+            Text("Cerca un paper su arXiv")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(DesignColor.textSecondary)
+            Text("I paper che apri o aggiungi a una nota compariranno qui, tra i visti di recente.")
+                .font(.system(size: 12))
+                .foregroundStyle(DesignColor.textTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, DesignSpace.s8 * 2)
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 11, weight: .semibold))
+            .tracking(0.6)
+            .foregroundStyle(DesignColor.textTertiary)
+            .padding(.horizontal, DesignSpace.s1)
+    }
+
+    private func openPDF(_ url: URL, recording paper: ArxivPaper) {
+        recents = RecentPapersStore.record(paper)
+        openURL(url)
     }
 
     private enum ImportTarget {
@@ -160,9 +370,110 @@ struct ResearchContentView: View {
         case .existingNote(let existing):
             note = existing
         }
-        note.appendPDFPages(from: data)
+        guard note.appendPages(fromPDF: data, in: context) else {
+            if case .newNote = target { context.delete(note) }
+            importErrorMessage = "Il PDF di \"\(paper.title)\" non è leggibile. Riprova più tardi."
+            return
+        }
         note.updatedAt = .now
+        recents = RecentPapersStore.record(paper)
         onImported(note)
+    }
+}
+
+extension RecentPaper {
+    // Per riusare il flusso di import esistente (che lavora su ArxivPaper).
+    var asArxivPaper: ArxivPaper {
+        ArxivPaper(title: title, authors: authors, summary: "", link: link)
+    }
+}
+
+// Riga paper dal mock: tile icona 36×36 su surfaceSunken, titolo 14
+// semibold, autori 12 terziario, azioni come pill sotto.
+private struct PaperRow: View {
+    var title: String
+    var subtitle: String
+    var tileIcon: String
+    var isPinned: Bool
+    var canImport: Bool
+    var onTogglePin: () -> Void
+    var onOpenPDF: (() -> Void)?
+    var onImport: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DesignSpace.s3 + 2) {
+            RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                .fill(DesignColor.surfaceSunken)
+                .frame(width: 36, height: 36)
+                .overlay(
+                    Image(systemName: tileIcon)
+                        .font(.system(size: 15))
+                        .foregroundStyle(DesignColor.textSecondary)
+                )
+
+            VStack(alignment: .leading, spacing: DesignSpace.s1) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DesignColor.textPrimary)
+                    .lineLimit(3)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textTertiary)
+                        .lineLimit(2)
+                }
+
+                HStack(spacing: DesignSpace.s2) {
+                    if let onOpenPDF {
+                        Button(action: onOpenPDF) {
+                            Label("Apri PDF", systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(PaperActionStyle())
+                    }
+                    Button(action: onImport) {
+                        Label("Aggiungi a nota", systemImage: "plus.circle")
+                    }
+                    .buttonStyle(PaperActionStyle())
+                    .disabled(!canImport)
+                }
+                .padding(.top, DesignSpace.s1)
+            }
+
+            Spacer(minLength: 0)
+
+            Button(action: onTogglePin) {
+                Image(systemName: isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(isPinned ? DesignColor.brandPrimary : DesignColor.textTertiary)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        isPinned ? DesignColor.brandPrimarySubtle : .clear,
+                        in: Circle()
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isPinned ? "Togli dai fissati" : "Fissa il paper")
+        }
+        .padding(.vertical, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s1)
+    }
+}
+
+// Pill compatta per le azioni di riga: brand su fondo brand tenue.
+private struct PaperActionStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(isEnabled ? DesignColor.brandPrimary : DesignColor.textTertiary)
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, 6)
+            .background(
+                isEnabled ? DesignColor.brandPrimarySubtle : DesignColor.surfaceSunken,
+                in: Capsule()
+            )
+            .opacity(configuration.isPressed ? 0.6 : 1)
     }
 }
 

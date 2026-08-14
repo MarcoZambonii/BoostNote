@@ -17,6 +17,10 @@ struct WebeepEnvironmentView: View {
     @State private var showingAuth = false
 
     @State private var pendingFile: WebeepFile?
+    // Presentazione separata dai dati: il Binding calcolato che azzerava
+    // pendingFile alla chiusura faceva una corsa col Task del bottone,
+    // che spesso leggeva già nil — l'import non partiva mai.
+    @State private var showingImportChoice = false
     @State private var showingNotePicker = false
     @State private var isImporting = false
     @State private var importErrorMessage: String?
@@ -62,17 +66,22 @@ struct WebeepEnvironmentView: View {
         }
         .confirmationDialog(
             "Come vuoi importare questo file?",
-            isPresented: Binding(get: { pendingFile != nil && !showingNotePicker }, set: { if !$0 { pendingFile = nil } }),
+            isPresented: $showingImportChoice,
             titleVisibility: .visible
         ) {
-            Button("In una nuova nota") { Task { await importFile(target: .newNote) } }
+            // Il file viene catturato SUBITO nell'azione del bottone: il
+            // Task parte dopo la chiusura del dialogo, quando pendingFile
+            // potrebbe già essere stato azzerato.
+            Button("In una nuova nota") {
+                if let file = pendingFile { Task { await importFile(file, target: .newNote) } }
+            }
             Button("In una nota esistente") { showingNotePicker = true }
             Button("Annulla", role: .cancel) { pendingFile = nil }
         }
         .sheet(isPresented: $showingNotePicker) {
             WebeepNotePickerSheet { note in
                 showingNotePicker = false
-                Task { await importFile(target: .existingNote(note)) }
+                if let file = pendingFile { Task { await importFile(file, target: .existingNote(note)) } }
             }
         }
         .alert("Import non riuscito", isPresented: Binding(get: { importErrorMessage != nil }, set: { if !$0 { importErrorMessage = nil } })) {
@@ -343,12 +352,12 @@ struct WebeepEnvironmentView: View {
 
             Button {
                 pendingFile = file
+                showingImportChoice = true
             } label: {
                 Image(systemName: "plus.circle")
                     .foregroundStyle(isPDF(file) || isImage(file) ? DesignColor.textTertiary : DesignColor.textTertiary.opacity(0.4))
             }
             .buttonStyle(.plain)
-            .disabled(!isPDF(file) && !isImage(file))
             .accessibilityLabel("Aggiungi a una nota")
         }
         .padding(.horizontal, DesignSpace.s3 + 2)
@@ -387,13 +396,19 @@ struct WebeepEnvironmentView: View {
     }
 
     private func download(_ file: WebeepFile) async {
-        guard let token else { return }
+        guard let token else {
+            importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
+            return
+        }
         isDownloading = true
         downloadingFileID = file.id
         defer { isDownloading = false; downloadingFileID = nil }
 
-        guard let data = await WebeepService.downloadFile(file, token: token) else {
-            importErrorMessage = "Non sono riuscito a scaricare \"\(file.filename)\"."
+        let data: Data
+        do {
+            data = try await WebeepService.downloadFile(file, token: token)
+        } catch {
+            importErrorMessage = "\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)"
             return
         }
         let safeName = WebeepService.stripMultilang(file.filename).replacingOccurrences(of: "/", with: "-")
@@ -407,13 +422,19 @@ struct WebeepEnvironmentView: View {
     }
 
     private func quickLook(_ file: WebeepFile) async {
-        guard let token else { return }
+        guard let token else {
+            importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
+            return
+        }
         isLoadingPreview = true
         previewingFileID = file.id
         defer { isLoadingPreview = false; previewingFileID = nil }
 
-        guard let data = await WebeepService.downloadFile(file, token: token) else {
-            importErrorMessage = "Non sono riuscito a scaricare \"\(file.filename)\" per l'anteprima."
+        let data: Data
+        do {
+            data = try await WebeepService.downloadFile(file, token: token)
+        } catch {
+            importErrorMessage = "\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)"
             return
         }
         let safeName = WebeepService.stripMultilang(file.filename).replacingOccurrences(of: "/", with: "-")
@@ -431,13 +452,19 @@ struct WebeepEnvironmentView: View {
         case existingNote(Note)
     }
 
-    private func importFile(target: ImportTarget) async {
-        guard let file = pendingFile, let token else { return }
+    private func importFile(_ file: WebeepFile, target: ImportTarget) async {
+        guard let token else {
+            importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
+            return
+        }
         isImporting = true
         defer { isImporting = false; pendingFile = nil }
 
-        guard let data = await WebeepService.downloadFile(file, token: token) else {
-            importErrorMessage = "Non sono riuscito a scaricare \"\(file.filename)\". Controlla la connessione e riprova."
+        let data: Data
+        do {
+            data = try await WebeepService.downloadFile(file, token: token)
+        } catch {
+            importErrorMessage = "\"\(WebeepService.stripMultilang(file.filename))\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)"
             return
         }
 
@@ -455,7 +482,11 @@ struct WebeepEnvironmentView: View {
         // file che non è un vero PDF (slide, doc, immagine) restituisce
         // nil e il widget appariva vuoto/rotto, senza nessun errore.
         if isPDF(file) {
-            note.appendPDFPages(from: data)
+            guard note.appendPages(fromPDF: data, in: context) else {
+                if case .newNote = target { context.delete(note) }
+                importErrorMessage = "\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF leggibile — probabilmente WeBeep ha restituito una pagina di errore invece del file (token scaduto?). Prova a scaricarlo con la freccia per controllare, o a riaccedere a WeBeep."
+                return
+            }
         } else if isImage(file) {
             let media = NoteMedia(x: 60, y: 60, kind: .image, data: data, note: note)
             context.insert(media)

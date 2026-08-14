@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 // Come mostrare sottocartelle e note: griglia di card o lista compatta.
 enum FolderViewMode: String {
@@ -26,6 +27,7 @@ struct FolderContentsView: View {
 
     @State private var showingNoteCreate = false
     @State private var showingNewFolderSheet = false
+    @State private var showingPDFImporter = false
 
     private var subfolders: [Folder] { folder.children.sorted { $0.name < $1.name } }
     private var notes: [Note] { folder.notes.sorted { $0.updatedAt > $1.updatedAt } }
@@ -51,8 +53,8 @@ struct FolderContentsView: View {
                     quickActionCard(title: "Nuova sottocartella", subtitle: "Organizza", icon: "folder.badge.plus", color: DesignColor.success) {
                         showingNewFolderSheet = true
                     }
-                    quickActionCard(title: "Lavagna infinita", subtitle: "In \(folder.name)", icon: "scribble.variable", color: DesignColor.toolDraw) {
-                        createWhiteboard()
+                    quickActionCard(title: "Importa PDF", subtitle: "In \(folder.name)", icon: "doc.badge.plus", color: DesignColor.toolWolfram) {
+                        showingPDFImporter = true
                     }
                 }
 
@@ -153,16 +155,22 @@ struct FolderContentsView: View {
                 context.insert(newFolder)
             }
         }
+        // Stesso flusso dell'Importa PDF della Home, ma la nota nasce
+        // dentro QUESTA cartella invece che senza cartella.
+        .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf]) { result in
+            guard case .success(let url) = result else { return }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else { return }
+            let title = url.deletingPathExtension().lastPathComponent
+            let note = Note(title: title.isEmpty ? "Nuova nota" : title, folder: folder)
+            context.insert(note)
+            note.appendPages(fromPDF: data, in: context)
+            selectedFolder = nil
+            selectedNote = note
+        }
     }
 
-    private func createWhiteboard() {
-        let note = Note(title: "Lavagna infinita", folder: folder)
-        note.isWhiteboard = true
-        note.template = .cross
-        context.insert(note)
-        selectedFolder = nil
-        selectedNote = note
-    }
 
     private var viewModePicker: some View {
         HStack(spacing: 2) {

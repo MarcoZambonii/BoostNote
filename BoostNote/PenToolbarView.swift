@@ -64,15 +64,12 @@ enum ToolbarDock: String, CaseIterable {
 // bordo più vicino al rilascio, come i pannelli di sistema su iPad.
 struct PenToolbarView: View {
     @Binding var selectedTool: PenTool
-    @Binding var penColor: Color
-    @Binding var penWidth: CGFloat
-    @Binding var markerColor: Color
-    @Binding var markerWidth: CGFloat
-    @Binding var pencilColor: Color
-    @Binding var pencilWidth: CGFloat
+    @Binding var inkColors: [PenTool: Color]
+    @Binding var inkWidths: [PenTool: CGFloat]
     @Binding var eraserType: PKEraserTool.EraserType
     @Binding var eraserWidth: CGFloat
     @Binding var magicAction: MagicAction?
+    var isMagicProcessing: Bool = false
     @Binding var dock: ToolbarDock
     // Non-nil solo mentre si trascina: il bordo su cui la barra atterrerebbe
     // se rilasciata ora, per mostrare i 4 placeholder nel genitore.
@@ -80,11 +77,17 @@ struct PenToolbarView: View {
     var containerSize: CGSize
     var onInsertImage: () -> Void
     var onInsertPDF: () -> Void
+    var onInsertPDFFromWebeep: () -> Void
+    var onClearPage: () -> Void
+    var onClearHighlighter: () -> Void
 
     private let colors: [Color] = [.black, .red, .blue, .green, .orange, .purple]
 
     @State private var showingEraserOptions = false
     @State private var showingOptionsFor: PenTool?
+    @State private var showingInkPicker = false
+    @State private var showingLassoInfo = false
+    @State private var showingMagicPicker = false
     @State private var dragOffset: CGSize = .zero
     @GestureState private var isDragging = false
 
@@ -97,36 +100,28 @@ struct PenToolbarView: View {
 
         ScrollView(axis == .horizontal ? .horizontal : .vertical, showsIndicators: false) {
             layout {
-                ForEach(PenTool.allCases) { tool in
-                    switch tool {
-                    case .eraser:
-                        eraserButton
-                    case .pen:
-                        inkToolButton(.pen, color: $penColor, width: $penWidth, widthRange: 1...12)
-                    case .marker:
-                        inkToolButton(.marker, color: $markerColor, width: $markerWidth, widthRange: 6...30)
-                    case .pencil:
-                        inkToolButton(.pencil, color: $pencilColor, width: $pencilWidth, widthRange: 1...10)
-                    default:
-                        Button {
-                            selectedTool = tool
-                        } label: {
-                            toolIcon(tool.systemImage, isSelected: selectedTool == tool)
-                        }
-                        .accessibilityLabel(tool.label)
+                ForEach(visibleInks) { tool in
+                    inkToolButton(tool)
+                }
+
+                moreInksButton
+
+                eraserButton
+
+                lassoButton
+
+                ForEach([PenTool.text, .pointer]) { tool in
+                    Button {
+                        selectedTool = tool
+                    } label: {
+                        toolIcon(tool.systemImage, isSelected: selectedTool == tool)
                     }
+                    .accessibilityLabel(tool.label)
                 }
 
                 divider
 
                 magicMenu
-
-                if magicAction != nil {
-                    Text("Cerchia un'espressione")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(magicAction!.color)
-                        .fixedSize()
-                }
 
                 divider
 
@@ -139,7 +134,12 @@ struct PenToolbarView: View {
                     Button {
                         onInsertPDF()
                     } label: {
-                        Label("PDF", systemImage: "doc.richtext")
+                        Label("PDF dai file", systemImage: "doc.richtext")
+                    }
+                    Button {
+                        onInsertPDFFromWebeep()
+                    } label: {
+                        Label("PDF da WeBeep", systemImage: "graduationcap")
                     }
                 } label: {
                     toolIcon("photo.badge.plus", isSelected: false)
@@ -150,16 +150,26 @@ struct PenToolbarView: View {
 
                 dragHandle
             }
-            .padding(axis == .horizontal ? 8 : 10)
+            .padding(axis == .horizontal ? 6 : 8)
         }
-        .frame(maxWidth: axis == .horizontal ? 660 : 52)
-        .frame(maxHeight: axis == .vertical ? 520 : 52)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous))
+        // Barra più compatta: copre meno foglio, che su una nota piena di
+        // scrittura è il difetto che si nota di più.
+        .frame(maxWidth: axis == .horizontal ? 560 : 46)
+        .frame(maxHeight: axis == .vertical ? 460 : 46)
+        // ultraThin invece di regular: si legge cosa c'è sotto, così la
+        // barra sembra appoggiata sul foglio invece di bucarlo.
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous)
-                .stroke(DesignColor.borderDefault, lineWidth: 1)
+                .stroke(Color.white.opacity(0.55), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(isDragging ? 0.22 : 0.14), radius: isDragging ? 20 : 14, y: 4)
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous)
+                .stroke(DesignColor.borderDefault.opacity(0.5), lineWidth: 1)
+        )
+        // Ombra più morbida e diffusa: prima era un alone netto che
+        // faceva sembrare la barra incollata sopra invece che sospesa.
+        .shadow(color: .black.opacity(isDragging ? 0.18 : 0.10), radius: isDragging ? 24 : 18, y: 6)
         .scaleEffect(isDragging ? 1.03 : 1)
         .offset(dragOffset)
         .animation(.spring(response: 0.32, dampingFraction: 0.78), value: dragOffset)
@@ -204,28 +214,20 @@ struct PenToolbarView: View {
 
     @ViewBuilder
     private var magicMenu: some View {
-        Menu {
-            ForEach(MagicAction.allCases) { action in
-                Button {
-                    magicAction = action
-                } label: {
-                    Label(action.label, systemImage: action.systemImage)
-                }
-            }
-            if magicAction != nil {
-                Divider()
-                Button(role: .destructive) {
-                    magicAction = nil
-                } label: {
-                    Label("Disattiva", systemImage: "xmark.circle")
-                }
-            }
+        Button {
+            showingMagicPicker = true
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: magicAction?.systemImage ?? "wand.and.stars")
-                    .font(.system(size: 15, weight: .semibold))
+                if isMagicProcessing {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(magicAction != nil ? magicAction!.color : .white)
+                } else {
+                    Image(systemName: magicAction?.systemImage ?? "wand.and.stars")
+                        .font(.system(size: 15, weight: .semibold))
+                }
                 if axis == .horizontal {
-                    Text(magicAction?.label ?? "Magica")
+                    Text(isMagicProcessing ? "Elaborazione…" : (magicAction?.label ?? "Magica"))
                         .font(.system(size: 13, weight: .semibold))
                 }
             }
@@ -238,14 +240,69 @@ struct PenToolbarView: View {
                 in: Capsule()
             )
         }
+        .buttonStyle(.plain)
+        .disabled(isMagicProcessing)
         .accessibilityLabel("Penna magica")
+        // Stessa lista stile "catalogo" del picker Strumenti
+        // (ToolsPickerSheet), senza il pannello di dettaglio a destra —
+        // qui basta scegliere l'azione, non serve una spiegazione.
+        .popover(isPresented: $showingMagicPicker) {
+            MagicActionPickerView(current: magicAction) { action in
+                magicAction = action
+                showingMagicPicker = false
+            }
+        }
+    }
+
+    // MARK: - Inchiostri
+
+    // Gli inchiostri di uso quotidiano stanno sempre in barra; gli altri
+    // vivono nel menu "altri inchiostri". Sette icone in fila renderebbero
+    // la pillola una barra di scorrimento, e il difetto che si nota di più
+    // su una nota piena è proprio quanto foglio copre la barra.
+    private let primaryInks: [PenTool] = [.pen, .marker]
+
+    // L'inchiostro selezionato è SEMPRE visibile, anche se scelto dal
+    // menu: altrimenti si scriverebbe con l'acquerello senza vedere da
+    // nessuna parte quale strumento è attivo né come cambiarne il colore.
+    private var visibleInks: [PenTool] {
+        guard selectedTool.isInk, !primaryInks.contains(selectedTool) else { return primaryInks }
+        return primaryInks + [selectedTool]
+    }
+
+    private var secondaryInks: [PenTool] {
+        PenTool.inkTools.filter { !primaryInks.contains($0) }
+    }
+
+    // Circa 30 tacche su tutto l'intervallo, arrotondate a un valore
+    // "tondo" perché lo slider si fermi su numeri leggibili.
+    private func sliderStep(for range: ClosedRange<CGFloat>) -> CGFloat {
+        let span = range.upperBound - range.lowerBound
+        if span <= 5 { return 0.1 }
+        if span <= 20 { return 0.5 }
+        return 1
+    }
+
+    private func colorBinding(for tool: PenTool) -> Binding<Color> {
+        Binding(
+            get: { inkColors[tool] ?? tool.defaultColor },
+            set: { inkColors[tool] = $0 }
+        )
+    }
+
+    private func widthBinding(for tool: PenTool) -> Binding<CGFloat> {
+        Binding(
+            get: { inkWidths[tool] ?? tool.defaultWidth },
+            set: { inkWidths[tool] = $0 }
+        )
     }
 
     // Come la gomma: un tocco seleziona lo strumento (con l'ultimo
     // colore/spessore usati); un secondo tocco, a strumento già
     // selezionato, apre colore + spessore punta.
     @ViewBuilder
-    private func inkToolButton(_ tool: PenTool, color: Binding<Color>, width: Binding<CGFloat>, widthRange: ClosedRange<CGFloat>) -> some View {
+    private func inkToolButton(_ tool: PenTool) -> some View {
+        let color = colorBinding(for: tool)
         Button {
             if selectedTool == tool {
                 showingOptionsFor = tool
@@ -260,14 +317,85 @@ struct PenToolbarView: View {
             get: { showingOptionsFor == tool },
             set: { if !$0 { showingOptionsFor = nil } }
         )) {
-            inkOptions(color: color, width: width, widthRange: widthRange)
+            inkOptions(for: tool)
                 .padding(DesignSpace.s4)
-                .frame(width: 240)
+                .frame(width: 260)
                 .presentationCompactAdaptation(.popover)
         }
     }
 
-    private func inkOptions(color: Binding<Color>, width: Binding<CGFloat>, widthRange: ClosedRange<CGFloat>) -> some View {
+    @ViewBuilder
+    private var moreInksButton: some View {
+        // Gli inchiostri sono tornati a essere solo i tre principali:
+        // senza questo controllo resterebbe in barra un pulsante che apre
+        // un elenco vuoto.
+        if secondaryInks.isEmpty {
+            EmptyView()
+        } else {
+            Button {
+                showingInkPicker = true
+            } label: {
+            toolIcon("paintbrush.pointed.fill", isSelected: secondaryInks.contains(selectedTool))
+        }
+        .accessibilityLabel("Altri inchiostri")
+        .popover(isPresented: $showingInkPicker) {
+            VStack(alignment: .leading, spacing: DesignSpace.s2) {
+                Text("Altri inchiostri")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DesignColor.textTertiary)
+
+                ForEach(secondaryInks) { tool in
+                    Button {
+                        selectedTool = tool
+                        showingInkPicker = false
+                    } label: {
+                        HStack(spacing: DesignSpace.s3) {
+                            Image(systemName: tool.systemImage)
+                                .font(.system(size: 16))
+                                .frame(width: 24)
+                                .foregroundStyle(selectedTool == tool ? DesignColor.brandPrimary : DesignColor.textSecondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(tool.label)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(DesignColor.textPrimary)
+                                Text(tool.hint)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(DesignColor.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                            Circle()
+                                .fill(inkColors[tool] ?? tool.defaultColor)
+                                .frame(width: 14, height: 14)
+                        }
+                        .padding(.vertical, 5)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+                .padding(DesignSpace.s4)
+                .frame(width: 290)
+                .presentationCompactAdaptation(.popover)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func inkOptions(for tool: PenTool) -> some View {
+        let color = colorBinding(for: tool)
+        let width = widthBinding(for: tool)
+        let range = tool.widthRange
+        VStack(alignment: .leading, spacing: DesignSpace.s3) {
+            Text(tool.hint)
+                .font(.system(size: 11))
+                .foregroundStyle(DesignColor.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            inkOptionsBody(color: color, width: width, widthRange: range)
+        }
+    }
+
+    private func inkOptionsBody(color: Binding<Color>, width: Binding<CGFloat>, widthRange: ClosedRange<CGFloat>) -> some View {
         VStack(alignment: .leading, spacing: DesignSpace.s4) {
             Text("Colore")
                 .font(.system(size: 13, weight: .semibold))
@@ -299,12 +427,22 @@ struct PenToolbarView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(DesignColor.textSecondary)
                     Spacer()
-                    Text("\(Int(width.wrappedValue))")
+                    Text(Double(width.wrappedValue).formatted(.number.precision(.fractionLength(0...1))))
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundStyle(DesignColor.textTertiary)
                 }
-                Slider(value: width, in: widthRange, step: 1)
+                // Passo proporzionale all'intervallo: con `step: 1` fisso
+                // il tratto fisso (0,5-4) aveva quattro sole posizioni
+                // utili, mentre l'acquerello (10-80) ne aveva settanta.
+                Slider(value: width, in: widthRange, step: sliderStep(for: widthRange))
                     .tint(DesignColor.brandPrimary)
+                // Anteprima del tratto: scegliere uno spessore leggendo un
+                // numero significa provare e disfare finché non è giusto.
+                Capsule()
+                    .fill(color.wrappedValue)
+                    .frame(height: max(1, min(width.wrappedValue, 26)))
+                    .frame(maxWidth: .infinity)
+                    .animation(.easeOut(duration: 0.12), value: width.wrappedValue)
             }
         }
     }
@@ -320,7 +458,7 @@ struct PenToolbarView: View {
                 selectedTool = .eraser
             }
         } label: {
-            toolIcon(eraserType == .vector ? "eraser.fill" : "eraser", isSelected: selectedTool == .eraser)
+            toolIcon("eraser.fill", isSelected: selectedTool == .eraser)
         }
         .accessibilityLabel("Gomma")
         .popover(isPresented: $showingEraserOptions) {
@@ -337,10 +475,12 @@ struct PenToolbarView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(DesignColor.textTertiary)
 
-            HStack(spacing: DesignSpace.s3) {
-                eraserTypeButton(.bitmap, label: "Semplice", systemImage: "eraser")
-                eraserTypeButton(.vector, label: "A oggetti", systemImage: "eraser.fill")
-            }
+            // Una sola gomma, a oggetti: quella parziale è spenta finché
+            // non torna affidabile — meglio nessuna opzione che una rotta.
+            Text("Toglie il tratto intero che tocchi.")
+                .font(.system(size: 11))
+                .foregroundStyle(DesignColor.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 HStack {
@@ -354,30 +494,106 @@ struct PenToolbarView: View {
                 }
                 Slider(value: $eraserWidth, in: 10...80, step: 2)
                     .tint(DesignColor.brandPrimary)
+                // Anteprima in scala reale della punta.
+                HStack {
+                    Spacer()
+                    Circle()
+                        .fill(DesignColor.textTertiary.opacity(0.18))
+                        .overlay(Circle().stroke(DesignColor.borderDefault, lineWidth: 1))
+                        .frame(width: eraserWidth, height: eraserWidth)
+                    Spacer()
+                }
+                .frame(height: 84)
             }
+
+            Divider()
+
+            // Cancellazioni in blocco: passare la gomma a mano su una
+            // pagina intera è lungo e porta via anche ciò che si voleva
+            // tenere. Queste lavorano sui tratti, quindi sono esatte.
+            Text("Sulla pagina corrente")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DesignColor.textTertiary)
+
+            Button {
+                onClearHighlighter()
+                showingEraserOptions = false
+            } label: {
+                Label("Togli solo le evidenziature", systemImage: "highlighter")
+                    .font(.system(size: 14))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DesignColor.textPrimary)
+
+            Button(role: .destructive) {
+                onClearPage()
+                showingEraserOptions = false
+            } label: {
+                Label("Cancella tutta la pagina", systemImage: "trash")
+                    .font(.system(size: 14))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DesignColor.danger)
+
+            Text("Entrambe si annullano con la freccia indietro.")
+                .font(.system(size: 11))
+                .foregroundStyle(DesignColor.textTertiary)
         }
     }
 
+    // Il lazo, come la gomma: un tocco lo seleziona, un secondo spiega
+    // cosa ci si può fare. Le operazioni sulla selezione (taglia, copia,
+    // duplica, elimina) le offre PencilKit nel proprio menu quando la
+    // selezione è attiva: non le rifacciamo qui, sarebbe un secondo menu
+    // che dice le stesse cose in un posto diverso.
     @ViewBuilder
-    private func eraserTypeButton(_ type: PKEraserTool.EraserType, label: String, systemImage: String) -> some View {
+    private var lassoButton: some View {
         Button {
-            eraserType = type
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 17, weight: .medium))
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
+            if selectedTool == .lasso {
+                showingLassoInfo = true
+            } else {
+                selectedTool = .lasso
             }
-            .foregroundStyle(eraserType == type ? DesignColor.brandPrimary : DesignColor.textPrimary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, DesignSpace.s2)
-            .background(
-                eraserType == type ? DesignColor.brandPrimarySubtle : DesignColor.surfaceSunken,
-                in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-            )
+        } label: {
+            toolIcon(PenTool.lasso.systemImage, isSelected: selectedTool == .lasso)
         }
-        .buttonStyle(.plain)
+        .accessibilityLabel(PenTool.lasso.label)
+        .popover(isPresented: $showingLassoInfo) {
+            VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                Text("Selezione")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DesignColor.textTertiary)
+                lassoStep("1", "Cerchia quello che ti interessa.")
+                lassoStep("2", "Trascinalo per spostarlo, o pizzica per ridimensionarlo.")
+                lassoStep("3", "Toccalo di nuovo per taglia, copia, duplica ed elimina.")
+                Divider()
+                Text("Funziona su inchiostro e formule, non sulle caselle di testo: quelle si spostano trascinandole direttamente.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignColor.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(DesignSpace.s4)
+            .frame(width: 280)
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private func lassoStep(_ number: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: DesignSpace.s2) {
+            Text(number)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(DesignColor.brandPrimary)
+                .frame(width: 16, height: 16)
+                .background(DesignColor.brandPrimarySubtle, in: Circle())
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(DesignColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder
@@ -390,5 +606,94 @@ struct PenToolbarView: View {
                 isSelected ? (tint ?? DesignColor.brandPrimary).opacity(0.15) : Color.clear,
                 in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
             )
+    }
+}
+
+// Stessa lista "a catalogo" di ToolsPickerSheet (ricerca + riga
+// icona/nome, stato selezionato evidenziato) ma senza il pannello di
+// dettaglio a destra: qui si sceglie e via, non serve un'anteprima.
+private struct MagicActionPickerView: View {
+    var current: MagicAction?
+    var onSelect: (MagicAction?) -> Void
+
+    @State private var query = ""
+
+    private var filteredActions: [MagicAction] {
+        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return MagicAction.allCases }
+        return MagicAction.allCases.filter { $0.label.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: DesignSpace.s2) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesignColor.textTertiary)
+                TextField("Cerca azioni", text: $query)
+                    .font(.system(size: 14))
+                    .textFieldStyle(.plain)
+            }
+            .padding(DesignSpace.s3)
+            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+            .padding(DesignSpace.s3)
+
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(filteredActions) { action in
+                        Button {
+                            onSelect(action)
+                        } label: {
+                            HStack(spacing: DesignSpace.s3) {
+                                Image(systemName: action.systemImage)
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(current == action ? action.color : DesignColor.textSecondary)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(action.label)
+                                        .font(.system(size: 14, weight: current == action ? .semibold : .medium))
+                                        .foregroundStyle(current == action ? action.color : DesignColor.textPrimary)
+                                    Text(action.subtitle)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(DesignColor.textTertiary)
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, DesignSpace.s3)
+                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .background(
+                                current == action ? action.backgroundColor : Color.clear,
+                                in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if current != nil {
+                        Divider().padding(.vertical, DesignSpace.s2)
+                        Button {
+                            onSelect(nil)
+                        } label: {
+                            HStack(spacing: DesignSpace.s3) {
+                                Image(systemName: "xmark.circle")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(DesignColor.danger)
+                                    .frame(width: 22)
+                                Text("Disattiva")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(DesignColor.danger)
+                                Spacer()
+                            }
+                            .padding(.horizontal, DesignSpace.s3)
+                            .padding(.vertical, DesignSpace.s2 + 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, DesignSpace.s2)
+                .padding(.bottom, DesignSpace.s3)
+            }
+        }
+        .frame(width: 280, height: 380)
+        .background(DesignColor.surfaceSunken)
     }
 }

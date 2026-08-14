@@ -1,0 +1,1854 @@
+import SwiftUI
+import SwiftData
+import PencilKit
+import PDFKit
+
+// Vista che, se il tocco non cade su nessun subview (testo/media),
+// si rende "invisibile" all'hit-test così il tocco passa alla pagina
+// sottostante per disegnare — a meno che passthroughEmptyAreas sia false
+// (strumento testo: anche il tocco su area vuota deve essere catturato,
+// per creare una nuova casella).
+final class PassthroughOverlayView: UIView {
+    var passthroughEmptyAreas = true
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let result = super.hitTest(point, with: event)
+        if passthroughEmptyAreas, result == self { return nil }
+        return result
+    }
+}
+
+// Sfondo PDF di UNA pagina, disegnato direttamente con CoreGraphics.
+// Prima qui c'era una PDFView per pagina: PDFView è a sua volta una
+// scroll view con renderer a tile, quindi una nota di 30 pagine ne
+// teneva vive 30 — era il peso principale dell'editor. Questa vista
+// disegna la pagina e basta: vettoriale, ridisegnata alla risoluzione
+// giusta quando cambia lo zoom, e il documento viene aperto solo quando
+// serve davvero disegnarla.
+// Sfondo PDF a PIASTRELLE (CATiledLayer), come fanno Notability e i
+// lettori PDF veri: si rasterizzano solo le tessere visibili, in
+// background e alla risoluzione dello zoom corrente (i livelli di
+// dettaglio li gestisce CoreAnimation leggendo la trasformazione dello
+// scroll). Memoria proporzionale allo schermo, zoom che non paga mai la
+// pagina intera, e il "morbido che si affina" tessera per tessera al
+// posto del bianco. Promosso a motore UNICO dopo la prova sulle
+// dispense vere.
+final class TiledPDFPageView: UIView {
+    // La dissolvenza di default delle tessere (0,25s) fa sembrare la
+    // pagina "che si accende a chiazze": quasi istantanea è meglio.
+    private final class QuickFadeTiledLayer: CATiledLayer {
+        override class func fadeDuration() -> CFTimeInterval { 0.08 }
+    }
+
+    override class var layerClass: AnyClass { QuickFadeTiledLayer.self }
+
+    private var data: Data?
+    private var cachedDocument: PDFDocument?
+    // Le tessere si disegnano su thread di CoreAnimation: il documento
+    // PDF va toccato una tessera alla volta.
+    private let documentLock = NSLock()
+    // Dimensione letta dai thread di disegno: le proprietà di UIView non
+    // si leggono fuori dal main thread.
+    private var drawSize: CGSize = .zero
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .white
+        let tiled = layer as! CATiledLayer
+        // Tessere in PIXEL. 512pt @2x: abbastanza grandi da non
+        // frammentare il disegno, abbastanza piccole da buttarne poche
+        // quando escono dallo schermo.
+        tiled.tileSize = CGSize(width: 512 * UIScreen.main.scale, height: 512 * UIScreen.main.scale)
+        // Fino a 4 livelli verso lo zoom-out (il foglio si può ridurre a
+        // 0,25×) e 2 raddoppi verso lo zoom-in (fino a 4×).
+        tiled.levelsOfDetail = 3
+        tiled.levelsOfDetailBias = 2
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        documentLock.lock()
+        drawSize = bounds.size
+        documentLock.unlock()
+    }
+
+    func setPDFData(_ newData: Data?) {
+        documentLock.lock()
+        let changed = newData != data
+        if changed {
+            data = newData
+            cachedDocument = nil
+        }
+        documentLock.unlock()
+        if changed { layer.setNeedsDisplay() }
+    }
+
+    var page: PDFPage? {
+        documentLock.lock()
+        defer { documentLock.unlock() }
+        if cachedDocument == nil, let data {
+            cachedDocument = PDFDocument(data: data)
+        }
+        return cachedDocument?.page(at: 0)
+    }
+
+    func releaseDocumentCache() {
+        documentLock.lock()
+        cachedDocument = nil
+        documentLock.unlock()
+    }
+
+    // Lo zoom lo gestiscono i livelli di dettaglio del layer: niente da fare.
+    func setRenderScale(_ scale: CGFloat) {}
+
+    // Le tessere fuori schermo le butta CoreAnimation da sé: qui si
+    // rilascia solo la cache del documento.
+    func suspendRendering() {
+        releaseDocumentCache()
+    }
+
+    func renderAsyncIfNeeded() {
+        layer.setNeedsDisplay()
+    }
+
+    // Chiamato PER TESSERA, su thread di CoreAnimation, col clip già
+    // impostato sul rettangolo della tessera.
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        documentLock.lock()
+        defer { documentLock.unlock() }
+        if cachedDocument == nil, let data {
+            cachedDocument = PDFDocument(data: data)
+        }
+        let size = drawSize
+        guard let page = cachedDocument?.page(at: 0), size.width > 0 else { return }
+        let box = page.bounds(for: .mediaBox)
+        guard box.width > 0, box.height > 0 else { return }
+
+        UIColor.white.setFill()
+        ctx.fill(rect)
+
+        ctx.saveGState()
+        ctx.translateBy(x: 0, y: size.height)
+        ctx.scaleBy(x: 1, y: -1)
+        let fit = size.width / box.width
+        ctx.scaleBy(x: fit, y: fit)
+        ctx.translateBy(x: -box.minX, y: -box.minY)
+        page.draw(with: .mediaBox, to: ctx)
+        ctx.restoreGState()
+    }
+}
+
+// Inchiostro di penna disegnato dal NOSTRO renderer (vedi InkRenderer):
+// una vista draw(_:)-based si ridisegna alla contentScaleFactor imposta,
+// quindi sotto zoom resta nitida — è la differenza con la bitmap di
+// PencilKit, che viene solo stirata. Stesso principio già usato per gli
+// sfondi PDF e per il pattern.
+final class PageInkView: UIView {
+    // Array puro, non PKDrawing: il percorso caldo (gomma, anteprime)
+    // non deve toccare la macchineria interna di PencilKit.
+    var strokes: [PKStroke] = []
+    // Densità di campionamento della spline al livello di zoom corrente.
+    var renderScale: CGFloat = 1
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        isOpaque = false
+        contentMode = .redraw
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        InkRenderer.draw(strokes, in: ctx, scale: renderScale, clipTo: rect)
+    }
+}
+
+// Il SOLO tratto in corso, su una vista dedicata — come nel Laboratorio.
+//
+// La prima versione lo disegnava dentro lo specchio della pagina: ogni
+// campione della Pencil (fino a 240 al secondo) ridisegnava l'INTERA
+// pagina alla risoluzione dello zoom, ed era questo a rendere la
+// scrittura meno fluida che nel Laboratorio. Qui si invalida solo il
+// rettangolo della coda nuova del tratto: il costo per campione è
+// proporzionale a quanto inchiostro si aggiunge, non alla pagina.
+final class PageLiveStrokeView: UIView {
+    var stroke: PKStroke?
+    var renderScale: CGFloat = 1
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        isOpaque = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    override func draw(_ rect: CGRect) {
+        guard let stroke, let ctx = UIGraphicsGetCurrentContext() else { return }
+        InkRenderer.draw(stroke, in: ctx, scale: renderScale)
+    }
+
+    // Butta anche il backing store: a fine sessione di scrittura la
+    // memoria della vista (pagina intera alla scala dello zoom) torna
+    // libera invece di restare allocata per un tratto che non c'è più.
+    func clearContents() {
+        stroke = nil
+        layer.contents = nil
+    }
+}
+
+// Una pagina reale della nota: il proprio sfondo (pattern, oppure una
+// pagina di un PDF importato) e il proprio inchiostro.
+//
+// NIENTE PencilKit: l'inchiostro è un array di PKStroke (usati come puri
+// dati geometrici) reso dal nostro renderer, il tratto vivo va su una
+// vista dedicata, gomma lasso e undo sono nostri. PKDrawing sopravvive
+// SOLO come formato di serializzazione su disco.
+final class NotePageView: UIView {
+    let backgroundView = TemplateBackgroundView()
+    private let pdfPageView = TiledPDFPageView()
+    let penInkView = PageInkView()
+    // Il tratto in corso, su una vista sua (vedi PageLiveStrokeView).
+    let liveStrokeView = PageLiveStrokeView()
+    private(set) var pdfPageData: Data?
+    // Ultimi dati-disegno applicati/salvati per questa pagina: permette a
+    // sync() di saltare il confronto via dataRepresentation() (serializza
+    // l'intero disegno, per ogni pagina, a ogni aggiornamento).
+    var appliedDrawingData: Data?
+    private var zoomForInk: CGFloat = 1
+
+    // L'inchiostro della pagina. La verità è qui, non in un canvas.
+    private(set) var strokes: [PKStroke] = []
+
+    // RESIDENZA — il cuore della tenuta sulle dispense lunghe. Ogni vista
+    // disegnata (sfondo PDF, pattern, inchiostro) alloca una bitmap a
+    // pagina intera, fino a 6 volte la scala dello schermo sotto zoom:
+    // ~14 MB a pagina a riposo, ~120 sotto zoom. Tenerle TUTTE vive, come
+    // si faceva, con una dispensa da 60 pagine supera il gigabyte e iOS
+    // uccide l'app. Restano materializzate solo le pagine vicine allo
+    // schermo; le altre sono rettangoli bianchi senza backing store.
+    private(set) var isResident = true
+    private var pendingRenderZoom: CGFloat = 1
+    private var lastAppliedRenderTarget: CGFloat = 0
+
+    init(pageWidth: CGFloat, pageHeight: CGFloat) {
+        super.init(frame: CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight))
+        backgroundColor = .white
+        clipsToBounds = true
+        layer.borderWidth = 1
+        layer.borderColor = UIColor.separator.withAlphaComponent(0.5).cgColor
+
+        backgroundView.frame = bounds
+        backgroundView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(backgroundView)
+
+        pdfPageView.isHidden = true
+        pdfPageView.frame = bounds
+        pdfPageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(pdfPageView)
+
+        penInkView.frame = bounds
+        penInkView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(penInkView)
+
+        liveStrokeView.frame = bounds
+        liveStrokeView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(liveStrokeView)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    // MARK: - Inchiostro
+
+    func setStrokes(_ newStrokes: [PKStroke], invalidating rect: CGRect? = nil) {
+        strokes = newStrokes
+        penInkView.strokes = newStrokes
+        // Una pagina senza inchiostro non paga nessuna bitmap: la vista
+        // resta nascosta e il suo backing store non nasce proprio — sui
+        // PDF importati è il caso di quasi tutte le pagine.
+        penInkView.isHidden = newStrokes.isEmpty || !isResident
+        if let rect, !rect.isNull {
+            penInkView.setNeedsDisplay(rect.insetBy(dx: -8, dy: -8))
+        } else {
+            penInkView.setNeedsDisplay()
+        }
+    }
+
+    func setResident(_ resident: Bool) {
+        guard resident != isResident else { return }
+        isResident = resident
+        let hasPDF = pdfPageData != nil
+        if resident {
+            pdfPageView.isHidden = !hasPDF
+            backgroundView.isHidden = hasPDF
+            penInkView.isHidden = strokes.isEmpty
+            applyRenderScale(pendingRenderZoom)
+            pdfPageView.renderAsyncIfNeeded()
+            backgroundView.setNeedsDisplay()
+            penInkView.setNeedsDisplay()
+        } else {
+            pdfPageView.isHidden = true
+            backgroundView.isHidden = true
+            penInkView.isHidden = true
+            // layer.contents = nil è ciò che RESTITUISCE la memoria:
+            // nascondere non basta, il backing store resterebbe allocato.
+            pdfPageView.suspendRendering()
+            backgroundView.layer.contents = nil
+            penInkView.layer.contents = nil
+            liveStrokeView.clearContents()
+        }
+    }
+
+    // Carica da storage senza passare per l'undo (il caricamento non è
+    // un'azione annullabile).
+    func loadDrawingData(_ data: Data) {
+        setStrokes((try? PKDrawing(data: data))?.strokes ?? [])
+    }
+
+    // Estensione verticale dell'inchiostro, per la crescita automatica
+    // delle pagine.
+    var inkBounds: CGRect {
+        strokes.reduce(CGRect.null) { $0.union($1.renderBounds) }
+    }
+
+    func setPDFPage(_ data: Data?) {
+        guard data != pdfPageData else { return }
+        pdfPageData = data
+        cachedNaturalHeight = nil
+        pdfPageView.setPDFData(data)
+        let hasPDF = data != nil
+        pdfPageView.isHidden = !hasPDF
+        backgroundView.isHidden = hasPDF
+        // La chiamata dentro setPDFData è caduta nel vuoto: la vista era
+        // ancora nascosta (l'ordine qui sopra la scopre DOPO). Rilanciata
+        // ora che è visibile.
+        pdfPageView.renderAsyncIfNeeded()
+    }
+
+    // Pagina PDF di sfondo (se c'è), per ridisegnarla vettorialmente
+    // nell'export invece di rasterizzarla.
+    var pdfPage: PDFPage? { pdfPageView.page }
+
+    // Nitidezza dello sfondo PDF e dell'inchiostro allo zoom corrente:
+    // ingrandire una rasterizzazione fatta a 1× è ciò che rendeva tutto
+    // sfocato sotto zoom. Alzando la scala di rendering si ridisegna alla
+    // risoluzione che serve davvero (tetto a 3× per non esagerare con la
+    // memoria).
+    func applyRenderScale(_ zoomScale: CGFloat) {
+        // Fuori dalla finestra di residenza non si rasterizza niente: la
+        // scala giusta arriva al rientro.
+        guard isResident else {
+            pendingRenderZoom = zoomScale
+            return
+        }
+        pendingRenderZoom = zoomScale
+        let target = min(max(zoomScale, 1), 3) * UIScreen.main.scale
+        guard abs(lastAppliedRenderTarget - target) > 0.01 else { return }
+        lastAppliedRenderTarget = target
+        zoomForInk = min(max(zoomScale, 1), 3)
+        pdfPageView.setRenderScale(target)
+        backgroundView.contentScaleFactor = target
+        backgroundView.setNeedsDisplay()
+        // L'inchiostro si ridisegna alla risoluzione dello zoom: è QUI
+        // che smette di sgranare quando si ingrandisce.
+        penInkView.contentScaleFactor = target
+        penInkView.renderScale = zoomForInk
+        penInkView.setNeedsDisplay()
+        liveStrokeView.contentScaleFactor = target
+        liveStrokeView.renderScale = zoomForInk
+    }
+
+    // Altezza naturale della pagina: quella del PDF (scalata alla
+    // larghezza foglio) se c'è uno sfondo, altrimenti l'altezza standard
+    // della nota (pattern/bianco).
+    private var cachedNaturalHeight: CGFloat?
+    func naturalHeight(pageWidth: CGFloat, fallback: CGFloat) -> CGFloat {
+        if let cachedNaturalHeight { return cachedNaturalHeight }
+        guard let page = pdfPage else { return fallback }
+        let box = page.bounds(for: .mediaBox)
+        guard box.width > 0 else { return fallback }
+        let height = pageWidth * (box.height / box.width)
+        cachedNaturalHeight = height
+        // sync() interroga l'altezza di TUTTE le pagine all'apertura:
+        // senza rilascio, restavano aperti 60 documenti solo per un
+        // rapporto d'aspetto ormai memorizzato.
+        if !isResident { pdfPageView.releaseDocumentCache() }
+        return height
+    }
+}
+
+// IL TRATTO NOSTRO — cattura dei tocchi per penna ed evidenziatore.
+//
+// Validato nel Laboratorio ("Motore nostro"): la Pencil parla
+// direttamente con noi, senza PencilKit in mezzo. `coalescedTouches`
+// recupera i campioni a 240 Hz fra un fotogramma e l'altro (senza, il
+// tratto esce spigoloso), `predictedTouches` disegna qualche
+// millisecondo avanti alla punta per mascherare la latenza — i punti
+// previsti sono una scommessa e NON entrano mai nel tratto salvato.
+//
+// Il tratto finito diventa un PKStroke vero dentro il PKDrawing della
+// pagina: lo storage non cambia, gomma lasso e undo di PencilKit
+// continuano a funzionare, e l'assegnazione del disegno registra l'undo
+// nativo da sola.
+final class LiveInkCaptureOverlay: UIView {
+    weak var container: PagedCanvasContainer?
+    var onStrokeBegan: (() -> Void)?
+    // Operazione di lasso conclusa (spostamento o eliminazione): il
+    // chiamante riporta lo strumento a quello di prima, come la gomma.
+    var onLassoFinished: (() -> Void)?
+
+    // Cosa fa la Pencil quando tocca: scrive, oppure cancella (gomma
+    // NOSTRA, vedi InkEraser — lavora sulla geometria, quindi cancella
+    // anche i tratti di matita disegnati da PencilKit).
+    enum Mode {
+        case draw
+        case erase(radius: CGFloat, partial: Bool)
+        case lasso
+    }
+    var mode: Mode = .draw
+
+    // Configurazione dello strumento corrente, impostata da applyToolState.
+    var inkColor: UIColor = .black
+    var baseWidth: CGFloat = 3
+    // La penna modula lo spessore con la pressione, l'evidenziatore no.
+    var pressureSensitive = true
+
+    private var activePage: NotePageView?
+    private var points: [PKStrokePoint] = []
+    private var startTime: TimeInterval = 0
+    // Regione (in coordinate di pagina) toccata dall'ultimo aggiornamento
+    // del tratto vivo: i punti PREDETTI vanno ricancellati al giro dopo,
+    // perché erano una scommessa e i punti veri possono essere altrove.
+    private var previousTailRect: CGRect = .null
+    // Gomma: disegno di lavoro su cui si accumulano i passaggi; va nel
+    // canvas UNA volta sola al sollevamento — un solo undo per passata,
+    // una sola serializzazione.
+    private var eraseWorkingStrokes: [PKStroke]?
+    private var eraseStrokesAtPassStart: [PKStroke] = []
+    private var eraseChanged = false
+
+    // Cerchio che segue la gomma, come quello che c'era con PencilKit.
+    private lazy var eraserCursor: UIView = {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = UIColor.label.withAlphaComponent(0.1)
+        view.layer.borderWidth = 1.5
+        view.layer.borderColor = UIColor.label.withAlphaComponent(0.6).cgColor
+        view.isHidden = true
+        addSubview(view)
+        return view
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isMultipleTouchEnabled = false
+        isUserInteractionEnabled = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    // MARK: - Tocchi
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard activePage == nil, let touch = touches.first else { return }
+        // Solo la Pencil disegna (stessa regola di drawingPolicy
+        // .pencilOnly): il dito resta libero di scorrere il foglio, il
+        // pan della scroll view lo riceve comunque perché è un gesto
+        // dell'antenato.
+        guard touch.type == .pencil else { return }
+        guard let container,
+              let page = container.pageViews.first(where: { $0.frame.contains(touch.location(in: container.contentHost)) })
+        else { return }
+        onStrokeBegan?()
+        activePage = page
+        startTime = touch.timestamp
+        points = []
+        previousTailRect = .null
+        if case .erase = mode {
+            eraseStrokesAtPassStart = page.strokes
+            eraseWorkingStrokes = page.strokes
+            eraseChanged = false
+            applyErase(touch, event: event)
+        } else if case .lasso = mode {
+            lassoBegan(touch, on: page)
+        } else {
+            page.liveStrokeView.isHidden = false
+            let added = append(touch, event: event)
+            updateLive(with: event, appended: added)
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard activePage != nil, let touch = touches.first else { return }
+        if case .erase = mode {
+            applyErase(touch, event: event)
+        } else if case .lasso = mode {
+            lassoMoved(touch)
+        } else {
+            let added = append(touch, event: event)
+            updateLive(with: event, appended: added)
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first, activePage != nil else { return }
+        if case .erase = mode {
+            applyErase(touch, event: event)
+            commitErase()
+        } else if case .lasso = mode {
+            lassoEnded(touch)
+            // Senza questo, il guard su activePage scartava OGNI tocco
+            // successivo: era il motivo per cui la selezione non si
+            // poteva spostare.
+            activePage = nil
+        } else {
+            _ = append(touch, event: event)
+            commitStroke()
+        }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let page = activePage else { return }
+        if case .erase = mode {
+            // Passata annullata dal sistema: si ripristina lo stato di
+            // partenza, mai committato.
+            page.setStrokes(eraseStrokesAtPassStart)
+            eraseWorkingStrokes = nil
+            eraserCursor.isHidden = true
+        }
+        if case .lasso = mode { clearLassoSelection() }
+        activePage = nil
+        points = []
+        page.liveStrokeView.clearContents()
+        page.liveStrokeView.isHidden = true
+    }
+
+    // MARK: - Gomma
+
+    private func applyErase(_ touch: UITouch, event: UIEvent?) {
+        guard case .erase(let radius, let partial) = mode,
+              let page = activePage,
+              var working = eraseWorkingStrokes else { return }
+
+        // Cerchio-cursore, in coordinate dell'overlay.
+        let cursorCenter = touch.location(in: self)
+        let diameter = radius * 2
+        eraserCursor.layer.cornerRadius = radius
+        eraserCursor.frame = CGRect(x: cursorCenter.x - radius, y: cursorCenter.y - radius, width: diameter, height: diameter)
+        eraserCursor.isHidden = false
+        bringSubviewToFront(eraserCursor)
+
+        var changed = false
+        var dirty = CGRect.null
+        for sample in event?.coalescedTouches(for: touch) ?? [touch] {
+            let point = sample.location(in: page)
+            if let result = InkEraser.erase(working, at: point, radius: radius, partial: partial) {
+                working = result.strokes
+                dirty = dirty.union(result.dirtyRect)
+                changed = true
+            }
+        }
+        guard changed else { return }
+        eraseWorkingStrokes = working
+        eraseChanged = true
+        // Feedback in diretta, ridisegnando solo la zona toccata:
+        // l'inchiostro sparisce sotto la gomma. Il salvataggio e l'undo
+        // arrivano in un colpo solo al sollevamento.
+        page.setStrokes(working, invalidating: dirty)
+    }
+
+    private func commitErase() {
+        eraserCursor.isHidden = true
+        guard let page = activePage else { return }
+        activePage = nil
+        defer { eraseWorkingStrokes = nil }
+        guard let working = eraseWorkingStrokes, eraseChanged else { return }
+        // Un commit per passata: un undo, una serializzazione.
+        container?.commitStrokes(working, previous: eraseStrokesAtPassStart, on: page)
+    }
+
+    // Aggiunge i campioni del tocco e ritorna il rettangolo che coprono,
+    // in coordinate di pagina: è la base dell'invalidazione mirata.
+    private func append(_ touch: UITouch, event: UIEvent?) -> CGRect {
+        guard let page = activePage else { return .null }
+        var box = CGRect.null
+        // I coalesced contengono ANCHE il tocco principale.
+        let samples = event?.coalescedTouches(for: touch) ?? [touch]
+        for sample in samples {
+            let point = strokePoint(from: sample, in: page)
+            points.append(point)
+            box = box.union(CGRect(origin: point.location, size: .zero))
+        }
+        return box
+    }
+
+    private func updateLive(with event: UIEvent?, appended: CGRect) {
+        guard let page = activePage else { return }
+        var preview = points
+        var predictedBox = CGRect.null
+        // Solo DUE punti predetti: bastano a tenere l'inchiostro attaccato
+        // alla punta, e la previsione lunga era ciò che al sollevamento si
+        // ritirava vistosamente ("il tratto si muove") — i punti predetti
+        // non entrano mai nel tratto vero.
+        if let touch = event?.allTouches?.first,
+           let predicted = event?.predictedTouches(for: touch)?.prefix(2) {
+            for sample in predicted {
+                let point = strokePoint(from: sample, in: page)
+                preview.append(point)
+                predictedBox = predictedBox.union(CGRect(origin: point.location, size: .zero))
+            }
+        }
+        let live = page.liveStrokeView
+        live.stroke = makeStroke(from: preview)
+
+        // La coda da ridisegnare: gli ULTIMI OTTO punti veri, non solo i
+        // nuovi — una B-spline cubica flette i segmenti vicini quando
+        // arriva un punto di controllo nuovo, e invalidare solo i punti
+        // appena aggiunti lasciava pixel fantasma lungo la curva (che
+        // "sparivano" al sollevamento, sembrando un movimento del tratto).
+        var tail = appended.union(predictedBox)
+        for point in points.suffix(8) {
+            tail = tail.union(CGRect(origin: point.location, size: .zero))
+        }
+        let dirty = tail.union(previousTailRect)
+        previousTailRect = tail
+        guard !dirty.isNull else { return }
+        let inflation = max(baseWidth * 2 + 8, 24)
+        live.setNeedsDisplay(dirty.insetBy(dx: -inflation, dy: -inflation))
+    }
+
+    private func commitStroke() {
+        guard let page = activePage else { return }
+        activePage = nil
+        defer {
+            points = []
+            previousTailRect = .null
+        }
+        let live = page.liveStrokeView
+        guard let stroke = makeStroke(from: points) else {
+            live.clearContents()
+            live.isHidden = true
+            return
+        }
+        // Il commit passa dal contenitore: salvataggio, crescita pagine e
+        // undo in un punto solo. Lo specchio riceve il tratto nella stessa
+        // transazione di rendering in cui il live sparisce — niente lampo.
+        container?.commitStrokes(page.strokes + [stroke], on: page, invalidating: stroke.renderBounds.insetBy(dx: -32, dy: -32))
+        let cleared = live.stroke?.renderBounds ?? stroke.renderBounds
+        live.stroke = nil
+        live.setNeedsDisplay(cleared.insetBy(dx: -32, dy: -32))
+    }
+
+    private func makeStroke(from points: [PKStrokePoint]) -> PKStroke? {
+        guard points.count >= 2 else { return nil }
+        return PKStroke(
+            ink: PKInk(.pen, color: inkColor),
+            path: PKStrokePath(controlPoints: points, creationDate: Date())
+        )
+    }
+
+    // Lo spessore si scrive nella grandezza che la legge misurata di
+    // PencilKit (larghezza = 2·size − 4) riporta alla larghezza voluta:
+    // così il tratto resta identico comunque lo si renda.
+    private func strokePoint(from touch: UITouch, in page: NotePageView) -> PKStrokePoint {
+        let location = touch.location(in: page)
+        let maxForce = touch.maximumPossibleForce > 0 ? touch.maximumPossibleForce : 1
+        let force = touch.type == .pencil ? min(touch.force / maxForce, 1) : 0.5
+        let width = pressureSensitive ? baseWidth * (0.45 + 0.55 * force) : baseWidth
+        // La grandezza scritta nel punto segue la legge misurata della
+        // penna (larghezza = 2·size − 4).
+        let size = max(1, (width + 4) / 2)
+        return PKStrokePoint(
+            location: location,
+            timeOffset: max(0, touch.timestamp - startTime),
+            size: CGSize(width: size, height: size),
+            opacity: 1,
+            force: force,
+            azimuth: touch.type == .pencil ? touch.azimuthAngle(in: self) : 0,
+            altitude: touch.type == .pencil ? touch.altitudeAngle : .pi / 2
+        )
+    }
+
+    // MARK: - Lasso (nostro)
+
+    // Selezione a mano libera: si disegna un recinto, i tratti con almeno
+    // un punto dentro sono selezionati, e la selezione si trascina o si
+    // elimina. Tutto su CAShapeLayer (leggeri: il path lo compone
+    // CoreAnimation, niente backing store da pagina intera).
+    private var lassoPage: NotePageView?
+    private var lassoPoints: [CGPoint] = []
+    private var selectionPage: NotePageView?
+    private var selectedIndices: [Int] = []
+    private var selectionBaseStrokes: [PKStroke] = []
+    private var isMovingSelection = false
+    private var moveStart: CGPoint = .zero
+    private var moveTranslation: CGPoint = .zero
+
+    private lazy var lassoLayer: CAShapeLayer = {
+        let layer = CAShapeLayer()
+        layer.fillColor = UIColor.systemBlue.withAlphaComponent(0.06).cgColor
+        layer.strokeColor = UIColor.systemBlue.withAlphaComponent(0.8).cgColor
+        layer.lineWidth = 1.5
+        layer.lineDashPattern = [6, 4]
+        self.layer.addSublayer(layer)
+        return layer
+    }()
+
+    private lazy var selectionLayer: CAShapeLayer = {
+        let layer = CAShapeLayer()
+        layer.fillColor = nil
+        layer.strokeColor = UIColor.systemBlue.withAlphaComponent(0.8).cgColor
+        layer.lineWidth = 1.5
+        layer.lineDashPattern = [6, 4]
+        self.layer.addSublayer(layer)
+        return layer
+    }()
+
+    private lazy var deleteChip: UIButton = {
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: "trash", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        let button = UIButton(configuration: config)
+        button.tintColor = .systemRed
+        button.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.95)
+        button.layer.cornerRadius = 16
+        button.layer.borderWidth = 1
+        button.layer.borderColor = UIColor.separator.cgColor
+        button.frame = CGRect(x: 0, y: 0, width: 32, height: 32)
+        button.isHidden = true
+        button.addTarget(self, action: #selector(deleteSelection), for: .touchUpInside)
+        addSubview(button)
+        return button
+    }()
+
+    private var selectionBounds: CGRect {
+        guard let page = selectionPage else { return .null }
+        return selectedIndices.reduce(CGRect.null) { partial, index in
+            guard page.strokes.indices.contains(index) else { return partial }
+            return partial.union(page.strokes[index].renderBounds)
+        }
+    }
+
+    func clearLassoSelection() {
+        lassoPage = nil
+        lassoPoints = []
+        selectionPage = nil
+        selectedIndices = []
+        selectionBaseStrokes = []
+        isMovingSelection = false
+        lassoLayer.path = nil
+        selectionLayer.path = nil
+        deleteChip.isHidden = true
+    }
+
+    private func lassoBegan(_ touch: UITouch, on page: NotePageView) {
+        let pagePoint = touch.location(in: page)
+        // Presa DENTRO la selezione esistente: si sposta. Fuori: nuovo recinto.
+        if page === selectionPage, !selectedIndices.isEmpty,
+           selectionBounds.insetBy(dx: -24, dy: -24).contains(pagePoint) {
+            isMovingSelection = true
+            moveStart = pagePoint
+            moveTranslation = .zero
+            selectionBaseStrokes = page.strokes
+        } else {
+            clearLassoSelection()
+            lassoPage = page
+            lassoPoints = [pagePoint]
+        }
+    }
+
+    private func lassoMoved(_ touch: UITouch) {
+        if isMovingSelection, let page = selectionPage {
+            let point = touch.location(in: page)
+            let oldBounds = selectionBounds
+            moveTranslation = CGPoint(x: point.x - moveStart.x, y: point.y - moveStart.y)
+            var preview = selectionBaseStrokes
+            for index in selectedIndices where preview.indices.contains(index) {
+                var stroke = selectionBaseStrokes[index]
+                stroke.transform = stroke.transform.concatenating(
+                    CGAffineTransform(translationX: moveTranslation.x, y: moveTranslation.y)
+                )
+                preview[index] = stroke
+            }
+            page.setStrokes(preview, invalidating: oldBounds.union(selectionBounds).insetBy(dx: -40, dy: -40))
+            updateSelectionChrome()
+        } else if let page = lassoPage {
+            lassoPoints.append(touch.location(in: page))
+            let path = CGMutablePath()
+            guard let first = lassoPoints.first else { return }
+            path.move(to: CGPoint(x: first.x + page.frame.minX, y: first.y + page.frame.minY))
+            for point in lassoPoints.dropFirst() {
+                path.addLine(to: CGPoint(x: point.x + page.frame.minX, y: point.y + page.frame.minY))
+            }
+            lassoLayer.path = path
+        }
+    }
+
+    private func lassoEnded(_ touch: UITouch) {
+        if isMovingSelection, let page = selectionPage {
+            isMovingSelection = false
+            guard moveTranslation != .zero else { return }
+            // La pagina mostra già l'anteprima: si committa quella, con lo
+            // stato pre-spostamento come "prima" per l'annullamento.
+            container?.commitStrokes(page.strokes, previous: selectionBaseStrokes, on: page)
+            clearLassoSelection()
+            // Spostamento fatto = operazione conclusa: si torna allo
+            // strumento di prima, come dopo un tratto di gomma.
+            onLassoFinished?()
+            return
+        }
+        guard let page = lassoPage, lassoPoints.count >= 3 else {
+            lassoLayer.path = nil
+            lassoPage = nil
+            lassoPoints = []
+            return
+        }
+        // Chiusura del recinto e prova di appartenenza: un tratto è
+        // selezionato se un suo punto di controllo (portato nello spazio
+        // della pagina dalla trasformazione) cade dentro il poligono.
+        let polygon = CGMutablePath()
+        polygon.move(to: lassoPoints[0])
+        for point in lassoPoints.dropFirst() { polygon.addLine(to: point) }
+        polygon.closeSubpath()
+
+        var indices: [Int] = []
+        let polygonBox = polygon.boundingBox
+        for (index, stroke) in page.strokes.enumerated() {
+            guard polygonBox.intersects(stroke.renderBounds) else { continue }
+            // CGPath.contains costa: si campiona a passo, al massimo una
+            // ventina di punti per tratto — era questo a rendere lento il
+            // rilascio del recinto.
+            let path = stroke.path
+            let step = max(1, path.count / 20)
+            for i in stride(from: 0, to: path.count, by: step) {
+                let location = path[i].location.applying(stroke.transform)
+                if polygon.contains(location) {
+                    indices.append(index)
+                    break
+                }
+            }
+        }
+        lassoLayer.path = nil
+        lassoPage = nil
+        lassoPoints = []
+        guard !indices.isEmpty else { return }
+        selectionPage = page
+        selectedIndices = indices
+        selectionBaseStrokes = page.strokes
+        updateSelectionChrome()
+    }
+
+    private func updateSelectionChrome() {
+        guard let page = selectionPage else { return }
+        let bounds = selectionBounds
+        guard !bounds.isNull else { clearLassoSelection(); return }
+        let overlayRect = CGRect(
+            x: bounds.minX + page.frame.minX,
+            y: bounds.minY + page.frame.minY,
+            width: bounds.width,
+            height: bounds.height
+        ).insetBy(dx: -10, dy: -10)
+        selectionLayer.path = UIBezierPath(roundedRect: overlayRect, cornerRadius: 8).cgPath
+        deleteChip.isHidden = false
+        deleteChip.center = CGPoint(x: overlayRect.maxX, y: overlayRect.minY)
+        bringSubviewToFront(deleteChip)
+    }
+
+    @objc private func deleteSelection() {
+        guard let page = selectionPage, !selectedIndices.isEmpty else { return }
+        let keep = page.strokes.enumerated()
+            .filter { !selectedIndices.contains($0.offset) }
+            .map(\.element)
+        container?.commitStrokes(keep, previous: page.strokes, on: page)
+        clearLassoSelection()
+        onLassoFinished?()
+    }
+}
+
+// Contenitore: una sola UIScrollView che fa pan e zoom del contentHost
+// (dove vivono le pagine), col contenuto centrato tramite contentInset.
+final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
+    let contentHost = UIView()
+    let overlayLayer = PassthroughOverlayView()
+    let interactionOverlay = UIView()
+    let liveInkOverlay = LiveInkCaptureOverlay()
+    private(set) var pageViews: [NotePageView] = []
+    private let pageGap: CGFloat = 20
+    private(set) var pageWidth: CGFloat
+    private var lastFitWidth: CGFloat = 0
+    private var userDidZoom = false
+    // Dimensione del contenuto a zoom 1: la geometria si ricalcola solo
+    // quando questa cambia, non a ogni aggiornamento della vista.
+    private var contentLayoutSize: CGSize = .zero
+    weak var lastActivePageView: NotePageView?
+    // Segnalibro automatico: pagina da cui ripartire alla prima
+    // apertura, applicata appena il layout ha dimensioni reali.
+    var pendingInitialPage: Int?
+    private lazy var defaultPanTouchTypes = panGestureRecognizer.allowedTouchTypes
+
+    // Mentre la Pencil disegna col motore nostro, il foglio non deve
+    // scorrerle sotto la punta: il pan resta al dito. Con gli altri
+    // strumenti la Pencil torna anche a scorrere (puntatore, trackpad...).
+    func setPencilPanBlocked(_ blocked: Bool) {
+        panGestureRecognizer.allowedTouchTypes = blocked
+            ? [UITouch.TouchType.direct.rawValue as NSNumber]
+            : defaultPanTouchTypes
+    }
+
+    init(pageWidth: CGFloat) {
+        self.pageWidth = pageWidth
+        super.init(frame: .zero)
+        // UNA sola scroll view fa pan e zoom insieme, come ogni visore
+        // PDF/foto. Prima erano due annidate (esterna=zoom, interna=pan):
+        // a zoom alto si muovevano entrambe e la navigazione risultava
+        // "macchinosa", perché due sistemi di scorrimento indipendenti
+        // rispondevano allo stesso dito.
+        minimumZoomScale = 0.25
+        maximumZoomScale = 4
+        bouncesZoom = true
+        backgroundColor = .clear
+        delegate = self
+        addSubview(contentHost)
+
+        // La cattura del tratto sta sotto l'overlay di testo/media: un
+        // tocco su una casella di testo va alla casella, come oggi.
+        liveInkOverlay.container = self
+        contentHost.addSubview(liveInkOverlay)
+
+        overlayLayer.backgroundColor = .clear
+        overlayLayer.isUserInteractionEnabled = true
+        contentHost.addSubview(overlayLayer)
+
+        interactionOverlay.backgroundColor = .clear
+        interactionOverlay.isUserInteractionEnabled = false
+        contentHost.addSubview(interactionOverlay)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+
+        // Zoom "aiutato": il foglio riempie la larghezza dello schermo,
+        // ricalcolato quando la larghezza cambia davvero (es. pannello
+        // laterale aperto/chiuso), finché l'utente non zooma a mano.
+        if !userDidZoom, bounds.width > 0, pageWidth > 0, bounds.width != lastFitWidth {
+            lastFitWidth = bounds.width
+            let fit = bounds.width / pageWidth
+            minimumZoomScale = min(0.25, fit)
+            zoomScale = min(max(fit, minimumZoomScale), maximumZoomScale)
+        }
+
+        centerContent()
+
+        // Riparti dall'ultima pagina vista: applicabile solo quando le
+        // pagine hanno un layout reale (contentSize pronto).
+        if let target = pendingInitialPage, bounds.height > 0,
+           contentSize.height > 0, pageViews.indices.contains(target) {
+            pendingInitialPage = nil
+            scrollToPage(target, animated: false)
+        }
+    }
+
+    // Applica la dimensione logica del contenuto rispettando lo zoom in
+    // corso: si imposta `bounds` (che la trasformazione non tocca) e si
+    // riporta l'origine a (0,0) col centro, invece di scrivere `frame`.
+    private func applyContentLayoutSize() {
+        let scale = zoomScale
+        contentHost.bounds = CGRect(origin: .zero, size: contentLayoutSize)
+        contentHost.center = CGPoint(
+            x: contentLayoutSize.width * scale / 2,
+            y: contentLayoutSize.height * scale / 2
+        )
+        overlayLayer.frame = contentHost.bounds
+        interactionOverlay.frame = contentHost.bounds
+        liveInkOverlay.frame = contentHost.bounds
+        contentSize = CGSize(
+            width: contentLayoutSize.width * scale,
+            height: contentLayoutSize.height * scale
+        )
+        centerContent()
+    }
+
+    // Centratura canonica: quando il contenuto è più piccolo del viewport
+    // lo si centra con gli inset, non spostando il contenuto.
+    private func centerContent() {
+        let scaledWidth = contentHost.frame.width
+        let scaledHeight = contentHost.frame.height
+        let insetX = max(0, (bounds.width - scaledWidth) / 2)
+        let insetY = max(0, (bounds.height - scaledHeight) / 2)
+        let newInset = UIEdgeInsets(top: insetY, left: insetX, bottom: insetY, right: insetX)
+        if contentInset != newInset {
+            contentInset = newInset
+        }
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { contentHost }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centerContent()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateResidency()
+    }
+
+    // Quali pagine restano materializzate: quelle che toccano lo schermo
+    // più una schermata sopra e una sotto (per non vedere il bianco
+    // durante lo scorrimento normale). Il confronto con l'intervallo
+    // precedente rende il controllo gratuito quando non cambia niente.
+    private var residentRange: Range<Int> = 0..<0
+    func updateResidency() {
+        guard !pageViews.isEmpty else { return }
+        let visible = visibleContentRect
+        // DUE schermate per lato: le pagine si materializzano ben prima
+        // di entrare nell'occhio, e il costo del disegno sincrono resta
+        // lontano dal punto che si sta guardando.
+        let window = visible.insetBy(dx: 0, dy: -visible.height * 2)
+        var lower = Int.max
+        var upper = Int.min
+        for (index, page) in pageViews.enumerated() where page.frame.intersects(window) {
+            lower = min(lower, index)
+            upper = max(upper, index)
+        }
+        guard lower <= upper else { return }
+        let range = lower..<(upper + 1)
+        guard range != residentRange else { return }
+        residentRange = range
+        for (index, page) in pageViews.enumerated() {
+            page.setResident(range.contains(index))
+        }
+    }
+
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        userDidZoom = true
+        // Ridisegna sfondi e pattern alla risoluzione dello zoom raggiunto:
+        // è ciò che toglie la sfocatura quando si ingrandisce.
+        for page in pageViews {
+            page.applyRenderScale(scale)
+        }
+    }
+
+    // Ricostruisce lo stack secondo le pagine correnti: aggiunge/rimuove
+    // NotePageView per arrivare al conteggio giusto, riposiziona tutto in
+    // verticale con uno spazio tra una pagina e l'altra, applica pattern e
+    // scala del pattern a ogni pagina (la mancata propagazione era uno dei
+    // bug del primo tentativo).
+    func sync(pages: [(drawingData: Data?, pdfPageData: Data?)], defaultHeight: CGFloat, template: NoteTemplate, patternScale: CGFloat) -> [NotePageView] {
+        while pageViews.count < pages.count {
+            let page = NotePageView(pageWidth: pageWidth, pageHeight: defaultHeight)
+            pageViews.append(page)
+            contentHost.insertSubview(page, belowSubview: overlayLayer)
+        }
+        while pageViews.count > pages.count {
+            let removed = pageViews.removeLast()
+            if lastActivePageView === removed { lastActivePageView = nil }
+            removed.removeFromSuperview()
+        }
+
+        var y: CGFloat = 0
+        for (index, pageData) in pages.enumerated() {
+            let view = pageViews[index]
+            view.backgroundView.template = template
+            view.backgroundView.patternScale = patternScale
+            view.setPDFPage(pageData.pdfPageData)
+            let height = view.naturalHeight(pageWidth: pageWidth, fallback: defaultHeight)
+            view.frame = CGRect(x: 0, y: y, width: pageWidth, height: height)
+            if let drawingData = pageData.drawingData,
+               drawingData != view.appliedDrawingData {
+                view.loadDrawingData(drawingData)
+                view.appliedDrawingData = drawingData
+            }
+            y += height + pageGap
+        }
+
+        // ATTENZIONE: contentHost è la vista che lo scroll view trasforma
+        // per lo zoom. Riassegnarle il frame NON scalato (come si faceva
+        // qui a ogni sync, cioè a ogni tratto) cancella la trasformazione:
+        // era il motivo per cui lo zoom "tornava indietro" da solo mentre
+        // si scriveva. Si tocca la geometria solo quando la dimensione
+        // logica del contenuto cambia davvero, e in modo compatibile con
+        // la trasformazione (bounds + center, mai frame).
+        let unscaled = CGSize(width: pageWidth, height: max(y - pageGap, defaultHeight))
+        if contentLayoutSize != unscaled {
+            contentLayoutSize = unscaled
+            applyContentLayoutSize()
+        }
+        // Le pagine nuove partono già alla risoluzione dello zoom corrente
+        // (quelle fuori finestra la memorizzano e basta).
+        for page in pageViews {
+            page.applyRenderScale(zoomScale)
+        }
+        residentRange = 0..<0
+        updateResidency()
+        // Le pagine vengono inserite subito sotto overlayLayer, quindi
+        // finirebbero SOPRA la cattura del tratto: va rialzata.
+        contentHost.insertSubview(liveInkOverlay, belowSubview: overlayLayer)
+        return pageViews
+    }
+
+    // MARK: - Pagine (indice corrente, salto, miniature, undo/redo)
+
+    func pageCount() -> Int { max(1, pageViews.count) }
+
+    // La pagina su cui agiscono le operazioni: l'ultima su cui si è
+    // scritto, altrimenti quella a schermo. Senza il "l'ultima su cui si
+    // è scritto", scorrendo di poco dopo aver scritto si cancellerebbe
+    // la pagina sbagliata.
+    var activeInkPage: NotePageView? {
+        if let lastActivePageView, pageViews.contains(where: { $0 === lastActivePageView }),
+           lastActivePageView.frame.intersects(visibleContentRect) {
+            return lastActivePageView
+        }
+        guard pageViews.indices.contains(currentPageIndex()) else { return pageViews.first }
+        return pageViews[currentPageIndex()]
+    }
+
+    // MARK: - Commit e undo (nostri: niente PencilKit)
+
+    // Storia di annullamento dell'inchiostro, tutta nostra. Assegnare i
+    // tratti da codice non registra NIENTE da nessuna parte (lezione già
+    // pagata col canvas): ogni commit passa da qui, che salva, fa
+    // crescere le pagine se serve e registra l'annullamento con il
+    // ripristino annidato.
+    let inkUndoManager = UndoManager()
+    // Impostati dal coordinatore: portano il dato a SwiftData e chiedono
+    // pagine nuove quando si scrive vicino al fondo.
+    var onPageDataChanged: ((Int, Data) -> Void)?
+    var onNeedsMorePages: (() -> Void)?
+
+    func commitStrokes(_ strokes: [PKStroke], previous explicitPrevious: [PKStroke]? = nil, on page: NotePageView, invalidating rect: CGRect? = nil) {
+        let previous = explicitPrevious ?? page.strokes
+        applyStrokes(strokes, on: page, invalidating: rect)
+        inkUndoManager.registerUndo(withTarget: self) { container in
+            container.undoableApply(previous, on: page)
+        }
+    }
+
+    private func undoableApply(_ strokes: [PKStroke], on page: NotePageView) {
+        let redo = page.strokes
+        applyStrokes(strokes, on: page)
+        inkUndoManager.registerUndo(withTarget: self) { container in
+            container.undoableApply(redo, on: page)
+        }
+    }
+
+    private func applyStrokes(_ strokes: [PKStroke], on page: NotePageView, invalidating rect: CGRect? = nil) {
+        page.setStrokes(strokes, invalidating: rect)
+        lastActivePageView = page
+        // L'UNICO PKDrawing del giro: serializzazione per lo storage.
+        let data = PKDrawing(strokes: strokes).dataRepresentation()
+        page.appliedDrawingData = data
+        if let index = pageViews.firstIndex(where: { $0 === page }) {
+            onPageDataChanged?(index, data)
+        }
+        // Vicino al fondo dell'ultima pagina: se ne chiede una nuova,
+        // così scrivere resta continuo, senza un muro.
+        if pageViews.last === page, page.frame.height > 0,
+           page.inkBounds.maxY > page.frame.height - 120 {
+            onNeedsMorePages?()
+        }
+    }
+
+    func currentPageIndex() -> Int {
+        let visible = visibleContentRect
+        let visibleMidY = visible.midY
+        for (index, view) in pageViews.enumerated() where view.frame.minY <= visibleMidY && visibleMidY <= view.frame.maxY {
+            return index
+        }
+        guard !pageViews.isEmpty else { return 0 }
+        return max(0, min(pageViews.count - 1, pageViews.firstIndex { $0.frame.maxY > visible.minY } ?? 0))
+    }
+
+    func scrollToPage(_ index: Int, animated: Bool) {
+        guard pageViews.indices.contains(index) else { return }
+        // contentOffset è in coordinate ZOOMATE: la posizione di pagina
+        // (coordinate contenuto) va moltiplicata per lo zoom corrente.
+        let targetY = max(0, pageViews[index].frame.minY - 16) * zoomScale
+        let maxY = max(0, contentSize.height - bounds.height)
+        setContentOffset(CGPoint(x: contentOffset.x, y: min(targetY, maxY)), animated: animated)
+    }
+
+    func pageThumbnail(index: Int) -> UIImage? {
+        guard pageViews.indices.contains(index) else { return nil }
+        let pageView = pageViews[index]
+        let rect = pageView.frame
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        let renderer = UIGraphicsImageRenderer(size: rect.size)
+        // Si disegna DAI DATI (pagina PDF + tratti), non fotografando i
+        // layer: le pagine fuori dalla finestra di residenza hanno i layer
+        // volutamente vuoti, e le loro miniature uscirebbero bianche.
+        return renderer.image { ctx in
+            let cg = ctx.cgContext
+            UIColor.white.setFill()
+            cg.fill(CGRect(origin: .zero, size: rect.size))
+
+            if let pdfPage = pageView.pdfPage {
+                let box = pdfPage.bounds(for: .mediaBox)
+                if box.width > 0, box.height > 0 {
+                    cg.saveGState()
+                    cg.translateBy(x: 0, y: rect.height)
+                    cg.scaleBy(x: 1, y: -1)
+                    let scale = rect.width / box.width
+                    cg.scaleBy(x: scale, y: scale)
+                    cg.translateBy(x: -box.minX, y: -box.minY)
+                    pdfPage.draw(with: .mediaBox, to: cg)
+                    cg.restoreGState()
+                }
+            }
+
+            // Caselle di testo e media, dall'overlay condiviso (che non
+            // dipende dalla residenza delle pagine).
+            cg.saveGState()
+            cg.translateBy(x: -rect.origin.x, y: -rect.origin.y)
+            overlayLayer.layer.render(in: cg)
+            cg.restoreGState()
+
+            if !pageView.strokes.isEmpty {
+                cg.saveGState()
+                InkRenderer.draw(pageView.strokes, in: cg, scale: 1)
+                cg.restoreGState()
+            }
+        }
+    }
+
+    var visibleContentRect: CGRect {
+        // Da coordinate zoomate a coordinate contenuto.
+        CGRect(
+            x: contentOffset.x / zoomScale,
+            y: contentOffset.y / zoomScale,
+            width: bounds.width / zoomScale,
+            height: bounds.height / zoomScale
+        )
+    }
+
+    // UndoManager della finestra: registra i tratti di TUTTI i canvas
+    // pagina (e le modifiche testo), quindi "indietro" annulla l'ultima
+    // azione ovunque sia avvenuta — lo stesso modello di Notability.
+    func undo() { inkUndoManager.undo() }
+    func redo() { inkUndoManager.redo() }
+
+    // Un PDF vero con una pagina per ogni NotePage, non un unico foglio lungo.
+    // Export PDF vero: le pagine PDF importate vengono ridisegnate
+    // VETTORIALMENTE (testo selezionabile, niente sgranatura), non
+    // rasterizzate insieme al resto; sopra ci vanno testo/media e infine
+    // l'inchiostro. `includePattern` decide se stampare anche la nostra
+    // filigrana (quadretti/righe): di default no, così l'export è pulito.
+    func renderAllPagesPDF(includePattern: Bool) -> Data? {
+        guard let first = pageViews.first else { return nil }
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: first.frame.size))
+        return renderer.pdfData { ctx in
+            for view in pageViews {
+                let pageSize = view.frame.size
+                ctx.beginPage(withBounds: CGRect(origin: .zero, size: pageSize), pageInfo: [:])
+                let cg = ctx.cgContext
+
+                // Sfondo bianco: senza, le aree non coperte restano
+                // trasparenti e alcuni lettori le mostrano nere.
+                cg.setFillColor(UIColor.white.cgColor)
+                cg.fill(CGRect(origin: .zero, size: pageSize))
+
+                if let pdfPage = view.pdfPage {
+                    let box = pdfPage.bounds(for: .mediaBox)
+                    if box.width > 0, box.height > 0 {
+                        cg.saveGState()
+                        // Il PDF ha origine in basso a sinistra, il contesto
+                        // UIKit in alto a sinistra: va ribaltato.
+                        cg.translateBy(x: 0, y: pageSize.height)
+                        cg.scaleBy(x: 1, y: -1)
+                        let scale = pageSize.width / box.width
+                        cg.scaleBy(x: scale, y: scale)
+                        cg.translateBy(x: -box.minX, y: -box.minY)
+                        pdfPage.draw(with: .mediaBox, to: cg)
+                        cg.restoreGState()
+                    }
+                } else if includePattern {
+                    cg.saveGState()
+                    view.backgroundView.layer.render(in: cg)
+                    cg.restoreGState()
+                }
+
+                // Caselle di testo, immagini e PDF trascinabili: vivono
+                // nell'overlay condiviso, quindi si trasla e il contesto
+                // ritaglia da sé ciò che esce dalla pagina.
+                cg.saveGState()
+                cg.translateBy(x: -view.frame.minX, y: -view.frame.minY)
+                overlayLayer.layer.render(in: cg)
+                cg.restoreGState()
+
+                // Inchiostro in VETTORIALE vero: il PDF esce con la
+                // geometria dei tratti, non con una loro foto.
+                if !view.strokes.isEmpty {
+                    cg.saveGState()
+                    InkRenderer.draw(view.strokes, in: cg, scale: 4)
+                    cg.restoreGState()
+                }
+            }
+        }
+    }
+}
+
+// Bridge SwiftUI per una nota a pagine reali in scorrimento continuo
+// (tutto tranne la lavagna infinita, che resta su DrawingCanvasView).
+struct PagedNoteCanvasView: UIViewRepresentable {
+    var pages: [NotePage]
+    // Pagina da cui ripartire all'apertura (segnalibro automatico).
+    var initialPage: Int = 0
+    @Binding var textBoxes: [NoteTextBox]
+    var media: [NoteMedia]
+    var tool: PenTool
+    var color: Color
+    var inkWidth: CGFloat
+    var eraserType: PKEraserTool.EraserType
+    var eraserWidth: CGFloat
+    var template: NoteTemplate
+    var patternScale: CGFloat
+    var pageWidth: CGFloat
+    var defaultPageHeight: CGFloat
+    var magicAction: MagicAction?
+    var controller: DrawingController
+    var onDeleteMedia: (NoteMedia) -> Void
+    var onEditMedia: (NoteMedia) -> Void
+    var onMagicCapture: (MagicAction, CGRect, UIImage) -> Void
+    var onEraseStrokeCompleted: () -> Void
+    var onLassoFinished: () -> Void
+    var onPencilDoubleTap: () -> Void
+    var onPageDrawingChanged: (NotePage, Data?) -> Void
+    var onNeedMorePages: () -> Void
+
+    func makeUIView(context: Context) -> PagedCanvasContainer {
+        let container = PagedCanvasContainer(pageWidth: pageWidth)
+        if initialPage > 0 {
+            container.pendingInitialPage = initialPage
+        }
+        context.coordinator.parent = self
+        context.coordinator.applyPages(to: container)
+        context.coordinator.applyToolState(to: container)
+
+        let circlePan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleCirclePan(_:)))
+        circlePan.delegate = context.coordinator
+        container.interactionOverlay.addGestureRecognizer(circlePan)
+        context.coordinator.circlePanRecognizer = circlePan
+
+        let pointerPan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePointerPan(_:)))
+        pointerPan.delegate = context.coordinator
+        pointerPan.minimumNumberOfTouches = 1
+        pointerPan.maximumNumberOfTouches = 1
+        container.interactionOverlay.addGestureRecognizer(pointerPan)
+        context.coordinator.pointerPanRecognizer = pointerPan
+
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        tap.delegate = context.coordinator
+        container.overlayLayer.addGestureRecognizer(tap)
+        context.coordinator.tapRecognizer = tap
+
+        let magicActive = magicAction != nil
+        container.interactionOverlay.isUserInteractionEnabled = magicActive || tool == .pointer
+        circlePan.isEnabled = magicActive
+        pointerPan.isEnabled = (tool == .pointer) && !magicActive
+        // Il pan interno riconosce i gesti INSIEME al cerchio della penna
+        // magica (delegate simultaneo): senza congelarlo, cerchiare
+        // faceva anche scorrere il foglio.
+        container.isScrollEnabled = !magicActive
+        container.overlayLayer.passthroughEmptyAreas = !(tool == .text)
+        tap.isEnabled = (tool == .text) && !magicActive
+
+        controller.pagedContainer = container
+        context.coordinator.syncTextBoxes(in: container.overlayLayer)
+        context.coordinator.syncMedia(in: container.overlayLayer)
+        return container
+    }
+
+    func updateUIView(_ container: PagedCanvasContainer, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.applyPages(to: container)
+        context.coordinator.applyToolState(to: container)
+
+        let magicActive = magicAction != nil
+        container.interactionOverlay.isUserInteractionEnabled = magicActive || tool == .pointer
+        if container.interactionOverlay.isUserInteractionEnabled {
+            container.contentHost.bringSubviewToFront(container.interactionOverlay)
+        }
+        context.coordinator.circlePanRecognizer?.isEnabled = magicActive
+        context.coordinator.pointerPanRecognizer?.isEnabled = (tool == .pointer) && !magicActive
+        // Vedi makeUIView: congelato mentre la penna magica è armata,
+        // altrimenti cerchiare fa anche scorrere il foglio.
+        container.isScrollEnabled = !magicActive
+        container.overlayLayer.passthroughEmptyAreas = !(tool == .text)
+        context.coordinator.tapRecognizer?.isEnabled = (tool == .text) && !magicActive
+
+        context.coordinator.syncTextBoxes(in: container.overlayLayer)
+        context.coordinator.syncMedia(in: container.overlayLayer)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate, UITextViewDelegate, UIPencilInteractionDelegate {
+        var parent: PagedNoteCanvasView
+        weak var tapRecognizer: UITapGestureRecognizer?
+        weak var circlePanRecognizer: UIPanGestureRecognizer?
+        weak var pointerPanRecognizer: UIPanGestureRecognizer?
+        weak var container: PagedCanvasContainer?
+        private var pencilInteractionInstalled = false
+
+        private var circleStartPoint: CGPoint?
+        private var circlePreviewLayer: CAShapeLayer?
+        private var textViewsByID: [UUID: BoxTextView] = [:]
+        private var lastDragLocation: [UUID: CGPoint] = [:]
+        private var mediaViewsByID: [PersistentIdentifier: MediaBoxView] = [:]
+        private var mediaDragLocation: [PersistentIdentifier: CGPoint] = [:]
+
+        init(_ parent: PagedNoteCanvasView) { self.parent = parent }
+
+        // MARK: - Sincronizzazione pagine
+
+        func applyPages(to container: PagedCanvasContainer) {
+            self.container = container
+            // Iniziare un tratto deseleziona i media.
+            container.liveInkOverlay.onStrokeBegan = { [weak self] in self?.select(nil) }
+            container.liveInkOverlay.onLassoFinished = { [weak self] in self?.parent.onLassoFinished() }
+            // Il commit del contenitore porta i dati a SwiftData e chiede
+            // pagine nuove quando si scrive vicino al fondo. `index` e
+            // non riferimento: le NotePage possono essere ricreate.
+            container.onPageDataChanged = { [weak self] index, data in
+                guard let self, self.parent.pages.indices.contains(index) else { return }
+                self.parent.onPageDrawingChanged(self.parent.pages[index], data)
+                if self.parent.tool == .eraser {
+                    self.parent.onEraseStrokeCompleted()
+                }
+            }
+            container.onNeedsMorePages = { [weak self] in self?.parent.onNeedMorePages() }
+            if !pencilInteractionInstalled {
+                let interaction = UIPencilInteraction()
+                interaction.delegate = self
+                container.addInteraction(interaction)
+                pencilInteractionInstalled = true
+            }
+            let pageData = parent.pages.map { (drawingData: $0.drawingData, pdfPageData: $0.pdfPageData) }
+            _ = container.sync(pages: pageData, defaultHeight: parent.defaultPageHeight, template: parent.template, patternScale: parent.patternScale)
+        }
+
+        func applyToolState(to container: PagedCanvasContainer) {
+            let magicActive = parent.magicAction != nil
+
+            // UN SOLO MOTORE, il nostro: penna, evidenziatore, gomma e
+            // lasso. PencilKit non partecipa più all'interazione.
+            let overlayActive = (parent.tool.isInk || parent.tool == .eraser || parent.tool == .lasso) && !magicActive
+            container.liveInkOverlay.isUserInteractionEnabled = overlayActive
+            if overlayActive {
+                switch parent.tool {
+                case .eraser:
+                    // SOLO gomma a oggetti: quella parziale crashava e per
+                    // ora è fuori dal gioco (il codice di divisione resta,
+                    // spento, per quando la riprenderemo).
+                    container.liveInkOverlay.mode = .erase(
+                        radius: parent.eraserWidth / 2,
+                        partial: false
+                    )
+                case .lasso:
+                    container.liveInkOverlay.mode = .lasso
+                default:
+                    container.liveInkOverlay.mode = .draw
+                    let base = UIColor(parent.color)
+                    container.liveInkOverlay.inkColor = parent.tool == .marker
+                        ? base.withAlphaComponent(PenTool.markerOpacity)
+                        : base
+                    container.liveInkOverlay.baseWidth = parent.inkWidth
+                    container.liveInkOverlay.pressureSensitive = parent.tool != .marker
+                }
+            }
+            if parent.tool != .lasso {
+                container.liveInkOverlay.clearLassoSelection()
+            }
+            container.setPencilPanBlocked(overlayActive)
+
+            for pageView in container.pageViews {
+                // Fuori dalla scrittura la vista del tratto vivo libera il
+                // suo backing store (una pagina intera alla scala dello
+                // zoom): non deve restare allocato per niente.
+                if !overlayActive || parent.tool != .pen && parent.tool != .marker {
+                    pageView.liveStrokeView.clearContents()
+                    pageView.liveStrokeView.isHidden = true
+                }
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        // MARK: - Apple Pencil
+
+        func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+            parent.onPencilDoubleTap()
+        }
+
+        // MARK: - Testo (tocca per aggiungere una casella)
+
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended, let overlay = gesture.view as? PassthroughOverlayView else { return }
+            let point = gesture.location(in: overlay)
+            addTextBox(at: point, in: overlay)
+        }
+
+        func syncTextBoxes(in overlay: UIView) {
+            let currentIDs = Set(parent.textBoxes.map(\.id))
+            for (id, view) in textViewsByID where !currentIDs.contains(id) {
+                view.removeFromSuperview()
+                textViewsByID.removeValue(forKey: id)
+            }
+            for box in parent.textBoxes where textViewsByID[box.id] == nil {
+                let textView = makeTextView(for: box)
+                overlay.addSubview(textView)
+                textViewsByID[box.id] = textView
+            }
+        }
+
+        private func addTextBox(at point: CGPoint, in overlay: UIView) {
+            let box = NoteTextBox(x: Double(point.x), y: Double(point.y))
+            parent.textBoxes.append(box)
+            let textView = makeTextView(for: box)
+            overlay.addSubview(textView)
+            textViewsByID[box.id] = textView
+            textView.becomeFirstResponder()
+        }
+
+        private func makeTextView(for box: NoteTextBox) -> BoxTextView {
+            let textView = BoxTextView()
+            textView.boxID = box.id
+            textView.text = box.text
+            textView.font = .preferredFont(forTextStyle: .body)
+            textView.backgroundColor = .clear
+            textView.isScrollEnabled = false
+            textView.textContainerInset = UIEdgeInsets(top: 4, left: 4, bottom: 4, right: 4)
+            textView.delegate = self
+            textView.frame = CGRect(x: box.x, y: box.y, width: box.width, height: 40)
+            textView.sizeToFit()
+            textView.frame.size.width = box.width
+
+            let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleTextBoxLongPress(_:)))
+            longPress.minimumPressDuration = 0.35
+            textView.addGestureRecognizer(longPress)
+
+            // La "x" e la maniglia erano collegate solo sulla lavagna: qui
+            // sulle note il tocco non faceva nulla.
+            let resizePan = UIPanGestureRecognizer(target: self, action: #selector(handleTextBoxResizePan(_:)))
+            textView.resizeHandle.isUserInteractionEnabled = true
+            textView.resizeHandle.addGestureRecognizer(resizePan)
+            textView.deleteButton.addTarget(self, action: #selector(handleTextBoxDelete(_:)), for: .touchUpInside)
+
+            return textView
+        }
+
+        @objc private func handleTextBoxResizePan(_ gesture: UIPanGestureRecognizer) {
+            guard let textView = gesture.view?.superview as? BoxTextView else { return }
+            let translation = gesture.translation(in: textView)
+            switch gesture.state {
+            case .changed:
+                textView.frame.size.width = max(textView.frame.width + translation.x, 120)
+                textView.frame.size.height = max(textView.frame.height + translation.y, 40)
+                gesture.setTranslation(.zero, in: textView)
+            case .ended, .cancelled:
+                textView.isScrollEnabled = true
+                guard let index = parent.textBoxes.firstIndex(where: { $0.id == textView.boxID }) else { return }
+                parent.textBoxes[index].width = Double(textView.frame.width)
+                parent.textBoxes[index].height = Double(textView.frame.height)
+            default:
+                break
+            }
+        }
+
+        @objc private func handleTextBoxDelete(_ sender: UIButton) {
+            guard let textView = sender.superview as? BoxTextView else { return }
+            parent.textBoxes.removeAll { $0.id == textView.boxID }
+            textView.removeFromSuperview()
+            textViewsByID.removeValue(forKey: textView.boxID)
+        }
+
+        @objc private func handleTextBoxLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard let textView = gesture.view as? BoxTextView, let overlay = textView.superview else { return }
+            let location = gesture.location(in: overlay)
+            switch gesture.state {
+            case .began:
+                textView.alpha = 0.7
+                lastDragLocation[textView.boxID] = location
+            case .changed:
+                guard let last = lastDragLocation[textView.boxID] else { return }
+                textView.center.x += location.x - last.x
+                textView.center.y += location.y - last.y
+                lastDragLocation[textView.boxID] = location
+            case .ended, .cancelled:
+                textView.alpha = 1
+                lastDragLocation.removeValue(forKey: textView.boxID)
+                updateBoxPosition(id: textView.boxID, x: textView.frame.origin.x, y: textView.frame.origin.y)
+            default:
+                break
+            }
+        }
+
+        private func updateBoxPosition(id: UUID, x: CGFloat, y: CGFloat) {
+            guard let index = parent.textBoxes.firstIndex(where: { $0.id == id }) else { return }
+            parent.textBoxes[index].x = Double(x)
+            parent.textBoxes[index].y = Double(y)
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            guard let textView = textView as? BoxTextView else { return }
+            textView.sizeToFit()
+            textView.frame.size.width = max(120, textView.frame.width)
+            guard let index = parent.textBoxes.firstIndex(where: { $0.id == textView.boxID }) else { return }
+            parent.textBoxes[index].text = textView.text
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            guard let textView = textView as? BoxTextView else { return }
+            if textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parent.textBoxes.removeAll { $0.id == textView.boxID }
+                textView.removeFromSuperview()
+                textViewsByID.removeValue(forKey: textView.boxID)
+            }
+        }
+
+        // MARK: - Penna magica (cerchia per attivare un'azione)
+
+        @objc func handleCirclePan(_ gesture: UIPanGestureRecognizer) {
+            guard let overlay = gesture.view, let action = parent.magicAction else { return }
+            let point = gesture.location(in: overlay)
+
+            switch gesture.state {
+            case .began:
+                circleStartPoint = point
+                let layer = CAShapeLayer()
+                layer.strokeColor = UIColor(action.color).cgColor
+                layer.fillColor = UIColor(action.color).withAlphaComponent(0.08).cgColor
+                layer.lineWidth = 2
+                layer.lineDashPattern = [6, 4]
+                overlay.layer.addSublayer(layer)
+                circlePreviewLayer = layer
+
+            case .changed:
+                guard let start = circleStartPoint else { return }
+                let rect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y), width: abs(point.x - start.x), height: abs(point.y - start.y))
+                circlePreviewLayer?.path = UIBezierPath(roundedRect: rect, cornerRadius: 12).cgPath
+
+            case .ended, .cancelled:
+                circlePreviewLayer?.removeFromSuperlayer()
+                circlePreviewLayer = nil
+                defer { circleStartPoint = nil }
+                guard let start = circleStartPoint else { return }
+                var rect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y), width: abs(point.x - start.x), height: abs(point.y - start.y))
+                guard rect.width > 24, rect.height > 24 else { return }
+                rect = rect.insetBy(dx: -8, dy: -8)
+                captureMagicRegion(rect, action: action)
+
+            default:
+                break
+            }
+        }
+
+        // Il cerchio ricade quasi sempre in un'unica pagina: prendo quella
+        // che lo contiene di più. Come per la lavagna: layer.render prende
+        // sfondo/PDF/testo, PKDrawing.image l'inchiostro (che layer.render
+        // non compone — era il bug del "funziona solo su sfondo PDF").
+        private func captureMagicRegion(_ rect: CGRect, action: MagicAction) {
+            guard let container, let pageView = container.pageViews.max(by: { a, b in
+                let ia = a.frame.intersection(rect), ib = b.frame.intersection(rect)
+                return ia.width * ia.height < ib.width * ib.height
+            }) else { return }
+
+            let localRect = CGRect(
+                x: rect.minX - pageView.frame.minX,
+                y: rect.minY - pageView.frame.minY,
+                width: rect.width,
+                height: rect.height
+            )
+            let scale = UIScreen.main.scale
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = scale
+            let renderer = UIGraphicsImageRenderer(size: rect.size, format: format)
+            let image = renderer.image { ctx in
+                UIColor.white.setFill()
+                ctx.fill(CGRect(origin: .zero, size: rect.size))
+                ctx.cgContext.saveGState()
+                ctx.cgContext.translateBy(x: -localRect.minX, y: -localRect.minY)
+                pageView.layer.render(in: ctx.cgContext)
+                ctx.cgContext.restoreGState()
+            }
+            parent.onMagicCapture(action, rect, image)
+        }
+
+        // MARK: - Dimensione gomma (solo indicatore visivo)
+
+        // MARK: - Strumento puntatore (scorri anche con la Pencil)
+
+        @objc func handlePointerPan(_ gesture: UIPanGestureRecognizer) {
+            guard let overlay = gesture.view, let scrollView = container else { return }
+            switch gesture.state {
+            case .changed:
+                let translation = gesture.translation(in: overlay)
+                var offset = scrollView.contentOffset
+                offset.x -= translation.x
+                offset.y -= translation.y
+                let maxX = max(0, scrollView.contentSize.width - scrollView.bounds.width)
+                let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+                offset.x = min(max(offset.x, -scrollView.contentInset.left), maxX)
+                offset.y = min(max(offset.y, 0), maxY)
+                scrollView.contentOffset = offset
+                gesture.setTranslation(.zero, in: overlay)
+            default:
+                break
+            }
+        }
+
+        // MARK: - Immagini e PDF
+
+        func syncMedia(in overlay: UIView) {
+            let currentIDs = Set(parent.media.map(\.persistentModelID))
+            for (id, view) in mediaViewsByID where !currentIDs.contains(id) {
+                view.removeFromSuperview()
+                mediaViewsByID.removeValue(forKey: id)
+            }
+            // Una formula ricomposta ha gli stessi id ma contenuto nuovo:
+            // senza questo confronto la vista resterebbe quella vecchia e
+            // la modifica sembrerebbe non aver fatto niente.
+            for item in parent.media {
+                guard let box = mediaViewsByID[item.persistentModelID],
+                      box.contentVersion != contentVersion(of: item) else { continue }
+                box.removeFromSuperview()
+                mediaViewsByID.removeValue(forKey: item.persistentModelID)
+            }
+            for item in parent.media where mediaViewsByID[item.persistentModelID] == nil {
+                let box = makeMediaView(for: item)
+                overlay.addSubview(box)
+                mediaViewsByID[item.persistentModelID] = box
+            }
+        }
+
+        private func contentVersion(of item: NoteMedia) -> Int {
+            item.data.count &* 31 &+ (item.sourceText?.hashValue ?? 0)
+        }
+
+        private func makeMediaView(for item: NoteMedia) -> MediaBoxView {
+            let box = MediaBoxView(frame: CGRect(x: item.x, y: item.y, width: item.width, height: item.height))
+            box.mediaID = item.persistentModelID
+            box.contentVersion = contentVersion(of: item)
+
+            switch item.kind {
+            case .image, .formula:
+                if item.kind == .formula { box.makeTransparent() }
+                let imageView = UIImageView(image: UIImage(data: item.data))
+                imageView.contentMode = .scaleAspectFit
+                imageView.frame = box.contentContainer.bounds
+                imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                box.contentContainer.addSubview(imageView)
+            case .pdf:
+                let pdfView = PDFView(frame: box.contentContainer.bounds)
+                pdfView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                pdfView.autoScales = true
+                pdfView.document = PDFDocument(data: item.data)
+                box.contentContainer.addSubview(pdfView)
+            }
+
+            let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleMediaLongPress(_:)))
+            longPress.minimumPressDuration = 0.35
+            box.addGestureRecognizer(longPress)
+
+            // Un tocco seleziona (e mostra i comandi), un altro deseleziona:
+            // stesso patto della casella di testo, che a riposo resta pulita.
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleMediaTap(_:)))
+            box.addGestureRecognizer(tap)
+
+            let resizePan = UIPanGestureRecognizer(target: self, action: #selector(handleMediaResizePan(_:)))
+            box.resizeHandle.isUserInteractionEnabled = true
+            box.resizeHandle.addGestureRecognizer(resizePan)
+
+            box.canEdit = item.sourceText != nil
+            box.deleteButton.addTarget(self, action: #selector(handleMediaDelete(_:)), for: .touchUpInside)
+            box.editButton.addTarget(self, action: #selector(handleMediaEdit(_:)), for: .touchUpInside)
+            return box
+        }
+
+        @objc private func handleMediaTap(_ gesture: UITapGestureRecognizer) {
+            guard let box = gesture.view as? MediaBoxView else { return }
+            select(box.isSelected ? nil : box)
+        }
+
+        // Una sola selezione per volta, come per il fuoco di una casella
+        // di testo: due riquadri blu insieme non vorrebbero dire niente.
+        func select(_ box: MediaBoxView?) {
+            for view in mediaViewsByID.values where view !== box {
+                if view.isSelected { view.setSelected(false) }
+            }
+            box?.setSelected(true)
+            // Il selezionato passa davanti: altrimenti la maniglia finisce
+            // sotto a un media sovrapposto e non si riesce ad afferrarla.
+            if let box { box.superview?.bringSubviewToFront(box) }
+        }
+
+        @objc private func handleMediaResizePan(_ gesture: UIPanGestureRecognizer) {
+            guard let box = gesture.view?.superview as? MediaBoxView, let mediaID = box.mediaID else { return }
+            let translation = gesture.translation(in: box)
+            switch gesture.state {
+            case .changed:
+                box.frame.size.width = max(box.frame.width + translation.x, 60)
+                box.frame.size.height = max(box.frame.height + translation.y, 30)
+                gesture.setTranslation(.zero, in: box)
+            case .ended, .cancelled:
+                guard let item = parent.media.first(where: { $0.persistentModelID == mediaID }) else { return }
+                item.width = Double(box.frame.width)
+                item.height = Double(box.frame.height)
+            default:
+                break
+            }
+        }
+
+        @objc private func handleMediaEdit(_ sender: UIButton) {
+            guard let box = sender.superview as? MediaBoxView,
+                  let mediaID = box.mediaID,
+                  let item = parent.media.first(where: { $0.persistentModelID == mediaID }) else { return }
+            parent.onEditMedia(item)
+        }
+
+        @objc private func handleMediaLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard let box = gesture.view as? MediaBoxView, let mediaID = box.mediaID, let overlay = box.superview else { return }
+            let location = gesture.location(in: overlay)
+            switch gesture.state {
+            case .began:
+                box.alpha = 0.85
+                mediaDragLocation[mediaID] = location
+            case .changed:
+                guard let last = mediaDragLocation[mediaID] else { return }
+                box.center.x += location.x - last.x
+                box.center.y += location.y - last.y
+                mediaDragLocation[mediaID] = location
+            case .ended, .cancelled:
+                box.alpha = 1
+                mediaDragLocation.removeValue(forKey: mediaID)
+                if let item = parent.media.first(where: { $0.persistentModelID == mediaID }) {
+                    item.x = Double(box.frame.origin.x)
+                    item.y = Double(box.frame.origin.y)
+                }
+            default:
+                break
+            }
+        }
+
+        @objc private func handleMediaDelete(_ sender: UIButton) {
+            guard let box = sender.superview as? MediaBoxView,
+                  let mediaID = box.mediaID,
+                  let item = parent.media.first(where: { $0.persistentModelID == mediaID }) else { return }
+            parent.onDeleteMedia(item)
+            box.removeFromSuperview()
+            mediaViewsByID.removeValue(forKey: mediaID)
+        }
+
+    }
+}

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<link rel="stylesheet" href="katex.min.css">
+<script src="katex.min.js"></script>
+<script src="auto-render.min.js"></script>
+<script src="marked.min.js"></script>
+<style>
+  /* Tipografia allineata al design dell'app (SF Pro di sistema,
+     stessi colori dei DesignTokens). */
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body {
+    padding: 2px;
+    font: -apple-system-body;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: #1c1c1e;
+    -webkit-text-size-adjust: 100%;
+  }
+  #content { overflow-wrap: break-word; }
+  #content > *:first-child { margin-top: 0; }
+  #content > *:last-child { margin-bottom: 0; }
+  p { margin: 0 0 0.7em; }
+  h1, h2, h3, h4 { margin: 1em 0 0.4em; line-height: 1.25; font-weight: 600; }
+  h1 { font-size: 1.3em; }
+  h2 { font-size: 1.18em; }
+  h3 { font-size: 1.06em; }
+  h4 { font-size: 1em; }
+  ul, ol { margin: 0 0 0.7em; padding-left: 1.3em; }
+  li { margin: 0.2em 0; }
+  strong { font-weight: 600; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.9em;
+    background: rgba(120,120,128,0.12);
+    padding: 0.12em 0.34em;
+    border-radius: 4px;
+  }
+  pre {
+    background: rgba(120,120,128,0.12);
+    padding: 0.7em 0.8em;
+    border-radius: 10px;
+    overflow-x: auto;
+    margin: 0 0 0.7em;
+  }
+  pre code { background: none; padding: 0; }
+  blockquote {
+    margin: 0 0 0.7em;
+    padding-left: 0.8em;
+    border-left: 3px solid rgba(120,120,128,0.3);
+    color: #3c3c43;
+  }
+  hr { border: none; border-top: 1px solid rgba(120,120,128,0.25); margin: 1em 0; }
+  table { border-collapse: collapse; margin: 0 0 0.7em; display: block; overflow-x: auto; }
+  th, td { border: 1px solid rgba(120,120,128,0.25); padding: 0.35em 0.6em; text-align: left; }
+  /* Le formule in display possono essere larghe: scorrono da sole
+     invece di far scorrere l'intera pagina. */
+  .katex-display { margin: 0.6em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+  .katex { font-size: 1.05em; }
+
+  @media (prefers-color-scheme: dark) {
+    body { color: #f2f2f7; }
+    blockquote { color: #d1d1d6; }
+  }
+</style>
+</head>
+<body>
+<div id="content"></div>
+<script>
+  function reportHeight() {
+    if (window.webkit && window.webkit.messageHandlers.heightHandler) {
+      window.webkit.messageHandlers.heightHandler.postMessage(document.body.scrollHeight);
+    }
+  }
+
+  // Markdown → HTML, poi KaTeX sulle formule.
+  //
+  // La matematica va però messa AL RIPARO da marked prima di dargli il
+  // testo: per Markdown "\\" è un backslash escapato e lo riduce a "\",
+  // ma in LaTeX "\\" è l'a-capo di una matrice — così una pmatrix 3x3
+  // arrivava a KaTeX senza separatori di riga e usciva come un vettore
+  // riga 1x9, senza nessun errore. Stesso discorso per gli underscore dei
+  // pedici, che marked leggerebbe come corsivo.
+  // Ogni formula viene sostituita da un segnaposto, marked lavora sul
+  // resto, e alla fine le formule tornano al loro posto intatte.
+  // L'ultima alternativa raccoglie gli ambienti scritti NUDI, senza $$:
+  // il modello ogni tanto se li dimentica, e una matrice mostrata come
+  // "\begin{pmatrix}..." è il peggior risultato possibile. Rientrando,
+  // vengono avvolti in $$ così KaTeX li compone comunque.
+  var MATH_PATTERN = /\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$[^\n$]+?\$|\\\([\s\S]+?\\\)|\\begin\{(pmatrix|bmatrix|vmatrix|Vmatrix|Bmatrix|matrix|cases|aligned|array)\}[\s\S]+?\\end\{\1\}/g;
+
+  function escapeHTML(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function markdownToHTML(markdown) {
+    var formulas = [];
+    var guarded = markdown.replace(MATH_PATTERN, function (match) {
+      formulas.push(match.charAt(0) === '\\' && match.charAt(1) === 'b' ? '$$' + match + '$$' : match);
+      return '@@MATH' + (formulas.length - 1) + '@@';
+    });
+    var html = marked.parse(guarded, { breaks: true, gfm: true });
+    // Rientrano come TESTO: auto-render legge il testo del nodo, quindi
+    // le entità tornano caratteri veri al momento della composizione.
+    return html.replace(/@@MATH(\d+)@@/g, function (_, index) {
+      return escapeHTML(formulas[index]);
+    });
+  }
+
+  function renderContent(markdown, mathOnly) {
+    var el = document.getElementById('content');
+    try {
+      if (mathOnly) {
+        katex.render(markdown, el, { throwOnError: false, displayMode: true });
+      } else {
+        el.innerHTML = markdownToHTML(markdown);
+        renderMathInElement(el, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '\\[', right: '\\]', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false }
+          ],
+          throwOnError: false
+        });
+      }
+    } catch (e) {
+      el.innerText = markdown;
+    }
+    reportHeight();
+    // I font di KaTeX arrivano poco dopo e cambiano l'altezza reale.
+    setTimeout(reportHeight, 60);
+    setTimeout(reportHeight, 250);
+  }
+
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(reportHeight);
+  }
+</script>
+</body>
+</html>

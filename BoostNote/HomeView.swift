@@ -118,7 +118,7 @@ struct HomeView: View {
             let title = url.deletingPathExtension().lastPathComponent
             let note = Note(title: title.isEmpty ? "Nuova nota" : title, folder: nil)
             context.insert(note)
-            note.appendPDFPages(from: data)
+            note.appendPages(fromPDF: data, in: context)
             selectedNote = note
         }
     }

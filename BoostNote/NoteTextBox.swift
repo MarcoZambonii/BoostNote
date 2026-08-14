@@ -8,4 +8,9 @@ struct NoteTextBox: Identifiable, Codable, Equatable {
     var y: Double
     var width: Double = 220
     var text: String = ""
+    // nil = si adatta automaticamente al contenuto (comportamento
+    // originale); impostata trascinando la maniglia di ridimensionamento,
+    // da quel momento la casella resta a dimensione fissa con scroll
+    // interno invece di continuare a crescere da sola.
+    var height: Double?
 }
