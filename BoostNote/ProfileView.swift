@@ -11,16 +11,24 @@ struct ProfileView: View {
     @AppStorage("syncICloud") private var syncICloud = false
     @AppStorage("syncObsidian") private var syncObsidian = false
 
+    // Le chiavi salvate NON vengono mai rimesse nei campi di testo: una
+    // chiave si aggiunge, si sostituisce o si rimuove, ma non si rilegge
+    // dallo schermo. Prima i campi venivano precompilati col valore
+    // salvato — comodo, ma significava lasciare la credenziale visibile
+    // a chiunque avesse l'iPad in mano aperto sul Profilo.
     @AppStorage("wolframAlphaAppID") private var wolframAppID = ""
     @State private var wolframDraft = ""
+    @State private var wolframEditing = false
 
-    @AppStorage("anthropicAPIKey") private var anthropicAPIKey = ""
+    @State private var anthropicSaved = AIService.claudeKey != nil
     @State private var anthropicDraft = ""
+    @State private var anthropicEditing = false
 
     @AppStorage("aiProviderKind") private var aiProviderRaw = AIProviderKind.appleLocal.rawValue
     @AppStorage("geminiModelTier_reading") private var readingTierRaw = AIPurpose.reading.defaultTier.rawValue
     @AppStorage("geminiModelTier_generation") private var generationTierRaw = AIPurpose.generation.defaultTier.rawValue
-    @State private var geminiDraft = AIService.geminiKey ?? ""
+    @State private var geminiDraft = ""
+    @State private var geminiEditing = false
     @State private var geminiSaved = AIService.geminiKey != nil
 
     @State private var photosPickerItem: PhotosPickerItem?
@@ -44,10 +52,6 @@ struct ProfileView: View {
             .padding(DesignSpace.s6)
             .frame(maxWidth: 560, alignment: .leading)
             .frame(maxWidth: .infinity)
-        }
-        .onAppear {
-            wolframDraft = wolframAppID
-            anthropicDraft = anthropicAPIKey
         }
         .task {
             if let token = webeepToken { await loadWebeepSiteInfo(token: token) }
@@ -216,26 +220,78 @@ struct ProfileView: View {
 
                     Divider()
 
-                    HStack {
-                        SecureField("Chiave API Gemini", text: $geminiDraft)
-                            .textFieldStyle(.plain)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .padding(DesignSpace.s3)
-                            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md))
-                        Button("Salva") {
+                    credentialEditor(
+                        placeholder: "Chiave API Gemini",
+                        isSaved: geminiSaved,
+                        isEditing: $geminiEditing,
+                        draft: $geminiDraft,
+                        onSave: {
                             AIService.saveGeminiKey(geminiDraft)
                             geminiSaved = AIService.geminiKey != nil
+                        },
+                        onRemove: {
+                            AIService.saveGeminiKey("")
+                            geminiSaved = false
                         }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    if geminiSaved {
-                        Label("Chiave salvata in Keychain", systemImage: "checkmark.circle.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(DesignColor.success)
-                    }
+                    )
                 }
             }
+        }
+    }
+
+    // Editor di una credenziale che non la lascia mai a schermo: da
+    // salvata mostra solo "Chiave salvata" con Sostituisci/Rimuovi, e il
+    // campo (vuoto) compare solo mentre si sta inserendo. Il valore
+    // salvato non viene MAI riletto nel campo.
+    @ViewBuilder
+    private func credentialEditor(
+        placeholder: String,
+        savedLabel: String = "Chiave salvata in Keychain",
+        isSaved: Bool,
+        isEditing: Binding<Bool>,
+        draft: Binding<String>,
+        onSave: @escaping () -> Void,
+        onRemove: @escaping () -> Void
+    ) -> some View {
+        if isEditing.wrappedValue {
+            HStack {
+                SecureField(placeholder, text: draft)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .padding(DesignSpace.s3)
+                    .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md))
+                Button("Salva") {
+                    onSave()
+                    draft.wrappedValue = ""
+                    isEditing.wrappedValue = false
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Annulla") {
+                    draft.wrappedValue = ""
+                    isEditing.wrappedValue = false
+                }
+                .buttonStyle(.bordered)
+            }
+        } else if isSaved {
+            HStack(spacing: DesignSpace.s3) {
+                Label(savedLabel, systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DesignColor.success)
+                Spacer()
+                Button("Sostituisci") { isEditing.wrappedValue = true }
+                    .buttonStyle(.bordered)
+                Button("Rimuovi", role: .destructive, action: onRemove)
+                    .buttonStyle(.bordered)
+            }
+        } else {
+            Button {
+                isEditing.wrappedValue = true
+            } label: {
+                Label("Aggiungi chiave", systemImage: "plus.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
         }
     }
 
@@ -268,23 +324,15 @@ struct ProfileView: View {
                 Text("Usata dalla penna magica (azione \"Wolfram\") per risolvere le espressioni cerchiate, e dallo strumento Wolfram del pannello laterale della nota.")
                     .font(.system(size: 13))
                     .foregroundStyle(DesignColor.textTertiary)
-                HStack {
-                    TextField("AppID", text: $wolframDraft)
-                        .textFieldStyle(.plain)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .padding(DesignSpace.s3)
-                        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md))
-                    Button("Salva") {
-                        wolframAppID = wolframDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                if !wolframAppID.isEmpty {
-                    Label("Chiave salvata", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(DesignColor.success)
-                }
+                credentialEditor(
+                    placeholder: "AppID",
+                    savedLabel: "AppID salvato",
+                    isSaved: !wolframAppID.isEmpty,
+                    isEditing: $wolframEditing,
+                    draft: $wolframDraft,
+                    onSave: { wolframAppID = wolframDraft.trimmingCharacters(in: .whitespacesAndNewlines) },
+                    onRemove: { wolframAppID = "" }
+                )
             }
         }
     }
@@ -295,23 +343,20 @@ struct ProfileView: View {
                 Text("Usata dalla penna magica (azione \"Spiega\") per spiegare un'espressione cerchiata. Crea una chiave su console.anthropic.com.")
                     .font(.system(size: 13))
                     .foregroundStyle(DesignColor.textTertiary)
-                HStack {
-                    SecureField("Chiave API", text: $anthropicDraft)
-                        .textFieldStyle(.plain)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .padding(DesignSpace.s3)
-                        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md))
-                    Button("Salva") {
-                        anthropicAPIKey = anthropicDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                credentialEditor(
+                    placeholder: "Chiave API",
+                    isSaved: anthropicSaved,
+                    isEditing: $anthropicEditing,
+                    draft: $anthropicDraft,
+                    onSave: {
+                        AIService.saveClaudeKey(anthropicDraft)
+                        anthropicSaved = AIService.claudeKey != nil
+                    },
+                    onRemove: {
+                        AIService.saveClaudeKey("")
+                        anthropicSaved = false
                     }
-                    .buttonStyle(.borderedProminent)
-                }
-                if !anthropicAPIKey.isEmpty {
-                    Label("Chiave salvata", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(DesignColor.success)
-                }
+                )
             }
         }
     }

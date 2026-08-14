@@ -212,9 +212,9 @@ enum AIService {
         }
     }
 
-    // La chiave Gemini va in Keychain (è una credenziale); quella
-    // Anthropic resta dove già vive per la penna magica (AppStorage
-    // "anthropicAPIKey") per non avere due fonti di verità.
+    // Le chiavi API vanno in Keychain: sono credenziali, non preferenze.
+    // UserDefaults è un plist in chiaro che finisce nei backup — la
+    // chiave Anthropic ci è rimasta a lungo per errore.
     static var geminiKey: String? {
         KeychainStore.get(geminiKeychainKey)
     }
@@ -228,9 +228,33 @@ enum AIService {
         }
     }
 
+    private static let claudeKeychainKey = "anthropicAPIKey.keychain"
+    private static let claudeLegacyDefaultsKey = "anthropicAPIKey"
+
     static var claudeKey: String? {
-        let key = UserDefaults.standard.string(forKey: "anthropicAPIKey") ?? ""
-        return key.isEmpty ? nil : key
+        if let key = KeychainStore.get(claudeKeychainKey), !key.isEmpty {
+            return key
+        }
+        // Migrazione una tantum: chi aveva già salvato la chiave in
+        // UserDefaults se la ritrova in Keychain al primo accesso, e la
+        // copia in chiaro viene rimossa.
+        let legacy = UserDefaults.standard.string(forKey: claudeLegacyDefaultsKey) ?? ""
+        guard !legacy.isEmpty else { return nil }
+        KeychainStore.set(legacy, forKey: claudeKeychainKey)
+        UserDefaults.standard.removeObject(forKey: claudeLegacyDefaultsKey)
+        return legacy
+    }
+
+    static func saveClaudeKey(_ key: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        // La copia legacy in chiaro va rimossa in ogni caso: altrimenti
+        // dopo un "Rimuovi" la migrazione la resusciterebbe.
+        UserDefaults.standard.removeObject(forKey: claudeLegacyDefaultsKey)
+        if trimmed.isEmpty {
+            KeychainStore.remove(claudeKeychainKey)
+        } else {
+            KeychainStore.set(trimmed, forKey: claudeKeychainKey)
+        }
     }
 
     // Il provider selezionato è utilizzabile adesso? (chiave presente /
