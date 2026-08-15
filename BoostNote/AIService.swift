@@ -42,12 +42,15 @@ enum GeminiModelTier: String, CaseIterable {
     // gratuito la quota è PER MODELLO, quindi incatenarli somma le quote:
     // ~1.060 richieste al giorno invece delle 500 di un modello solo.
     //
-    // Composizione (verificata chiamandoli davvero il 2026-08-12):
+    // Composizione (verificata chiamandoli davvero il 2026-08-12; alias
+    // ricontrollati sulla console il 2026-08-15):
     //   gemini-flash-lite-latest  -> 3.5 Flash Lite   500/giorno
     //   gemini-3.1-flash-lite                          500/giorno
-    //   gemini-flash-latest       -> 3.6 Flash          20/giorno
+    //   gemini-flash-latest       -> 3.7 Flash          20/giorno
     //   gemini-3.5-flash                                20/giorno
     //   gemini-3-flash-preview                          20/giorno
+    // Nota dalla console: i tentativi falliti (503) contano nel limite
+    // al minuto ma NON nella quota giornaliera — riprovare non spreca.
     //
     // Gli alias "-latest" stanno in testa perché non vengono mai
     // ritirati; le versioni fisse aggiungono quota ma possono sparire
@@ -178,6 +181,10 @@ enum AIServiceError: Error {
     // (tetto di token, filtri di sicurezza): senza, resta il messaggio
     // generico di prima.
     case badResponse(String?)
+    // L'utente ha annullato, o il tetto di tempo del modulo è scaduto:
+    // non è un guasto, e la catena si ferma subito invece di provare
+    // altri modelli per una risposta che nessuno aspetta più.
+    case cancelled
 
     var message: String {
         switch self {
@@ -187,8 +194,21 @@ enum AIServiceError: Error {
         case .rateLimited(_, let detail): "Troppe richieste ravvicinate: il limite è al minuto, non giornaliero. Riprova fra poco. \(detail)"
         case .modelUnavailable(let reason): "Nessun modello disponibile. \(reason)"
         case .badResponse(let detail): detail ?? "Il modello ha risposto in un formato inatteso."
+        case .cancelled: "Generazione annullata."
         }
     }
+}
+
+// Risposta di una generazione testuale: il testo e il modello che l'ha
+// davvero prodotta. Il modello viaggia DENTRO il risultato — la vecchia
+// `static var lastUsedModelID` era condivisa tra i moduli generati in
+// parallelo, e l'avviso "esercizi dal modello veloce" leggeva il modello
+// dell'ultimo modulo finito, non il proprio (in Swift 6 quella corsa non
+// compila nemmeno).
+struct AIReply {
+    let text: String
+    // nil per il modello Apple locale, che non ha un ID di catena.
+    let modelID: String?
 }
 
 enum AIService {
@@ -273,16 +293,37 @@ enum AIService {
     }
 
     // Unica porta d'ingresso per tutta l'app: prompt → testo. I chiamanti
-    // che vogliono JSON lo chiedono nel prompt e validano col decoder
-    // (checklist anti-allucinazione: ciò che non decodifica non si mostra).
-    static func generate(prompt: String, purpose: AIPurpose = .generation, tier: GeminiModelTier? = nil) async -> Result<String, AIServiceError> {
+    // che vogliono JSON passano `schema` (su Gemini diventa
+    // responseSchema: sintassi garantita dall'API, escape LaTeX compresi)
+    // e comunque validano col decoder (checklist anti-allucinazione: ciò
+    // che non decodifica non si mostra).
+    //
+    // `thinkingBudget` è 0 di default, ed è una scelta misurata (sonda
+    // del 2026-08-15, 4 varianti × 5 modelli): i Flash col thinking
+    // libero spendono 1.400-5.300 token a ragionare su compiti
+    // estrattivi — 21,4s invece di 4,9s su gemini-3.5-flash — e con lo
+    // schema attivo gemini-3-flash-preview è andato in spirale (7.865
+    // token di thinking, MAX_TOKENS, JSON rotto). Il ragionamento paga
+    // solo dove si INVENTA (esercizi, verifica): lì il chiamante passa
+    // un budget esplicito.
+    //
+    // `onAttempt` avvisa a ogni modello provato (ID, posizione, totale):
+    // serve alla UI per rendere leggibile l'attesa.
+    static func generate(
+        prompt: String,
+        purpose: AIPurpose = .generation,
+        tier: GeminiModelTier? = nil,
+        schema: [String: Any]? = nil,
+        thinkingBudget: Int = 0,
+        onAttempt: (@Sendable (_ modelID: String, _ position: Int, _ total: Int) -> Void)? = nil
+    ) async -> Result<AIReply, AIServiceError> {
         switch selectedProvider {
         case .appleLocal:
-            return await generateWithAppleLocal(prompt: prompt)
+            return await generateWithAppleLocal(prompt: prompt).map { AIReply(text: $0, modelID: nil) }
         case .gemini:
-            return await generateWithGemini(prompt: prompt, purpose: purpose, tier: tier)
+            return await generateWithGemini(prompt: prompt, purpose: purpose, tier: tier, schema: schema, thinkingBudget: thinkingBudget, onAttempt: onAttempt)
         case .claude:
-            return await generateWithClaude(prompt: prompt)
+            return await generateWithClaude(prompt: prompt).map { AIReply(text: $0, modelID: "claude-haiku") }
         }
     }
 
@@ -312,10 +353,6 @@ enum AIService {
         geminiTier(for: purpose).modelChain
     }
 
-    // Modello che ha davvero risposto per ultimo: serve alla UI per dire
-    // con cosa è stato generato quando è scattato il fallback.
-    private(set) static var lastUsedModelID: String?
-
     // True quando l'ultima generazione è finita sui modelli Lite pur
     // avendo chiesto i capaci: serve ad avvisare che la quota buona è
     // esaurita, invece di far notare all'utente un calo di qualità senza
@@ -333,21 +370,35 @@ enum AIService {
     // sbagliato.
     static func capableQuotaLooksExhausted() async -> Bool {
         let capable = GeminiModelTier.full.modelChain.filter { !isLiteModel($0) }
-        for modelID in capable where !(await DailyQuotaLedger.shared.isExhausted(modelID)) {
+        for modelID in capable where !(await GeminiModelLedger.shared.isExhausted(modelID)) {
             return false
         }
         return true
     }
 
-    // Modelli che hanno già risposto "quota del giorno finita". Un
+    // Cosa la sessione ha imparato su ogni modello: quota del giorno
+    // finita, sovraccarico momentaneo, rifiuto di thinkingConfig. Un
     // registro condiviso serve perché i moduli di uno studio girano in
-    // PARALLELO: senza, ognuno dei tre riscopre per conto suo che i primi
-    // due modelli della catena sono esauriti, pagando ogni volta le
-    // stesse chiamate a vuoto. È un attore e non una variabile statica
-    // proprio per quel parallelismo.
-    private actor DailyQuotaLedger {
-        static let shared = DailyQuotaLedger()
+    // PARALLELO: senza, ognuno dei tre riscopre per conto suo le stesse
+    // cose, pagando ogni volta le stesse chiamate a vuoto. È un attore e
+    // non una variabile statica proprio per quel parallelismo.
+    private actor GeminiModelLedger {
+        static let shared = GeminiModelLedger()
         private var exhaustedAt: [String: Date] = [:]
+        // 503/500/timeout: guasto transitorio DI QUEL modello. Misurato
+        // (2026-08-15): il 503 di gemini-flash-latest arrivava dopo
+        // 22-26 secondi — senza memoria, tre moduli in parallelo lo
+        // pagavano tutti e tre, e poi di nuovo al retry.
+        private var overloadedUntil: [String: Date] = [:]
+        // Il sovraccarico passa da solo: qualche minuto di quarantena,
+        // poi il modello si riprova. Vale anche per i 404 (modello
+        // ritirato): riprovarlo ogni tanto costa una chiamata veloce.
+        private let overloadQuarantine: TimeInterval = 180
+        // Modelli che hanno risposto 400 a thinkingConfig (il solo
+        // gemini-flash-lite-latest, a oggi: non ragiona affatto e
+        // rifiuta il parametro). Ricordarlo evita di ripagare il 400 a
+        // ogni chiamata — trenta pagine di lettura sono trenta 400.
+        private var rejectsThinking: Set<String> = []
 
         // La quota giornaliera di Gemini si azzera a mezzanotte del fuso
         // del Pacifico: finché lì è ancora lo stesso giorno, il modello
@@ -373,9 +424,30 @@ enum AIService {
             }
             return true
         }
+
+        func markOverloaded(_ modelID: String) {
+            overloadedUntil[modelID] = Date.now.addingTimeInterval(overloadQuarantine)
+        }
+
+        func isOverloaded(_ modelID: String) -> Bool {
+            guard let until = overloadedUntil[modelID] else { return false }
+            guard until > .now else {
+                overloadedUntil.removeValue(forKey: modelID)
+                return false
+            }
+            return true
+        }
+
+        func markRejectsThinking(_ modelID: String) {
+            rejectsThinking.insert(modelID)
+        }
+
+        func acceptsThinking(_ modelID: String) -> Bool {
+            !rejectsThinking.contains(modelID)
+        }
     }
 
-    private static func generateWithGemini(prompt: String, purpose: AIPurpose, tier: GeminiModelTier? = nil) async -> Result<String, AIServiceError> {
+    private static func generateWithGemini(prompt: String, purpose: AIPurpose, tier: GeminiModelTier? = nil, schema: [String: Any]? = nil, thinkingBudget: Int = 0, onAttempt: (@Sendable (String, Int, Int) -> Void)? = nil) async -> Result<AIReply, AIServiceError> {
         guard geminiKey != nil else {
             return .failure(.notConfigured("Nessuna chiave Gemini: creane una gratuita su aistudio.google.com e salvala nel Profilo."))
         }
@@ -383,6 +455,7 @@ enum AIService {
         let chain = tier?.modelChain ?? geminiModelChain(for: purpose)
         var lastError: AIServiceError = .badResponse(nil)
         var attemptedAny = false
+        var skippedBusy = false
 
         // DUE passate sulla catena, e la prima non dorme mai.
         //
@@ -403,37 +476,62 @@ enum AIService {
                 try? await Task.sleep(for: .seconds(min(wait, 30)))
             }
 
-            for modelID in chain {
+            for (position, modelID) in chain.enumerated() {
+                // La generazione è stata annullata (dall'utente o dal
+                // tetto di tempo): provare altri modelli è lavoro per
+                // una risposta che nessuno aspetta più.
+                if Task.isCancelled { return .failure(.cancelled) }
                 // Saltato senza nemmeno chiamare: la quota giornaliera
                 // non torna aspettando qualche secondo.
-                if await DailyQuotaLedger.shared.isExhausted(modelID) { continue }
+                if await GeminiModelLedger.shared.isExhausted(modelID) { continue }
+                // Sovraccarico segnato pochi minuti fa: il suo 503 costa
+                // 20+ secondi ad arrivare, il modello dopo risponde in 3.
+                if await GeminiModelLedger.shared.isOverloaded(modelID) {
+                    skippedBusy = true
+                    continue
+                }
                 attemptedAny = true
+                onAttempt?(modelID, position + 1, chain.count)
 
-                switch await callGemini(prompt: prompt, modelID: modelID, purpose: purpose) {
+                switch await callGemini(prompt: prompt, modelID: modelID, purpose: purpose, schema: schema, thinkingBudget: thinkingBudget) {
                 case .success(let text):
-                    lastUsedModelID = modelID
-                    return .success(text)
+                    return .success(AIReply(text: text, modelID: modelID))
                 case .failure(let error):
                     lastError = error
                     switch error {
                     case .quotaExhausted:
-                        await DailyQuotaLedger.shared.markExhausted(modelID)
+                        await GeminiModelLedger.shared.markExhausted(modelID)
                     case .rateLimited(let retryAfter, _):
                         shortestRetry = min(shortestRetry ?? retryAfter, retryAfter)
                     case .modelUnavailable:
+                        // In quarantena per qualche minuto: gli altri
+                        // moduli in parallelo non devono ripagare la
+                        // stessa attesa sullo stesso modello intasato.
+                        await GeminiModelLedger.shared.markOverloaded(modelID)
+                    case .badResponse:
+                        // MAX_TOKENS, SAFETY, risposta vuota: è un guasto
+                        // di QUEL modello su QUESTO prompt, non della
+                        // richiesta — il successivo risponde quasi sempre.
+                        // Prima interrompeva la catena come un errore di
+                        // rete, uccidendo il modulo con quattro modelli
+                        // liberi mai provati.
                         break
-                    // Rete o chiave sbagliata: cambiare modello non aiuta.
-                    case .network, .notConfigured, .badResponse:
+                    // Rete giù, chiave sbagliata, annullamento: cambiare
+                    // modello non aiuta.
+                    case .network, .notConfigured, .cancelled:
                         return .failure(error)
                     }
                 }
             }
         }
 
-        // Nessuna chiamata partita: erano tutti già segnati come esauriti.
-        // Dirlo con la sua ragione, invece di lasciare il messaggio
-        // generico dell'ultimo errore (che qui non esiste nemmeno).
+        // Nessuna chiamata partita: dirlo con la sua ragione, invece di
+        // lasciare il messaggio generico dell'ultimo errore (che qui non
+        // esiste nemmeno).
         if !attemptedAny {
+            if skippedBusy {
+                return .failure(.modelUnavailable("I modelli con quota residua risultano sovraccarichi in questo momento. Riprova tra qualche minuto."))
+            }
             return .failure(.quotaExhausted("Tutti i modelli hanno esaurito la quota di oggi. Si azzera a mezzanotte, fuso del Pacifico."))
         }
         return .failure(lastError)
@@ -443,22 +541,32 @@ enum AIService {
     // `details` della risposta di Gemini: le violazioni portano un
     // `quotaId` che dice quale finestra è stata superata, e un `RetryInfo`
     // con l'attesa consigliata dal server.
+    //
+    // Il verdetto "giornaliera" richiede PROVA POSITIVA (PerDay/Daily nei
+    // details o "per day" nel testo). Prima valeva il contrario — "se non
+    // leggo PerMinute è giornaliera" — e un 429 coi details assenti o in
+    // una forma nuova segnava il modello come morto fino a mezzanotte:
+    // successo davvero, con la console che mostrava 3/20 richieste usate
+    // e l'app che diceva "quota esaurita". I costi sono asimmetrici:
+    // classificare male un 429 transitorio costa una giornata di messaggi
+    // falsi, classificare male una quota vera costa un retry che fallisce
+    // in un secondo.
     private struct RateLimit {
-        var isPerMinute: Bool
+        var isPerDay: Bool
         var retryAfter: TimeInterval?
     }
 
     private static func rateLimitInfo(from errorObject: [String: Any]?, message: String?) -> RateLimit {
-        var isPerMinute = false
+        var isPerDay = false
         var retryAfter: TimeInterval?
 
         for detail in (errorObject?["details"] as? [[String: Any]]) ?? [] {
             let type = (detail["@type"] as? String) ?? ""
             if type.contains("QuotaFailure") {
                 for violation in (detail["violations"] as? [[String: Any]]) ?? [] {
-                    let identifiers = [violation["quotaId"] as? String, violation["quotaMetric"] as? String]
-                    if identifiers.compactMap({ $0 }).contains(where: { $0.localizedCaseInsensitiveContains("PerMinute") }) {
-                        isPerMinute = true
+                    let identifiers = [violation["quotaId"] as? String, violation["quotaMetric"] as? String].compactMap { $0 }
+                    if identifiers.contains(where: { $0.localizedCaseInsensitiveContains("PerDay") || $0.localizedCaseInsensitiveContains("Daily") }) {
+                        isPerDay = true
                     }
                 }
             }
@@ -467,13 +575,13 @@ enum AIService {
             }
         }
         // Alcune risposte non portano i `details`: resta il testo.
-        if !isPerMinute, let message, message.localizedCaseInsensitiveContains("per minute") {
-            isPerMinute = true
+        if !isPerDay, let message, message.localizedCaseInsensitiveContains("per day") {
+            isPerDay = true
         }
-        return RateLimit(isPerMinute: isPerMinute, retryAfter: retryAfter)
+        return RateLimit(isPerDay: isPerDay, retryAfter: retryAfter)
     }
 
-    private static func callGemini(prompt: String, modelID: String, purpose: AIPurpose) async -> Result<String, AIServiceError> {
+    private static func callGemini(prompt: String, modelID: String, purpose: AIPurpose, schema: [String: Any]? = nil, thinkingBudget: Int = 0) async -> Result<String, AIServiceError> {
         guard let key = geminiKey else {
             return .failure(.notConfigured("Nessuna chiave Gemini: creane una gratuita su aistudio.google.com e salvala nel Profilo."))
         }
@@ -493,16 +601,30 @@ enum AIService {
         request.timeoutInterval = 120
 
         // Temperatura bassa: compiti estrattivi/strutturati, non creativi
-        // (checklist anti-allucinazione). Niente thinkingConfig: i modelli
-        // flash correnti lo rifiutano con 400 "invalid argument", e il
-        // parametro faceva fallire ogni generazione.
+        // (checklist anti-allucinazione).
+        var generationConfig: [String: Any] = [
+            "temperature": 0.2,
+            "maxOutputTokens": purpose.maxOutputTokens,
+            "responseMimeType": "application/json"
+        ]
+        // responseSchema: la sintassi JSON la garantisce l'API (decoding
+        // vincolato), escape LaTeX compresi. Verificato 2026-08-15:
+        // 3-flash-preview senza schema produceva JSON rotto, con schema no.
+        if let schema {
+            generationConfig["responseSchema"] = schema
+        }
+        // thinkingConfig va DENTRO generationConfig. Il vecchio commento
+        // "i flash lo rifiutano con 400" era una generalizzazione da un
+        // solo modello: lo rifiuta gemini-flash-lite-latest (che non
+        // ragiona affatto), gli altri quattro lo accettano — misurato.
+        // Sul 400 si ritenta senza, e il registro lo ricorda.
+        let includeThinking = await GeminiModelLedger.shared.acceptsThinking(modelID)
+        if includeThinking {
+            generationConfig["thinkingConfig"] = ["thinkingBudget": thinkingBudget]
+        }
         let body: [String: Any] = [
             "contents": [["parts": [["text": prompt]]]],
-            "generationConfig": [
-                "temperature": 0.2,
-                "maxOutputTokens": purpose.maxOutputTokens,
-                "responseMimeType": "application/json"
-            ]
+            "generationConfig": generationConfig
         ]
         guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
             return .failure(.badResponse(nil))
@@ -518,10 +640,22 @@ enum AIService {
             // prosegue: prima un timeout faceva fallire l'intero modulo
             // anche quando il modello dopo avrebbe risposto subito.
             return .failure(.modelUnavailable("Il modello \(modelID) non ha risposto in tempo."))
+        } catch let error as URLError where error.code == .cancelled {
+            return .failure(.cancelled)
+        } catch is CancellationError {
+            return .failure(.cancelled)
         } catch {
             return .failure(.network(error.localizedDescription))
         }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            // 400 con thinkingConfig nel corpo: quasi certamente è il
+            // modello che non lo supporta. Si segna e si rifà la stessa
+            // chiamata senza — se il 400 aveva un'altra causa, tornerà
+            // identico e seguirà la strada normale.
+            if http.statusCode == 400, includeThinking {
+                await GeminiModelLedger.shared.markRejectsThinking(modelID)
+                return await callGemini(prompt: prompt, modelID: modelID, purpose: purpose, schema: schema, thinkingBudget: thinkingBudget)
+            }
             let errorObject = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
                 .flatMap { $0["error"] as? [String: Any] }
             let detail = errorObject?["message"] as? String
@@ -529,16 +663,17 @@ enum AIService {
             // 429 vuol dire DUE cose diverse, e confonderle è costato caro:
             // la quota del giorno finita (il modello va abbandonato) oppure
             // il limite al minuto (basta aspettare qualche secondo). La
-            // distinzione sta nei `details` della risposta, non nel codice.
+            // distinzione sta nei `details` della risposta — e in dubbio
+            // si presume transitorio, mai giornaliero.
             if http.statusCode == 429 || status == "RESOURCE_EXHAUSTED" {
                 let limit = rateLimitInfo(from: errorObject, message: detail)
-                if limit.isPerMinute {
-                    return .failure(.rateLimited(
-                        retryAfter: limit.retryAfter ?? 20,
-                        detail: detail ?? "Limite di richieste al minuto."
-                    ))
+                if limit.isPerDay {
+                    return .failure(.quotaExhausted(detail ?? "Quota giornaliera esaurita per questo modello."))
                 }
-                return .failure(.quotaExhausted(detail ?? "Quota giornaliera esaurita per questo modello."))
+                return .failure(.rateLimited(
+                    retryAfter: limit.retryAfter ?? 20,
+                    detail: detail ?? "Limite di richieste raggiunto, riprova tra poco."
+                ))
             }
             // 404 = modello ritirato per i nuovi utenti (succede alle
             // versioni fisse): si tratta come "prova il prossimo".
@@ -557,6 +692,9 @@ enum AIService {
             }
             return .failure(.network(detail ?? "HTTP \(http.statusCode)"))
         }
+        // Chiamata riuscita: si conta per il pannello quota (i 2xx sono
+        // gli unici che consumano RPD).
+        Task { @MainActor in GeminiQuotaMeter.shared.record(modelID) }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let candidates = json["candidates"] as? [[String: Any]],
               let candidate = candidates.first else {
@@ -848,17 +986,27 @@ enum AIService {
 
     // MARK: - Multimodale (immagine + prompt)
 
-    // Manda un'immagine (es. l'area cerchiata dalla penna magica) al
-    // provider selezionato. Il modello Apple locale non accetta immagini:
-    // il chiamante deve trattare il fallimento come "usa Vision OCR".
-    static func generate(prompt: String, image: UIImage) async -> Result<String, AIServiceError> {
+    // Manda un'immagine al provider selezionato. Il modello Apple locale
+    // non accetta immagini: il chiamante deve trattare il fallimento come
+    // "usa Vision OCR".
+    //
+    // `waitsForRateLimit` separa i due usi che hanno pazienza opposta:
+    // la penna magica è interattiva (meglio fallire subito e far
+    // riprovare l'utente), la lettura di una nota da trenta pagine è un
+    // batch (una pagina che aspetta la finestra del minuto è meglio di
+    // una pagina degradata a Vision).
+    // `imageMaxDimension`: 1280 basta per un ritaglio della penna magica,
+    // una pagina intera di appunti fitti vuole più pixel (la risoluzione
+    // sulla scrittura a mano conta: misurato con Vision, 2x→4x cambiava
+    // la lettura). Chi trascrive pagine passa 2048.
+    static func generate(prompt: String, image: UIImage, waitsForRateLimit: Bool = false, imageMaxDimension: CGFloat = 1280) async -> Result<String, AIServiceError> {
         switch selectedProvider {
         case .appleLocal:
             return .failure(.notConfigured("Il modello Apple locale non legge immagini."))
         case .gemini:
-            return await generateWithGemini(prompt: prompt, image: image, purpose: .reading)
+            return await generateWithGemini(prompt: prompt, image: image, purpose: .reading, waitsForRateLimit: waitsForRateLimit, imageMaxDimension: imageMaxDimension)
         case .claude:
-            return await generateWithClaude(prompt: prompt, image: image)
+            return await generateWithClaude(prompt: prompt, image: image, maxDimension: imageMaxDimension)
         }
     }
 
@@ -879,33 +1027,47 @@ enum AIService {
         }.pngData()
     }
 
-    private static func generateWithGemini(prompt: String, image: UIImage, purpose: AIPurpose) async -> Result<String, AIServiceError> {
+    private static func generateWithGemini(prompt: String, image: UIImage, purpose: AIPurpose, waitsForRateLimit: Bool = false, imageMaxDimension: CGFloat = 1280) async -> Result<String, AIServiceError> {
         guard geminiKey != nil else {
             return .failure(.notConfigured("Nessuna chiave Gemini: creane una gratuita su aistudio.google.com e salvala nel Profilo."))
         }
         var lastError: AIServiceError = .badResponse(nil)
         var attemptedAny = false
-        for modelID in geminiModelChain(for: purpose) {
-            // Stesso registro del percorso testuale: un modello che ha
-            // finito la quota del giorno lì è finito anche qui.
-            if await DailyQuotaLedger.shared.isExhausted(modelID) { continue }
-            attemptedAny = true
-            switch await callGemini(prompt: prompt, image: image, modelID: modelID) {
-            case .success(let text):
-                lastUsedModelID = modelID
-                return .success(text)
-            case .failure(let error):
-                lastError = error
-                switch error {
-                case .quotaExhausted:
-                    await DailyQuotaLedger.shared.markExhausted(modelID)
-                // La penna magica è interattiva: meglio fallire subito e
-                // far riprovare l'utente che tenerlo fermo ad aspettare
-                // la finestra del minuto.
-                case .rateLimited, .modelUnavailable:
-                    break
-                case .network, .notConfigured, .badResponse:
-                    return .failure(error)
+        var shortestRetry: TimeInterval?
+
+        // Come il percorso testuale: seconda passata con attesa solo se
+        // il chiamante è un batch (waitsForRateLimit) e tutta la catena
+        // era al limite del minuto.
+        for pass in 0...1 {
+            if pass == 1 {
+                guard waitsForRateLimit, let wait = shortestRetry else { break }
+                try? await Task.sleep(for: .seconds(min(wait, 30)))
+            }
+            for modelID in geminiModelChain(for: purpose) {
+                if Task.isCancelled { return .failure(.cancelled) }
+                // Stesso registro del percorso testuale: un modello che ha
+                // finito la quota del giorno lì è finito anche qui, e uno
+                // segnato sovraccarico si salta senza pagare il suo 503.
+                if await GeminiModelLedger.shared.isExhausted(modelID) { continue }
+                if await GeminiModelLedger.shared.isOverloaded(modelID) { continue }
+                attemptedAny = true
+                switch await callGemini(prompt: prompt, image: image, modelID: modelID, maxDimension: imageMaxDimension) {
+                case .success(let text):
+                    return .success(text)
+                case .failure(let error):
+                    lastError = error
+                    switch error {
+                    case .quotaExhausted:
+                        await GeminiModelLedger.shared.markExhausted(modelID)
+                    // Interattivo: si prova il prossimo modello e basta.
+                    // Batch: si annota l'attesa per la seconda passata.
+                    case .rateLimited(let retryAfter, _):
+                        shortestRetry = min(shortestRetry ?? retryAfter, retryAfter)
+                    case .modelUnavailable:
+                        await GeminiModelLedger.shared.markOverloaded(modelID)
+                    case .network, .notConfigured, .badResponse, .cancelled:
+                        return .failure(error)
+                    }
                 }
             }
         }
@@ -915,11 +1077,11 @@ enum AIService {
         return .failure(lastError)
     }
 
-    private static func callGemini(prompt: String, image: UIImage, modelID: String) async -> Result<String, AIServiceError> {
+    private static func callGemini(prompt: String, image: UIImage, modelID: String, maxDimension: CGFloat = 1280) async -> Result<String, AIServiceError> {
         guard let key = geminiKey else {
             return .failure(.notConfigured("Nessuna chiave Gemini: creane una gratuita su aistudio.google.com e salvala nel Profilo."))
         }
-        guard let imageData = pngData(for: image) else { return .failure(.badResponse(nil)) }
+        guard let imageData = pngData(for: image, maxDimension: maxDimension) else { return .failure(.badResponse(nil)) }
         guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelID):generateContent") else {
             return .failure(.badResponse(nil))
         }
@@ -928,6 +1090,14 @@ enum AIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
 
+        // Trascrivere un'immagine è "scrivi cosa vedi": il thinking non
+        // aggiunge nulla e sui Flash costa 15-20s a pagina. Zero, con lo
+        // stesso ritenta-senza sul 400 del percorso testuale.
+        var generationConfig: [String: Any] = ["temperature": 0.1]
+        let includeThinking = await GeminiModelLedger.shared.acceptsThinking(modelID)
+        if includeThinking {
+            generationConfig["thinkingConfig"] = ["thinkingBudget": 0]
+        }
         let body: [String: Any] = [
             "contents": [[
                 "parts": [
@@ -935,7 +1105,7 @@ enum AIService {
                     ["inline_data": ["mime_type": "image/png", "data": imageData.base64EncodedString()]]
                 ]
             ]],
-            "generationConfig": ["temperature": 0.1]
+            "generationConfig": generationConfig
         ]
         guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
             return .failure(.badResponse(nil))
@@ -952,6 +1122,10 @@ enum AIService {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch let error as URLError where error.code == .timedOut {
             return .failure(.modelUnavailable("Il modello \(modelID) non ha risposto in tempo."))
+        } catch let error as URLError where error.code == .cancelled {
+            return .failure(.cancelled)
+        } catch is CancellationError {
+            return .failure(.cancelled)
         } catch {
             return .failure(.network(error.localizedDescription))
         }
@@ -960,16 +1134,22 @@ enum AIService {
                 .flatMap { $0["error"] as? [String: Any] }
             let detail = errorObject?["message"] as? String
             let status = errorObject?["status"] as? String
+            // 400 con thinkingConfig: come nel percorso testuale, si
+            // segna il modello e si ritenta la stessa chiamata senza.
+            if http.statusCode == 400, includeThinking {
+                await GeminiModelLedger.shared.markRejectsThinking(modelID)
+                return await callGemini(prompt: prompt, image: image, modelID: modelID, maxDimension: maxDimension)
+            }
             // Stessa classificazione del percorso testuale: prima OGNI
             // errore HTTP diventava .network, che il chiamante tratta
             // come definitivo — quindi un 429 fermava la penna magica al
             // primo modello invece di far scendere la catena sui Lite.
             if http.statusCode == 429 || status == "RESOURCE_EXHAUSTED" {
                 let limit = rateLimitInfo(from: errorObject, message: detail)
-                if limit.isPerMinute {
-                    return .failure(.rateLimited(retryAfter: limit.retryAfter ?? 20, detail: detail ?? "Limite di richieste al minuto."))
+                if limit.isPerDay {
+                    return .failure(.quotaExhausted(detail ?? "Quota giornaliera esaurita per questo modello."))
                 }
-                return .failure(.quotaExhausted(detail ?? "Quota giornaliera esaurita per questo modello."))
+                return .failure(.rateLimited(retryAfter: limit.retryAfter ?? 20, detail: detail ?? "Limite di richieste raggiunto, riprova tra poco."))
             }
             if http.statusCode == 404 {
                 return .failure(.modelUnavailable(detail ?? "Modello non disponibile."))
@@ -981,6 +1161,7 @@ enum AIService {
             }
             return .failure(.network(detail ?? "HTTP \(http.statusCode)"))
         }
+        Task { @MainActor in GeminiQuotaMeter.shared.record(modelID) }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let candidates = json["candidates"] as? [[String: Any]],
               let content = candidates.first?["content"] as? [String: Any],
@@ -991,11 +1172,11 @@ enum AIService {
         return text.isEmpty ? .failure(.badResponse(nil)) : .success(text)
     }
 
-    private static func generateWithClaude(prompt: String, image: UIImage) async -> Result<String, AIServiceError> {
+    private static func generateWithClaude(prompt: String, image: UIImage, maxDimension: CGFloat = 1280) async -> Result<String, AIServiceError> {
         guard let key = claudeKey else {
             return .failure(.notConfigured("Nessuna chiave Anthropic configurata nel Profilo."))
         }
-        guard let imageData = pngData(for: image) else { return .failure(.badResponse(nil)) }
+        guard let imageData = pngData(for: image, maxDimension: maxDimension) else { return .failure(.badResponse(nil)) }
         guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
             return .failure(.badResponse(nil))
         }

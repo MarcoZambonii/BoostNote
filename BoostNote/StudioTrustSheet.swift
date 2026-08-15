@@ -59,7 +59,9 @@ struct StudioTrustSheet: View {
                             check(
                                 on: true,
                                 title: "Ciò che non rispetta il formato viene scartato",
-                                detail: "Le risposte vengono decodificate secondo uno schema rigido: quello che non lo rispetta non ti viene mostrato, si rigenera."
+                                detail: AIService.selectedProvider == .gemini
+                                    ? "Con Gemini lo schema della risposta viene imposto al modello già durante la generazione, e l'app la ricontrolla comunque al ritorno: quello che non lo rispetta non ti viene mostrato."
+                                    : "Le risposte vengono decodificate secondo uno schema rigido: quello che non lo rispetta non ti viene mostrato, si rigenera."
                             )
                             if hasExercises {
                                 check(
@@ -77,6 +79,12 @@ struct StudioTrustSheet: View {
                                         : "Gli esercizi con un risultato calcolabile hanno un pulsante che lo fa ricalcolare a Wolfram Alpha — un motore di calcolo, non un modello linguistico."
                                 )
                             }
+                        }
+                    }
+
+                    section(title: "COME VENGONO SCELTI I MODELLI") {
+                        VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                            modelPicking
                         }
                     }
 
@@ -139,14 +147,59 @@ struct StudioTrustSheet: View {
         .background(DesignColor.toolWolframBg, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
     }
 
+    // Come vengono scelti i modelli: stessa regola del resto della
+    // schermata — si descrive la catena REALE, letta da GeminiModelTier,
+    // non un'idea di catena. Solo Gemini ne ha una; gli altri provider
+    // dicono onestamente di essere un modello solo.
+    @ViewBuilder
+    private var modelPicking: some View {
+        switch AIService.selectedProvider {
+        case .appleLocal:
+            info(
+                icon: "ipad",
+                title: "Un solo modello, sul tuo iPad",
+                detail: "Con il modello Apple locale non c'è una catena: tutto avviene sul dispositivo, anche senza rete. È il motivo per cui funziona sempre, e anche il motivo dei suoi limiti sui compiti complessi."
+            )
+        case .claude:
+            info(
+                icon: "link",
+                title: "Un solo modello, con la tua chiave Anthropic",
+                detail: "Claude non ha modelli di riserva: se la chiamata fallisce, il modulo riporta il motivo e puoi riprovare."
+            )
+        case .gemini:
+            let capable = GeminiModelTier.full.modelChain
+            let fast = GeminiModelTier.lite.modelChain
+            info(
+                icon: "arrow.triangle.branch",
+                title: "Una catena di modelli, non uno solo",
+                detail: "Gli esercizi e la loro verifica partono dal modello più capace (\(capable.first ?? "")); riassunti, flashcard, ripasso e lettura dal più veloce (\(fast.first ?? "")). Se un modello è pieno o non risponde si passa al successivo — in tutto \(capable.count) modelli, e le loro quote giornaliere si sommano."
+            )
+            info(
+                icon: "clock.badge.exclamationmark",
+                title: "Quota finita e ingorgo non sono la stessa cosa",
+                detail: "La quota giornaliera di ogni modello si azzera alle 9 del mattino italiane (mezzanotte in California). Un modello \"sovraccarico\" è invece un ingorgo momentaneo dei server di Google: passa in pochi minuti e non consuma la tua quota. Se un modulo esce dal modello veloce, la card ti dice quale delle due cose è successa."
+            )
+            info(
+                icon: "brain",
+                title: "Il ragionamento è acceso solo dove serve",
+                detail: "Solo gli esercizi e la loro verifica usano il tempo di ragionamento del modello: è ciò che li rende problemi con dati da applicare invece di domande di definizione. Gli altri moduli lo tengono spento, e per questo arrivano in pochi secondi."
+            )
+            info(
+                icon: "timer",
+                title: "Mai più di tre minuti per modulo",
+                detail: "Ogni modulo ha un tetto di tempo complessivo: scaduto quello, la generazione si ferma con un errore chiaro invece di girare a vuoto. Mentre genera, la card mostra quale modello sta provando e puoi annullare in ogni momento."
+            )
+        }
+    }
+
     private var privacyText: String {
         switch AIService.selectedProvider {
         case .appleLocal:
             "La generazione avviene interamente sul tuo iPad con il modello di sistema di Apple: i materiali non escono dal dispositivo."
         case .gemini:
-            "Il testo dei materiali viene inviato a Google con la tua chiave personale, direttamente dal tuo iPad: non passa da nessun server di BoostNote. Sul piano gratuito di Gemini, Google può usare i contenuti inviati per migliorare i propri modelli — tienilo presente con materiale riservato."
+            "Il testo dei materiali — e, per le note scritte a mano, l'immagine delle pagine da trascrivere — viene inviato a Google con la tua chiave personale, direttamente dal tuo iPad: non passa da nessun server di BoostNote. Sul piano gratuito di Gemini, Google può usare i contenuti inviati per migliorare i propri modelli — tienilo presente con materiale riservato."
         case .claude:
-            "Il testo dei materiali viene inviato ad Anthropic con la tua chiave personale, direttamente dal tuo iPad: non passa da nessun server di BoostNote."
+            "Il testo dei materiali — e, per le note scritte a mano, l'immagine delle pagine da trascrivere — viene inviato ad Anthropic con la tua chiave personale, direttamente dal tuo iPad: non passa da nessun server di BoostNote."
         }
     }
 
@@ -158,6 +211,26 @@ struct StudioTrustSheet: View {
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
             content()
+        }
+    }
+
+    // Riga informativa: come `check`, ma per fatti che non sono
+    // controlli attivabili — icona in blu invece della spunta verde.
+    private func info(icon: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: DesignSpace.s3) {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundStyle(DesignColor.brandPrimary)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DesignColor.textPrimary)
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignColor.textTertiary)
+                    .lineSpacing(2)
+            }
         }
     }
 

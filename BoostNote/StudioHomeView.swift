@@ -15,12 +15,15 @@ struct StudioHomeView: View {
 
     @Binding var selectedStudy: Study?
     @Binding var showingProgress: Bool
-    var onCreateStudy: () -> Void
+    // Con una cartella: il flusso parte precompilato dal suo Vault.
+    var onCreateStudy: (StudyFolder?) -> Void
 
     @Query(sort: \StudyFolder.name) private var folders: [StudyFolder]
     @Query(sort: \Study.updatedAt, order: .reverse) private var studies: [Study]
 
     @State private var folderSheet: StudyFolderSheetMode?
+    @State private var vaultFolder: StudyFolder?
+    @State private var infoFolderID: UUID?
     @State private var renamingStudy: Study?
     @State private var renameText = ""
 
@@ -32,17 +35,18 @@ struct StudioHomeView: View {
                 header
                 actions
 
-                if studies.isEmpty {
+                // Le cartelle si mostrano anche SENZA studi: da quando
+                // ospitano il vault dei materiali, una cartella vuota di
+                // studi è comunque un corso con il suo menu.
+                if studies.isEmpty && folders.isEmpty {
                     emptyState
                 } else {
+                    // Ogni cartella è una CARD DEL CORSO: il Vault in
+                    // testa (documenti e stato di lettura), gli studi
+                    // sotto come figli dichiarati del materiale — design
+                    // scelto dall'utente su mock (2026-08-15).
                     ForEach(folders) { folder in
-                        studySection(
-                            title: folder.name,
-                            icon: "folder.fill",
-                            tint: folder.folderColor.color,
-                            studies: folder.sortedStudies,
-                            folder: folder
-                        )
+                        courseCard(folder)
                     }
                     if !looseStudies.isEmpty {
                         studySection(
@@ -64,6 +68,9 @@ struct StudioHomeView: View {
             StudyFolderEditSheet(mode: mode) { name, color, mode in
                 saveFolder(name: name, color: color, mode: mode)
             }
+        }
+        .sheet(item: $vaultFolder) { folder in
+            VaultView(folder: folder)
         }
         .alert("Rinomina studio", isPresented: renameAlertPresented) {
             TextField("Nome", text: $renameText)
@@ -108,7 +115,7 @@ struct StudioHomeView: View {
                 icon: "plus",
                 tint: DesignColor.brandPrimary,
                 prominent: true,
-                action: onCreateStudy
+                action: { onCreateStudy(nil) }
             )
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: DesignSpace.s3) { secondaryActions }
@@ -206,7 +213,27 @@ struct StudioHomeView: View {
                     .background(DesignColor.surfaceSunken, in: Capsule())
                 Spacer()
                 if let folder {
+                    // Accesso rapido al vault: se ha già materiale si vede
+                    // anche fuori dal menu.
+                    if !folder.vaultDocuments.isEmpty {
+                        Button {
+                            vaultFolder = folder
+                        } label: {
+                            Label("\(folder.vaultDocuments.count) nel Vault", systemImage: "archivebox.fill")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(DesignColor.brandPrimary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(DesignColor.brandPrimarySubtle, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
                     Menu {
+                        Button {
+                            vaultFolder = folder
+                        } label: {
+                            Label("Vault del corso", systemImage: "archivebox")
+                        }
                         Button {
                             folderSheet = .edit(folder)
                         } label: {
@@ -227,7 +254,7 @@ struct StudioHomeView: View {
             }
 
             if studies.isEmpty {
-                Text("Cartella vuota — sposta qui uno studio dal suo menu, oppure eliminala.")
+                Text("Nessuno studio in questa cartella. Dal menu ⋯ apri il Vault del corso: il materiale viene letto una volta e resta pronto per studi, esercizi e ripassi.")
                     .font(.system(size: 12))
                     .foregroundStyle(DesignColor.textTertiary)
                     .padding(.vertical, DesignSpace.s2)
@@ -241,7 +268,311 @@ struct StudioHomeView: View {
         }
     }
 
-    private func studyCard(_ study: Study) -> some View {
+    // MARK: - Card del corso (Vault + studi)
+
+    private func courseCard(_ folder: StudyFolder) -> some View {
+        let documents = folder.vaultDocuments.sorted { $0.addedAt < $1.addedAt }
+        let folderStudies = folder.sortedStudies
+        let isIngesting = VaultActivity.shared.ingestingFolders.contains(folder.id)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            // Testata: identità del corso, stato del Vault, azioni.
+            HStack(spacing: DesignSpace.s3) {
+                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                    .fill(folder.folderColor.color.opacity(0.14))
+                    .frame(width: 40, height: 40)
+                    .overlay(
+                        Image(systemName: "books.vertical.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(folder.folderColor.color)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(folder.name)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(DesignColor.textPrimary)
+                    HStack(spacing: 5) {
+                        Text(vaultSubtitle(for: documents))
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesignColor.textTertiary)
+                        if !documents.isEmpty {
+                            Button {
+                                infoFolderID = folder.id
+                            } label: {
+                                Image(systemName: "info.circle")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(DesignColor.textSecondary)
+                            }
+                            .buttonStyle(.plain)
+                            .popover(isPresented: Binding(
+                                get: { infoFolderID == folder.id },
+                                set: { if !$0 { infoFolderID = nil } }
+                            ), arrowEdge: .bottom) {
+                                vaultContentsPopover(documents, folder: folder)
+                                    .presentationCompactAdaptation(.popover)
+                            }
+                        }
+                    }
+                }
+                Spacer()
+                if isIngesting {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Leggo…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesignColor.textTertiary)
+                    }
+                } else if !documents.isEmpty {
+                    Button {
+                        Task { await VaultIngestionService.ensureFresh(for: folder, in: context) }
+                    } label: {
+                        Label("Aggiorna", systemImage: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                Menu {
+                    Button {
+                        vaultFolder = folder
+                    } label: {
+                        Label("Vault del corso", systemImage: "archivebox")
+                    }
+                    Button {
+                        folderSheet = .edit(folder)
+                    } label: {
+                        Label("Rinomina / colore", systemImage: "pencil")
+                    }
+                    Button(role: .destructive) {
+                        context.delete(folder)
+                    } label: {
+                        Label("Elimina cartella", systemImage: "trash")
+                    }
+                    Text("Gli studi dentro non vengono eliminati.")
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DesignColor.textTertiary)
+                        .frame(width: 28, height: 28)
+                }
+            }
+            .padding(DesignSpace.s4)
+
+            // Il materiale è CONTESTO, non contenuto: una riga sola con
+            // il pulsantino che apre l'elenco (richiesta esplicita
+            // dell'utente — meno peso visivo al Vault, il protagonista
+            // sono gli studi).
+            if documents.isEmpty {
+                Button {
+                    vaultFolder = folder
+                } label: {
+                    Label("Aggiungi il materiale del corso", systemImage: "plus")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(DesignColor.brandPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, DesignSpace.s3)
+                        .background(
+                            RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                                .strokeBorder(DesignColor.borderDefault, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, DesignSpace.s4)
+            }
+
+            // Gli studi del corso: qui sta il peso visivo.
+            VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                HStack(spacing: DesignSpace.s2) {
+                    Text(documents.isEmpty ? "STUDI" : "STUDI GENERATI DAL VAULT")
+                        .font(.system(size: 11, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(DesignColor.textTertiary)
+                    Spacer()
+                    if !folderStudies.isEmpty, !documents.isEmpty {
+                        Button {
+                            onCreateStudy(folder)
+                        } label: {
+                            Label("Nuovo studio dal Vault", systemImage: "plus")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(DesignColor.brandPrimary)
+                                .padding(.horizontal, DesignSpace.s3)
+                                .padding(.vertical, 5)
+                                .background(DesignColor.brandPrimarySubtle, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if folderStudies.isEmpty {
+                    emptyStudiesArea(folder, documents: documents)
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: DesignSpace.s4)], spacing: DesignSpace.s4) {
+                        ForEach(folderStudies) { study in
+                            studyCard(study, in: folder, background: DesignColor.surfacePage)
+                        }
+                    }
+                }
+            }
+            .padding(DesignSpace.s4)
+        }
+        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+    }
+
+    private func vaultSubtitle(for documents: [VaultDocument]) -> String {
+        guard !documents.isEmpty else { return "Vault del corso · vuoto" }
+        let pages = documents.reduce(0) { $0 + $1.readCount }
+        var parts = [
+            "Vault del corso",
+            "\(documents.count) document\(documents.count == 1 ? "o" : "i")",
+            "\(pages) pagine lette"
+        ]
+        if let last = documents.compactMap(\.lastIngestedAt).max() {
+            parts.append("aggiornato \(last.formatted(.relative(presentation: .named)))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    // Il contenuto del Vault, a richiesta: righe compatte con lo stato,
+    // e la porta per gestirlo.
+    private func vaultContentsPopover(_ documents: [VaultDocument], folder: StudyFolder) -> some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s3) {
+            Text("NEL VAULT")
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(DesignColor.textTertiary)
+            VStack(alignment: .leading, spacing: DesignSpace.s2) {
+                ForEach(documents) { document in
+                    HStack(alignment: .top, spacing: DesignSpace.s2) {
+                        Image(systemName: document.kind == .note ? "note.text" : "doc.richtext")
+                            .font(.system(size: 11))
+                            .foregroundStyle(DesignColor.brandPrimary)
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 5) {
+                                Text(document.title.isEmpty ? "Senza titolo" : document.title)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(DesignColor.textPrimary)
+                                    .lineLimit(1)
+                                if document.kind == .note {
+                                    Text("Nota collegata")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(DesignColor.toolExplain)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(DesignColor.toolExplainBg, in: Capsule())
+                                }
+                                if document.isExamPaper {
+                                    Text("Tema d'esame")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(DesignColor.toolWolfram)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(DesignColor.toolWolframBg, in: Capsule())
+                                }
+                            }
+                            vaultDocChipStatus(document)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            Text("Il materiale viene letto una volta sola, pagina per pagina; le note collegate si rileggono solo dove sono cambiate.")
+                .font(.system(size: 11))
+                .foregroundStyle(DesignColor.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                infoFolderID = nil
+                vaultFolder = folder
+            } label: {
+                Label("Gestisci il Vault", systemImage: "archivebox")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DesignColor.brandPrimary)
+        }
+        .padding(DesignSpace.s4)
+        .frame(width: 420)
+    }
+
+    @ViewBuilder
+    private func vaultDocChipStatus(_ document: VaultDocument) -> some View {
+        let pending = document.pendingCount
+        let failed = document.failedCount
+        let read = document.readCount
+        if document.pages.isEmpty {
+            Text("In attesa di lettura…")
+                .font(.system(size: 11))
+                .foregroundStyle(DesignColor.textTertiary)
+        } else if pending > 0 {
+            Label("\(pending) pagine da leggere", systemImage: "clock")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DesignColor.toolWolfram)
+        } else if failed > 0 {
+            Label("\(read) lette · \(failed) non riuscite", systemImage: "exclamationmark.triangle")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DesignColor.toolWolfram)
+        } else {
+            Label("\(read) pagine lette", systemImage: "checkmark")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DesignColor.success)
+        }
+    }
+
+    private func emptyStudiesArea(_ folder: StudyFolder, documents: [VaultDocument]) -> some View {
+        let readPages = documents.reduce(0) { $0 + $1.readCount }
+        return VStack(spacing: DesignSpace.s2) {
+            Text("Nessuno studio ancora")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(DesignColor.textPrimary)
+            Text(readPages > 0
+                 ? "Il Vault è pronto: \(readPages) pagine già lette. Genera il primo studio quando vuoi — il materiale non verrà riletto."
+                 : "Aggiungi il materiale del corso al Vault, oppure crea uno studio partendo dalle note.")
+                .font(.system(size: 12))
+                .foregroundStyle(DesignColor.textTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+            if readPages > 0 {
+                Button {
+                    onCreateStudy(folder)
+                } label: {
+                    Label("Crea da questo Vault", systemImage: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DesignColor.brandPrimary)
+                        .padding(.horizontal, DesignSpace.s4)
+                        .padding(.vertical, DesignSpace.s2 + 2)
+                        .background(DesignColor.brandPrimarySubtle, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(DesignSpace.s4)
+        .background(
+            RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                .strokeBorder(DesignColor.borderDefault, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+        )
+    }
+
+    // Quante pagine del Vault sono cambiate o arrivate DOPO l'ultima
+    // generazione dello studio: è la spia "rigenera, c'è materiale
+    // nuovo". nil se lo studio non nasce dal Vault.
+    private func vaultNewPages(for study: Study, in folder: StudyFolder) -> Int? {
+        let ids = Set(study.sources.compactMap(\.vaultDocumentID))
+        guard !ids.isEmpty else { return nil }
+        let documents = folder.vaultDocuments.filter { ids.contains($0.id) }
+        guard !documents.isEmpty else { return nil }
+        var count = 0
+        for document in documents {
+            for page in document.pages {
+                if page.status == .pending {
+                    count += 1
+                } else if let readAt = page.readAt, readAt > study.updatedAt {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    private func studyCard(_ study: Study, in folder: StudyFolder? = nil, background: Color = DesignColor.surfaceSunken) -> some View {
         Button {
             selectedStudy = study
             showingProgress = false
@@ -296,10 +627,25 @@ struct StudioHomeView: View {
                         Spacer(minLength: 0)
                     }
                 }
+
+                // Freschezza rispetto al Vault: "al passo" o quante
+                // pagine nuove aspettano una rigenerazione.
+                if let folder, let newPages = vaultNewPages(for: study, in: folder) {
+                    HStack(spacing: 4) {
+                        Image(systemName: newPages == 0 ? "checkmark.shield" : "clock")
+                            .font(.system(size: 10, weight: .medium))
+                        Text(newPages == 0 ? "Al passo con il Vault" : "\(newPages) pagine nuove nel Vault")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(newPages == 0 ? DesignColor.success : DesignColor.toolWolfram)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(newPages == 0 ? DesignColor.successBg : DesignColor.toolWolframBg, in: Capsule())
+                }
             }
             .padding(DesignSpace.s4)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+            .background(background, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous)
                     .stroke(DesignColor.borderSubtle, lineWidth: 1)

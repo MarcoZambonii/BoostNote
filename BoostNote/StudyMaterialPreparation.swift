@@ -16,6 +16,10 @@ enum StudyMaterialPreparation {
         var current: Int
         var total: Int
         var title: String
+        // Dettaglio dentro il materiale corrente ("pagina 3 di 12"):
+        // con il modello vision ogni pagina scritta a mano costa qualche
+        // secondo, e senza questo la barra sembra ferma.
+        var detail: String?
     }
 
     // Crea i StudyMaterial dello studio a partire dalle scelte fatte nel
@@ -28,6 +32,23 @@ enum StudyMaterialPreparation {
         onProgress: @escaping (Progress) -> Void
     ) async {
         let token = WebeepService.savedToken
+
+        // Le sorgenti dal Vault si risincronizzano PRIMA (decisione
+        // "al momento dell'uso"): una passata di hash per cartella, e si
+        // rileggono solo le pagine cambiate delle note vive. Su un Vault
+        // fresco non parte nessuna chiamata.
+        let vaultIDs = sources.compactMap(\.vaultDocumentID)
+        if !vaultIDs.isEmpty {
+            onProgress(Progress(current: 1, total: sources.count, title: "Aggiorno il Vault"))
+            let descriptor = FetchDescriptor<VaultDocument>()
+            let documents = ((try? context.fetch(descriptor)) ?? []).filter { vaultIDs.contains($0.id) }
+            var refreshed: Set<UUID> = []
+            for document in documents {
+                guard let folder = document.folder, !refreshed.contains(folder.id) else { continue }
+                refreshed.insert(folder.id)
+                await VaultIngestionService.ensureFresh(for: folder, in: context)
+            }
+        }
 
         for (index, source) in sources.enumerated() {
             onProgress(Progress(current: index + 1, total: sources.count, title: source.title))
@@ -43,6 +64,31 @@ enum StudyMaterialPreparation {
             context.insert(material)
 
             switch source.kind {
+            case .vault:
+                // Il guadagno del Vault: il testo c'è già, qui si copia
+                // e basta — zero OCR, zero chiamate.
+                guard let documentID = source.vaultDocumentID else {
+                    material.extractionError = "Riferimento al Vault mancante."
+                    continue
+                }
+                let descriptor = FetchDescriptor<VaultDocument>(predicate: #Predicate { $0.id == documentID })
+                guard let document = try? context.fetch(descriptor).first else {
+                    material.extractionError = "Il documento non è più nel Vault."
+                    continue
+                }
+                material.pdfData = document.pdfData
+                let text = document.fullText
+                material.extractedText = text
+                if text.isEmpty {
+                    material.extractionError = document.pendingCount > 0
+                        ? "Il Vault non ha ancora letto questo documento: apri il Vault e attendi la lettura."
+                        : "Nessun testo in questo documento del Vault."
+                } else if document.pendingCount > 0 {
+                    // Informativo, non bloccante: si genera con quello
+                    // che c'è, dicendo quanto manca.
+                    material.extractionError = "Vault letto in parte: \(document.readCount) di \(document.pages.count) pagine."
+                }
+
             case .note:
                 guard let noteID = source.noteID else {
                     material.extractionError = "Nota non trovata."
@@ -53,7 +99,18 @@ enum StudyMaterialPreparation {
                     material.extractionError = "La nota non esiste più."
                     continue
                 }
-                let text = await StudyMaterialExtractor.extractText(from: note)
+                let sourceCount = sources.count
+                let sourceTitle = source.title
+                let text = await StudyMaterialExtractor.extractText(from: note) { page, totalPages in
+                    // Il callback arriva dal pool dell'estrattore, non dal
+                    // MainActor: lo stato della UI si tocca solo di là.
+                    Task { @MainActor in
+                        onProgress(Progress(
+                            current: index + 1, total: sourceCount, title: sourceTitle,
+                            detail: totalPages > 1 ? "pagina \(page) di \(totalPages)" : nil
+                        ))
+                    }
+                }
                 material.extractedText = text
                 if text.isEmpty {
                     material.extractionError = "Nessun testo riconosciuto in questa nota."

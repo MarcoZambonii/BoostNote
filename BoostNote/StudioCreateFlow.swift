@@ -13,6 +13,25 @@ struct StudioCreateFlowView: View {
     @State private var name = ""
     @State private var subject = ""
     @State private var sources: [StudySourceMaterial] = []
+
+    // "Crea da questo Vault": materia e materiali arrivano già pronti
+    // dalla card del corso. State(initialValue:) nell'init, non
+    // onAppear: il prefill non deve mai sovrascrivere modifiche.
+    init(prefillFolder: StudyFolder? = nil, onCancel: @escaping () -> Void, onCreated: @escaping (Study) -> Void) {
+        self.onCancel = onCancel
+        self.onCreated = onCreated
+        guard let folder = prefillFolder else { return }
+        _subject = State(initialValue: folder.name)
+        _sources = State(initialValue: folder.vaultDocuments.sorted { $0.addedAt < $1.addedAt }.map { document in
+            StudySourceMaterial(
+                kind: .vault,
+                title: document.title,
+                subtitle: folder.name,
+                isExamPaper: document.isExamPaper,
+                vaultDocumentID: document.id
+            )
+        })
+    }
     @State private var selectedKinds: Set<StudyModuleKind> = [.summary, .exercises]
 
     // Opzioni per il modulo esercizi (ignorate dagli altri moduli).
@@ -25,6 +44,8 @@ struct StudioCreateFlowView: View {
 
     @State private var showingNotePicker = false
     @State private var showingWebeepPicker = false
+    @State private var showingVaultPicker = false
+    @State private var showingQuotaInfo = false
     @State private var showingPDFImporter = false
 
     // Contenuto dei PDF scelti, tenuto qui perché l'accesso al file
@@ -67,6 +88,17 @@ struct StudioCreateFlowView: View {
             }
 
             generateBar
+        }
+        .sheet(isPresented: $showingVaultPicker) {
+            VaultSourcePicker(alreadyPicked: Set(sources.compactMap(\.vaultDocumentID))) { picked in
+                sources.append(contentsOf: picked)
+                // La materia si compila da sola con il nome del corso del
+                // Vault, se l'utente non l'ha già scritta: cartella = corso.
+                if subject.trimmingCharacters(in: .whitespaces).isEmpty,
+                   let folderName = picked.first?.subtitle {
+                    subject = folderName
+                }
+            }
         }
         .sheet(isPresented: $showingNotePicker) {
             StudioNotePickerSheet(alreadySelectedNoteIDs: Set(sources.compactMap(\.noteID))) { picked in
@@ -141,6 +173,9 @@ struct StudioCreateFlowView: View {
 
     @ViewBuilder
     private var materialButtons: some View {
+        // Il Vault per primo: è il percorso a costo zero — il testo è
+        // già stato letto, la creazione non paga nessuna estrazione.
+        materialButton(title: "Dal Vault", icon: "archivebox.fill") { showingVaultPicker = true }
         materialButton(title: "Dalle note", icon: "note.text") { showingNotePicker = true }
         materialButton(title: "Da WeBeep", icon: "building.columns.fill") { showingWebeepPicker = true }
         materialButton(title: "Carica PDF", icon: "doc.badge.plus") { showingPDFImporter = true }
@@ -419,7 +454,7 @@ struct StudioCreateFlowView: View {
             if let preparation {
                 HStack(spacing: DesignSpace.s2) {
                     ProgressView().controlSize(.small)
-                    Text("Leggo i materiali — \(preparation.current) di \(preparation.total): \(preparation.title)")
+                    Text("Leggo i materiali — \(preparation.current) di \(preparation.total): \(preparation.title)\(preparation.detail.map { " (\($0))" } ?? "")")
                         .font(.system(size: 12))
                         .foregroundStyle(DesignColor.textSecondary)
                         .lineLimit(1)
@@ -434,25 +469,53 @@ struct StudioCreateFlowView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Button {
-                createStudy()
-            } label: {
-                HStack(spacing: DesignSpace.s2) {
-                    Image(systemName: "sparkles")
-                    Text("Genera studio")
+            HStack(spacing: DesignSpace.s3) {
+                Spacer()
+                // Il pannello quota vive dietro la ⓘ, come chiesto: non
+                // in faccia, ma a un tocco quando si sta per spendere.
+                if AIService.selectedProvider == .gemini {
+                    Button {
+                        showingQuotaInfo = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 16))
+                            .foregroundStyle(DesignColor.textSecondary)
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showingQuotaInfo, arrowEdge: .bottom) {
+                        GeminiQuotaPanel()
+                            .padding(DesignSpace.s4)
+                            .frame(width: 420)
+                            .presentationCompactAdaptation(.popover)
+                    }
                 }
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(DesignColor.textOnBrand)
-                .padding(.horizontal, DesignSpace.s5)
-                .padding(.vertical, DesignSpace.s3)
-                .background(
-                    canGenerate ? DesignColor.brandPrimary : DesignColor.gray300,
-                    in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                )
+                VStack(alignment: .trailing, spacing: 4) {
+                    Button {
+                        createStudy()
+                    } label: {
+                        HStack(spacing: DesignSpace.s2) {
+                            Image(systemName: "sparkles")
+                            Text("Genera studio")
+                        }
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(DesignColor.textOnBrand)
+                        .padding(.horizontal, DesignSpace.s5)
+                        .padding(.vertical, DesignSpace.s3)
+                        .background(
+                            canGenerate ? DesignColor.brandPrimary : DesignColor.gray300,
+                            in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canGenerate || preparation != nil)
+                    if canGenerate, AIService.selectedProvider == .gemini {
+                        Text(callEstimateLabel)
+                            .font(.system(size: 11))
+                            .foregroundStyle(DesignColor.textTertiary)
+                    }
+                }
             }
-            .buttonStyle(.plain)
-            .disabled(!canGenerate || preparation != nil)
-            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, DesignSpace.s6)
         .padding(.vertical, DesignSpace.s4)
@@ -460,6 +523,31 @@ struct StudioCreateFlowView: View {
         .overlay(alignment: .top) {
             Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
         }
+    }
+
+    // Quante chiamate costerà questa generazione: una per modulo, più
+    // una per la verifica degli esercizi. Il riassunto dal Vault è a
+    // mappa (una per blocco), quindi lì il conto si alza — e va detto
+    // PRIMA di spendere, non dopo.
+    private var callEstimateLabel: String {
+        var calls = selectedKinds.count
+        if selectedKinds.contains(.exercises), verifyExercises { calls += 1 }
+        var summaryBlocks = 0
+        if selectedKinds.contains(.summary) {
+            let vaultIDs = Set(sources.compactMap(\.vaultDocumentID))
+            if !vaultIDs.isEmpty {
+                let descriptor = FetchDescriptor<VaultDocument>()
+                let documents = ((try? context.fetch(descriptor)) ?? []).filter { vaultIDs.contains($0.id) }
+                summaryBlocks = documents.reduce(0) { partial, document in
+                    guard !document.isExamPaper else { return partial }
+                    return partial + document.sortedChunks.filter { $0.natureRaw != "exercises" }.count
+                }
+                // Nessun chunk indicizzato: resta una chiamata sola.
+                if summaryBlocks > 1 { calls += summaryBlocks - 1 }
+            }
+        }
+        let suffix = summaryBlocks > 1 ? " (riassunto su \(summaryBlocks) blocchi)" : ""
+        return "\(calls) chiamat\(calls == 1 ? "a" : "e") per questa generazione\(suffix)"
     }
 
     private func byteLabel(_ bytes: Int) -> String {
@@ -518,7 +606,9 @@ struct StudioCreateFlowView: View {
             )
             preparation = nil
             onCreated(study)
-            await StudioGenerationService.generateModules(for: study, in: context)
+            // Via registro, non fire-and-forget: la generazione diventa
+            // annullabile dalla card del modulo.
+            StudioGenerationService.startGeneration(for: study, in: context)
         }
     }
 

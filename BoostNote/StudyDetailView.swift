@@ -165,9 +165,38 @@ struct StudyDetailView: View {
 
     private func moduleCard(_ module: StudyModule) -> some View {
         let kind = module.kind
-        return Button {
+        // La card NON è più un Button: un Button dentro la label di un
+        // altro Button non riceve i tocchi in modo affidabile — "Annulla"
+        // e la freccia Rigenera apparivano ma il tocco lo mangiava la
+        // card. L'onTapGesture sul contenitore, al contrario, cede per
+        // costruzione la precedenza ai Button veri che contiene.
+        return VStack(alignment: .leading, spacing: DesignSpace.s3) {
+            innerCard(module, kind: kind)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .onTapGesture {
             if module.status == .ready { openModule = module }
-        } label: {
+        }
+        .contextMenu {
+            Button {
+                regenerate(module)
+            } label: {
+                Label("Rigenera", systemImage: "arrow.clockwise")
+            }
+            if module.status == .generating {
+                // Doppia via per l'annullamento: il bottone inline sulla
+                // card e questa voce — se una delle due non fosse
+                // raggiungibile, l'altra resta.
+                Button(role: .destructive) {
+                    StudioGenerationService.cancelGeneration(for: study.id)
+                } label: {
+                    Label("Annulla generazione", systemImage: "xmark.circle")
+                }
+            }
+        }
+    }
+
+    private func innerCard(_ module: StudyModule, kind: StudyModuleKind?) -> some View {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 HStack(spacing: DesignSpace.s3) {
                     RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
@@ -214,15 +243,6 @@ struct StudyDetailView: View {
             .padding(DesignSpace.s4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button {
-                regenerate(module)
-            } label: {
-                Label("Rigenera", systemImage: "arrow.clockwise")
-            }
-        }
     }
 
     @ViewBuilder
@@ -236,9 +256,20 @@ struct StudyDetailView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
-                    Text("Generazione in corso…")
+                    // Il testo vivo dice DOVE si è nella catena ("Provo
+                    // gemini-flash-latest (3/5)…"): la stessa attesa,
+                    // ma leggibile invece che cieca.
+                    Text(GenerationProgress.shared.text[module.id] ?? "Generazione in corso…")
                         .font(.system(size: 12))
                         .foregroundStyle(DesignColor.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Button("Annulla") {
+                        StudioGenerationService.cancelGeneration(for: study.id)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DesignColor.danger)
+                    .buttonStyle(.plain)
                 }
                 // Avviso messo PRIMA di partire (vedi generateModules):
                 // se la quota buona è finita, meglio saperlo adesso che
@@ -332,10 +363,12 @@ struct StudyDetailView: View {
     }
 
     private func regenerate(_ module: StudyModule) {
+        // Se un giro è già in corso il registro ignorerebbe l'avvio, ma
+        // il modulo resterebbe segnato .pending senza nessuno a
+        // generarlo: la guardia va messa PRIMA di toccare lo stato.
+        guard !StudioGenerationService.isGenerating(study.id) else { return }
         module.status = .pending
-        Task { @MainActor in
-            await StudioGenerationService.generateModules(for: study, in: context)
-        }
+        StudioGenerationService.startGeneration(for: study, in: context)
     }
 
     // MARK: - Viewer dei moduli

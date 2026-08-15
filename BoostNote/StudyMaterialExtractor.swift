@@ -23,7 +23,12 @@ enum StudyMaterialExtractor {
 
     // Il testo di una nota, da tutte le sue fonti. L'ordine segue quello
     // della pagina, così il contesto resta leggibile per il modello.
-    static func extractText(from note: Note) async -> String {
+    // `onPage` avvisa a ogni pagina COMPLETATA (fatte, totale) — e il
+    // totale conta tutte le pagine con del contenuto, non solo quelle
+    // con scrittura a mano sopra: un PDF Notability da 167 pagine
+    // importato come pagine della nota mostrava "pagina 2 di 5" mentre
+    // il lavoro vero, le 167 pagine incorporate, correva invisibile.
+    static func extractText(from note: Note, onPage: ((Int, Int) -> Void)? = nil) async -> String {
         var parts: [String] = []
 
         // 1. Caselle di testo (già digitali, nessun riconoscimento).
@@ -32,26 +37,61 @@ enum StudyMaterialExtractor {
             parts.append(typed.joined(separator: "\n"))
         }
 
-        // 2. Scrittura a mano: la lavagna ha un unico disegno, le note
-        // normali uno per pagina.
-        if note.isWhiteboard {
-            if let handwriting = await recognizeHandwriting(in: note.drawingData) {
-                parts.append(handwriting)
-            }
+        // 2+3. Pagine: scrittura a mano e/o pagina PDF incorporata.
+        // Prima si FOTOGRAFANO i dati (i @Model non si toccano dai task
+        // paralleli), poi si lavora 4 pagine alla volta: su una lezione
+        // Notability da 167 pagine la differenza è tra ~10 minuti in
+        // fila indiana e una frazione. L'ordine si ricompone alla fine.
+        struct PageWork {
+            let order: Int
+            let drawing: Data?
+            let pdf: Data?
+        }
+        let snapshots: [(Data?, Data?)]
+        if note.isWhiteboard || note.pages.isEmpty {
+            // Lavagna, o note create prima del modello a pagine (il
+            // disegno sta ancora nel campo legacy).
+            snapshots = [(note.drawingData, nil)]
         } else {
-            for page in note.sortedPages {
-                if let handwriting = await recognizeHandwriting(in: page.drawingData) {
-                    parts.append(handwriting)
+            snapshots = note.sortedPages.map { ($0.drawingData, $0.pdfPageData) }
+        }
+        let work = snapshots.enumerated()
+            .filter { $0.element.0 != nil || $0.element.1 != nil }
+            .map { PageWork(order: $0.offset, drawing: $0.element.0, pdf: $0.element.1) }
+
+        if !work.isEmpty {
+            let pageTexts = await withTaskGroup(of: (Int, String?).self) { group -> [Int: String] in
+                var results: [Int: String] = [:]
+                var next = 0
+                var completed = 0
+                let maxConcurrent = 4
+
+                func addTask(_ job: PageWork) {
+                    group.addTask {
+                        var chunk: [String] = []
+                        if let handwriting = await recognizeHandwriting(in: job.drawing) {
+                            chunk.append(handwriting)
+                        }
+                        if let pdf = job.pdf, let text = await extractText(fromPDF: pdf) {
+                            chunk.append(text)
+                        }
+                        return (job.order, chunk.isEmpty ? nil : chunk.joined(separator: "\n\n"))
+                    }
                 }
-                // 3. Pagine che sono in realtà un PDF importato.
-                if let pdfData = page.pdfPageData, let text = await extractText(fromPDF: pdfData) {
-                    parts.append(text)
+
+                while next < work.count && next < maxConcurrent {
+                    addTask(work[next]); next += 1
                 }
+                while let (order, text) = await group.next() {
+                    completed += 1
+                    onPage?(completed, work.count)
+                    if let text { results[order] = text }
+                    if next < work.count { addTask(work[next]); next += 1 }
+                }
+                return results
             }
-            // Note create prima del modello a pagine: il disegno sta ancora
-            // nel campo legacy.
-            if note.pages.isEmpty, let handwriting = await recognizeHandwriting(in: note.drawingData) {
-                parts.append(handwriting)
+            for job in work {
+                if let text = pageTexts[job.order] { parts.append(text) }
             }
         }
 
@@ -72,7 +112,37 @@ enum StudyMaterialExtractor {
         return parts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func recognizeHandwriting(in data: Data?) async -> String? {
+    // Prompt di trascrizione fedele per il modello vision. Regole nate
+    // dai limiti misurati di Vision OCR: la matematica scritta a mano è
+    // il punto dove "xdx" al posto di un integrale definito rovina tutto
+    // il materiale a valle.
+    private static let handwritingPrompt = """
+    Trascrivi fedelmente tutto ciò che è scritto a mano in questa pagina di appunti universitari.
+    - Mantieni la struttura: una riga di appunti per riga di testo, gli elenchi come elenchi.
+    - Ogni formula o espressione matematica va scritta in LaTeX: in linea tra $ … $ se sta dentro una frase, su riga propria tra $$ … $$ se è centrata o autonoma.
+    - Non aggiungere spiegazioni, commenti, titoli o intestazioni tue: SOLO la trascrizione.
+    - Se una parola è illeggibile scrivi [?] al suo posto, senza tirare a indovinare.
+    - Se la pagina non contiene testo (solo disegni o schizzi), rispondi con una stringa vuota.
+    """
+
+    // La scrittura a mano è l'unico posto dove Vision OCR fallisce
+    // davvero (un integrale definito letto come "xdx"): se un provider
+    // che legge immagini è configurato, la pagina passa dal modello —
+    // catena di lettura, tier Lite, una chiamata per pagina. Vision resta
+    // il fallback per ogni fallimento (niente chiave, niente rete, quota
+    // finita): l'estrazione non deve mai bloccarsi, al massimo peggiora.
+    private static func transcribeWithModel(_ image: UIImage) async -> String? {
+        guard AIService.selectedProvider != .appleLocal, AIService.isConfigured else { return nil }
+        guard case .success(let text) = await AIService.generate(prompt: handwritingPrompt, image: image, waitsForRateLimit: true, imageMaxDimension: 2048) else {
+            return nil
+        }
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    // Non-private: sono i primitivi per pagina su cui poggia anche la
+    // coda di ingestione del vault (VaultIngestionService).
+    static func recognizeHandwriting(in data: Data?) async -> String? {
         guard let data, let drawing = try? PKDrawing(data: data) else { return nil }
         let bounds = drawing.bounds
         guard bounds.width > 1, bounds.height > 1 else { return nil }
@@ -97,6 +167,11 @@ enum StudyMaterialExtractor {
             UIColor.white.setFill()
             context.fill(CGRect(origin: .zero, size: size))
             ink.draw(in: CGRect(origin: .zero, size: size))
+        }
+        // Prima il modello vision (legge la matematica), poi Vision OCR
+        // come rete di sicurezza.
+        if let transcribed = await transcribeWithModel(composed) {
+            return transcribed
         }
         return await recognizeText(in: composed)
     }
@@ -141,7 +216,7 @@ enum StudyMaterialExtractor {
                     group.addTask {
                         guard let page = document.page(at: index),
                               let image = render(page: page) else { return (index, nil) }
-                        return (index, await recognizeText(in: image))
+                        return (index, await recognizePDFPage(in: image))
                     }
                 }
 
@@ -165,7 +240,28 @@ enum StudyMaterialExtractor {
         return joined.isEmpty ? nil : joined
     }
 
-    private static func render(page: PDFPage) -> UIImage? {
+    // Una pagina PDF senza livello di testo può essere due cose molto
+    // diverse: una scansione a stampa (Vision la legge bene, gratis) o
+    // una pagina scritta a mano esportata da un'altra app — Notability,
+    // GoodNotes — dove Vision produce spazzatura. A decidere è la
+    // CONFIDENZA di Vision stessa: alta sulla tipografia, bassa sul
+    // corsivo. Così una dispensa scansionata da 100 pagine resta gratis,
+    // e una lezione manoscritta esportata in PDF passa dal modello come
+    // le note scritte a mano nell'app.
+    static func recognizePDFPage(in image: UIImage) async -> String? {
+        let vision = await recognizeTextWithConfidence(in: image)
+        if let vision, vision.confidence >= 0.6, vision.text.count >= minimumMeaningfulCharacters {
+            return vision.text
+        }
+        if let transcribed = await transcribeWithModel(image) {
+            return transcribed
+        }
+        // Il modello non c'era o ha fallito: meglio il testo incerto di
+        // Vision che una pagina vuota.
+        return vision?.text
+    }
+
+    static func render(page: PDFPage) -> UIImage? {
         let pageRect = page.bounds(for: .mediaBox)
         guard pageRect.width > 1, pageRect.height > 1 else { return nil }
         // 2x per dare a Vision abbastanza risoluzione sul corpo del testo,
@@ -183,6 +279,49 @@ enum StudyMaterialExtractor {
     }
 
     // MARK: - OCR
+
+    // Come recognizeText, ma riporta anche quanto Vision si fida di ciò
+    // che ha letto: media delle confidenze per riga, pesata sulla
+    // lunghezza (una riga lunga letta male pesa più di una sigla letta
+    // bene). Vision dà valori grossolani (~0.3 corsivo incerto, ~0.5
+    // dubbio, ~1.0 stampa pulita): la soglia 0.6 usata sopra separa
+    // stampa da manoscritto senza tarature fini.
+    static func recognizeTextWithConfidence(in image: UIImage) async -> (text: String, confidence: Double)? {
+        guard let cgImage = image.cgImage else { return nil }
+        return await withCheckedContinuation { continuation in
+            let request = VNRecognizeTextRequest { request, _ in
+                guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                var lines: [String] = []
+                var weightedConfidence = 0.0
+                var totalWeight = 0.0
+                for observation in observations {
+                    guard let candidate = observation.topCandidates(1).first else { continue }
+                    lines.append(candidate.string)
+                    let weight = Double(candidate.string.count)
+                    weightedConfidence += Double(candidate.confidence) * weight
+                    totalWeight += weight
+                }
+                let text = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty, totalWeight > 0 else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: (text, weightedConfidence / totalWeight))
+            }
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            request.recognitionLanguages = ["it-IT", "en-US"]
+            request.automaticallyDetectsLanguage = true
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                try? handler.perform([request])
+            }
+        }
+    }
 
     // A differenza di MagicPenService.recognizeText (pensato per una
     // singola espressione cerchiata), qui si conserva l'andata a capo: su

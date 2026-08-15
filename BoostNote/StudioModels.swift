@@ -24,6 +24,12 @@ final class StudyFolder {
     @Relationship(deleteRule: .nullify, inverse: \Study.folder)
     var studies: [Study] = []
 
+    // Il vault del corso (cartella = corso, deciso 2026-08-15): i
+    // documenti del vault muoiono con la cartella — a differenza degli
+    // studi, il loro contenuto si può sempre rileggere dalle fonti.
+    @Relationship(deleteRule: .cascade, inverse: \VaultDocument.folder)
+    var vaultDocuments: [VaultDocument] = []
+
     init(name: String, parent: StudyFolder? = nil, color: FolderColor = .purple) {
         self.id = UUID()
         self.name = name
@@ -162,12 +168,14 @@ enum StudySourceKind: String, Codable {
     case note        // una nota dell'app, riferita per UUID
     case webeep      // un file recuperato da WeBeep (slide, dispense, temi d'esame)
     case file        // un PDF caricato a mano dall'utente
+    case vault       // un documento del Vault del corso: testo GIÀ letto
 
     var systemImage: String {
         switch self {
         case .note: "note.text"
         case .webeep: "building.columns.fill"
         case .file: "doc.richtext"
+        case .vault: "archivebox.fill"
         }
     }
 }
@@ -186,6 +194,9 @@ struct StudySourceMaterial: Codable, Identifiable, Hashable {
     // al momento della generazione invece che alla selezione.
     var webeepFileURL: String?
     var webeepMimeType: String?
+    // Riferimento al documento del Vault (kind == .vault). Opzionale per
+    // la TRAPPOLA Codable nota: i JSON già salvati non hanno la chiave.
+    var vaultDocumentID: UUID?
 
     var kind: StudySourceKind {
         get { StudySourceKind(rawValue: kindRaw) ?? .file }
@@ -197,7 +208,7 @@ struct StudySourceMaterial: Codable, Identifiable, Hashable {
         return WebeepFile(filename: title, fileurl: webeepFileURL, mimetype: webeepMimeType, filepath: nil)
     }
 
-    init(kind: StudySourceKind, title: String, subtitle: String? = nil, noteID: UUID? = nil, isExamPaper: Bool = false, webeepFileURL: String? = nil, webeepMimeType: String? = nil) {
+    init(kind: StudySourceKind, title: String, subtitle: String? = nil, noteID: UUID? = nil, isExamPaper: Bool = false, webeepFileURL: String? = nil, webeepMimeType: String? = nil, vaultDocumentID: UUID? = nil) {
         self.kindRaw = kind.rawValue
         self.title = title
         self.subtitle = subtitle
@@ -205,6 +216,7 @@ struct StudySourceMaterial: Codable, Identifiable, Hashable {
         self.isExamPaper = isExamPaper
         self.webeepFileURL = webeepFileURL
         self.webeepMimeType = webeepMimeType
+        self.vaultDocumentID = vaultDocumentID
     }
 }
 

@@ -19,24 +19,36 @@ struct StudioEnvironmentView: View {
 
     @Query(sort: \Study.updatedAt, order: .reverse) private var studies: [Study]
 
+    // Cartella da cui precompilare il flusso di creazione ("Crea da
+    // questo Vault"): materia e materiali già pronti.
+    @State private var createPrefillFolder: StudyFolder?
+
     var body: some View {
         Group {
             if showingProgress {
                 StudioProgressView(studies: studies, onBack: { showingProgress = false })
             } else if showingCreate {
                 StudioCreateFlowView(
-                    onCancel: { showingCreate = false },
+                    prefillFolder: createPrefillFolder,
+                    onCancel: {
+                        showingCreate = false
+                        createPrefillFolder = nil
+                    },
                     onCreated: { study in
                         selectedStudy = study
                         selectedModule = nil
                         showingCreate = false
+                        createPrefillFolder = nil
                     }
                 )
             } else if selectedStudy == nil {
                 StudioHomeView(
                     selectedStudy: $selectedStudy,
                     showingProgress: $showingProgress,
-                    onCreateStudy: { showingCreate = true }
+                    onCreateStudy: { folder in
+                        createPrefillFolder = folder
+                        showingCreate = true
+                    }
                 )
             } else if let study = selectedStudy {
                 StudyDetailView(

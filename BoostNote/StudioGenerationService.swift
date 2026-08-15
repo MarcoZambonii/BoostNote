@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import SwiftData
 
 // I DTO che sono "un array dentro un oggetto" dichiarano qui quale sia
@@ -6,6 +7,18 @@ import SwiftData
 // arrivata con un contenitore diverso. Sta a livello di file perché in
 // Swift un protocollo non si può annidare dentro un tipo.
 private protocol ArrayWrapped { static var arrayKey: String { get } }
+
+// Testo di avanzamento vivo per la card di un modulo in generazione
+// ("Provo gemini-flash-latest (3/5)…"): prima l'attesa era un
+// "Generazione in corso…" identico al secondo 2 e al minuto 3.
+// Volutamente FUORI da SwiftData: è stato transitorio, a generazione
+// finita non deve restarne traccia.
+@MainActor
+@Observable
+final class GenerationProgress {
+    static let shared = GenerationProgress()
+    var text: [UUID: String] = [:]
+}
 
 // Generazione dei contenuti dei moduli di uno studio, via AIService.
 //
@@ -48,6 +61,35 @@ enum StudioGenerationService {
             }
             return ResolvedSource(title: source.title, text: text, isExamPaper: source.isExamPaper)
         }
+    }
+
+    // MARK: - Avvio e annullamento
+    //
+    // La generazione era un `Task { }` fire-and-forget: nessun modo di
+    // fermarla, nessuna difesa dal doppio avvio. Il registro tiene il
+    // Task per studio: "Annulla" in UI diventa possibile, e un secondo
+    // tocco su "Rigenera" mentre la prima gira non fa partire niente.
+    @MainActor
+    private static var running: [UUID: Task<Void, Never>] = [:]
+
+    @MainActor
+    static func isGenerating(_ studyID: UUID) -> Bool {
+        running[studyID] != nil
+    }
+
+    @MainActor
+    static func startGeneration(for study: Study, in context: ModelContext) {
+        guard running[study.id] == nil else { return }
+        let studyID = study.id
+        running[studyID] = Task { @MainActor in
+            await generateModules(for: study, in: context)
+            running[studyID] = nil
+        }
+    }
+
+    @MainActor
+    static func cancelGeneration(for studyID: UUID) {
+        running[studyID]?.cancel()
     }
 
     // Genera in sequenza tutti i moduli pending di uno studio, aggiornando
@@ -105,20 +147,34 @@ enum StudioGenerationService {
         // richieste al minuto, e il modulo esercizi ne spende due (la
         // seconda è la verifica): oltre questa soglia si inizierebbe a
         // sbattere contro il limite invece di andare più veloci.
-        let jobs: [(index: Int, kind: StudyModuleKind, options: StudyModuleOptions)] =
+        let jobs: [(index: Int, moduleID: UUID, kind: StudyModuleKind, options: StudyModuleOptions)] =
             pending.enumerated().compactMap { offset, module in
                 guard let kind = module.kind else { return nil }
-                return (offset, kind, module.options)
+                return (offset, module.id, kind, module.options)
             }
+
+        // Se lo studio nasce dal Vault, la generazione è guidata
+        // dall'indice invece che dal troncamento cieco.
+        let vaultChunks = vaultChunkInfos(for: study, in: context)
 
         let outcomes = await withTaskGroup(of: (Int, GenerationOutcome).self) { group -> [Int: GenerationOutcome] in
             var results: [Int: GenerationOutcome] = [:]
             var next = 0
             let maxConcurrent = 3
 
-            func addJob(_ job: (index: Int, kind: StudyModuleKind, options: StudyModuleOptions)) {
+            func addJob(_ job: (index: Int, moduleID: UUID, kind: StudyModuleKind, options: StudyModuleOptions)) {
+                let moduleID = job.moduleID
                 group.addTask {
-                    (job.index, await generateWithAI(for: job.kind, from: resolved, options: job.options))
+                    let progress: @Sendable (String) -> Void = { text in
+                        Task { @MainActor in GenerationProgress.shared.text[moduleID] = text }
+                    }
+                    let outcome: GenerationOutcome
+                    if vaultChunks.isEmpty {
+                        outcome = await generateWithAI(for: job.kind, from: resolved, options: job.options, progress: progress)
+                    } else {
+                        outcome = await generateFromVault(kind: job.kind, chunks: vaultChunks, options: job.options, progress: progress)
+                    }
+                    return (job.index, outcome)
                 }
             }
 
@@ -133,22 +189,34 @@ enum StudioGenerationService {
         }
 
         // I @Model si toccano solo qui, tornati sul MainActor.
-        let notice = truncationNotice(for: resolved)
+        // Col Vault il troncamento non esiste: al suo posto parla la nota
+        // di selezione dentro l'esito.
+        let notice = vaultChunks.isEmpty ? truncationNotice(for: resolved) : nil
+        // Perché gli esercizi sono finiti su un Lite? Da quando esiste la
+        // quarantena sovraccarichi le cause sono DUE, e vanno distinte:
+        // quota del giorno finita (rigenerare oggi non cambia niente)
+        // oppure modelli capaci intasati (503: tra qualche minuto passa).
+        // Dedurre sempre "quota esaurita" era una bugia: successo con la
+        // console che mostrava 3/20 richieste usate.
+        let capableExhausted = await AIService.capableQuotaLooksExhausted()
         for (offset, module) in pending.enumerated() {
+            GenerationProgress.shared.text[module.id] = nil
             switch outcomes[offset] {
-            case .success(let generated, let discarded):
+            case .success(let generated, let discarded, let modelID, let outcomeWarning):
                 module.contentJSON = generated
                 module.generatedByRaw = AIService.selectedProvider.label
                 // Se gli esercizi sono finiti sul modello di ripiego, va
                 // detto: la differenza si vede (domande di definizione
                 // invece di esercizi con dati), e senza spiegazione
-                // sembrerebbe un peggioramento inspiegabile.
-                var warning = notice
-                if module.kind == .exercises, AIService.isLiteModel(AIService.lastUsedModelID) {
-                    let quotaNote = "Quota dei modelli migliori esaurita per oggi: questi esercizi sono stati generati con il modello veloce e possono essere più semplici. Rigenerali domani per averli migliori."
-                    warning = [notice, quotaNote].compactMap { $0 }.joined(separator: " ")
+                // sembrerebbe un peggioramento inspiegabile. `modelID` è
+                // quello del SUO esito, non una variabile condivisa.
+                var warningParts = [notice, outcomeWarning].compactMap { $0 }
+                if module.kind == .exercises, AIService.isLiteModel(modelID) {
+                    warningParts.append(capableExhausted
+                        ? "Quota dei modelli migliori esaurita per oggi: questi esercizi sono stati generati con il modello veloce e possono essere più semplici. Rigenerali domani per averli migliori."
+                        : "I modelli migliori erano momentaneamente sovraccarichi: questi esercizi sono stati generati con il modello veloce e possono essere più semplici. Riprova a rigenerarli tra qualche minuto.")
                 }
-                module.generationError = warning
+                module.generationError = warningParts.isEmpty ? nil : warningParts.joined(separator: " ")
                 module.discardedCount = discarded
                 module.reportedIDsJSON = "[]"
                 module.status = .ready
@@ -179,29 +247,74 @@ enum StudioGenerationService {
     // passaggio "correttore" sugli esercizi (opt-in, `verifyExercises`).
     // Manca solo `sourceRange` per le citazioni puntuali alla pagina.
 
-    // Esito della generazione reale: contenuto pronto o motivo del fallimento
-    // (una String, non un Error: finisce dritta in UI).
-    private enum GenerationOutcome {
-        case success(String, discarded: Int)
+    // Esito della generazione reale: contenuto pronto (con il modello
+    // che l'ha prodotto e un eventuale avviso da mostrare) o motivo del
+    // fallimento (una String, non un Error: finisce dritta in UI).
+    private enum GenerationOutcome: Sendable {
+        case success(String, discarded: Int, modelID: String?, warning: String?)
         case failure(String)
+
+        // Appende un avviso a un successo, lasciando intatto il resto.
+        func addingWarning(_ text: String?) -> GenerationOutcome {
+            guard let text, case .success(let payload, let discarded, let modelID, let warning) = self else { return self }
+            let combined = [warning, text].compactMap { $0 }.joined(separator: " ")
+            return .success(payload, discarded: discarded, modelID: modelID, warning: combined.isEmpty ? nil : combined)
+        }
     }
 
-    private static func generateWithAI(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions) async -> GenerationOutcome {
-        // Un modello sotto carico ogni tanto risponde ma DEGRADATO: JSON
-        // con la forma sbagliata ("il modello ha omesso il campo
-        // sections" — successo davvero, sotto un 503 diffuso). Buttare
-        // via il modulo per una risposta storta costa più del secondo
-        // tentativo, che si paga solo in questo caso raro.
-        var lastFailure: GenerationOutcome = .failure("Il modello non ha restituito JSON.")
-        for _ in 0...1 {
-            switch await generateOnce(for: kind, from: sources, options: options) {
-            case .retryable(let outcome):
-                lastFailure = outcome
-            case .final(let outcome):
-                return outcome
+    // Budget di thinking per gli esercizi e la loro verifica: INVENTARE
+    // un problema con dati che tornano è ragionamento vero, e il budget
+    // è la ragione per cui il Flash produce "ottimo finito 15, quanto
+    // vale il duale?" e il Lite "scrivi il duale di min c'x". 2048
+    // perché nelle prove i casi buoni usavano 1.400-2.000 token; i
+    // 5.300-7.800 osservati erano spirale, non qualità. Tutti gli altri
+    // compiti (estrattivi) viaggiano a zero.
+    private static let exercisesThinkingBudget = 2048
+
+    // Tetto complessivo per modulo. Senza, il caso peggiore era il
+    // prodotto di tutti i moltiplicatori della catena: ~40 minuti di
+    // "Generazione in corso…" che nessuno poteva fermare.
+    private static let moduleDeadline: TimeInterval = 180
+
+    private static func generateWithAI(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, indexTopics: [String] = [], progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
+        await withDeadline(seconds: moduleDeadline) {
+            // Il retry sul JSON malformato resta SOLO per i provider
+            // senza structured output (Apple locale, Claude): su Gemini
+            // il responseSchema garantisce la sintassi, e il retry era
+            // uno dei moltiplicatori del caso peggiore.
+            let attempts = AIService.selectedProvider == .gemini ? 1 : 2
+            var lastFailure: GenerationOutcome = .failure("Il modello non ha restituito JSON.")
+            for _ in 0..<attempts {
+                switch await generateOnce(for: kind, from: sources, options: options, indexTopics: indexTopics, progress: progress) {
+                case .retryable(let outcome):
+                    lastFailure = outcome
+                case .final(let outcome):
+                    return outcome
+                }
             }
+            return lastFailure
         }
-        return lastFailure
+    }
+
+    // Fa correre l'operazione contro un timer: vince chi finisce prima,
+    // l'altro viene cancellato (la cancellazione arriva fino a
+    // URLSession, che interrompe la richiesta in volo).
+    private static func withDeadline(seconds: TimeInterval, _ operation: @escaping @Sendable () async -> GenerationOutcome) async -> GenerationOutcome {
+        await withTaskGroup(of: GenerationOutcome?.self) { group in
+            group.addTask { await operation() }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(seconds))
+                return nil
+            }
+            defer { group.cancelAll() }
+            guard let first = await group.next(), let outcome = first else {
+                if Task.isCancelled {
+                    return .failure("Generazione annullata.")
+                }
+                return .failure("Tempo massimo superato (\(Int(seconds / 60)) minuti): nessun modello ha risposto in tempo. Riprova.")
+            }
+            return outcome
+        }
     }
 
     // Distingue i fallimenti che un secondo tentativo può sistemare
@@ -213,9 +326,10 @@ enum StudioGenerationService {
         case retryable(GenerationOutcome)
     }
 
-    private static func generateOnce(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions) async -> AttemptResult {
-        let prompt = buildPrompt(for: kind, from: sources, options: options)
+    private static func generateOnce(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, indexTopics: [String] = [], progress: @escaping @Sendable (String) -> Void) async -> AttemptResult {
+        let prompt = buildPrompt(for: kind, from: sources, options: options, indexTopics: indexTopics)
         let raw: String
+        let usedModel: String?
         // Gli esercizi passano dal modello capace, gli altri moduli no.
         // Misurato sullo stesso prompt: il Lite produce domande di
         // definizione ("scrivi il duale di min c'x"), il Flash esercizi
@@ -223,13 +337,22 @@ enum StudioGenerationService {
         // il duale?"). Su riassunti, flashcard e punti di ripasso — che
         // sono compiti estrattivi — la differenza non si vede, e lì il
         // Lite è sei volte più veloce.
-        switch await AIService.generate(prompt: prompt, tier: kind == .exercises ? .full : .lite) {
+        switch await AIService.generate(
+            prompt: prompt,
+            tier: kind == .exercises ? .full : .lite,
+            schema: responseSchema(for: kind),
+            thinkingBudget: kind == .exercises ? exercisesThinkingBudget : 0,
+            onAttempt: { modelID, position, total in
+                progress("Provo \(modelID) (\(position)/\(total))…")
+            }
+        ) {
         case .failure(let error):
             return .final(.failure(error.message))
-        case .success(let text):
-            raw = text
+        case .success(let reply):
+            raw = reply.text
+            usedModel = reply.modelID
         }
-        switch await parse(raw, for: kind, from: sources, options: options) {
+        switch await parse(raw, for: kind, from: sources, options: options, modelID: usedModel) {
         case .success(let outcome):
             return .final(outcome)
         case .failure(let message):
@@ -242,7 +365,7 @@ enum StudioGenerationService {
         case failure(String)
     }
 
-    private static func parse(_ raw: String, for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions) async -> ParseResult {
+    private static func parse(_ raw: String, for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, modelID: String?) async -> ParseResult {
         guard let json = AIService.extractJSON(from: raw) else {
             return .failure("Il modello non ha restituito JSON.")
         }
@@ -259,7 +382,7 @@ enum StudioGenerationService {
             guard !dto.sections.isEmpty else { return .failure(emptyError) }
             return .success(encodePayload(SummaryContent(sections: dto.sections.map {
                 SummarySection(title: $0.title, body: $0.body, quote: makeCitation(quote: $0.quote, source: $0.source, in: sources))
-            })))
+            }), modelID: modelID))
         case .exercises:
             let dto: AIExercisesDTO
             switch decodeDTO(AIExercisesDTO.self, from: json) {
@@ -310,7 +433,7 @@ enum StudioGenerationService {
                     }
                 }
             }
-            return .success(encodePayload(ExerciseSetContent(exercises: exercises), discarded: discarded))
+            return .success(encodePayload(ExerciseSetContent(exercises: exercises), discarded: discarded, modelID: modelID))
         case .reviewPoints:
             let dto: AIReviewPointsDTO
             switch decodeDTO(AIReviewPointsDTO.self, from: json) {
@@ -321,7 +444,7 @@ enum StudioGenerationService {
             return .success(encodePayload(ReviewPointsContent(points: dto.points.map {
                 ReviewPoint(statement: $0.statement, question: $0.question, answer: $0.answer,
                             quote: makeCitation(quote: $0.quote, source: $0.source, in: sources))
-            })))
+            }), modelID: modelID))
         case .flashcards:
             let dto: AIFlashcardsDTO
             switch decodeDTO(AIFlashcardsDTO.self, from: json) {
@@ -331,7 +454,197 @@ enum StudioGenerationService {
             guard !dto.cards.isEmpty else { return .failure(emptyError) }
             return .success(encodePayload(FlashcardsContent(cards: dto.cards.map {
                 Flashcard(front: $0.front, back: $0.back, quote: makeCitation(quote: $0.quote, source: $0.source, in: sources))
-            })))
+            }), modelID: modelID))
+        }
+    }
+
+    // MARK: - Generazione guidata dal Vault (passo 3, deciso 2026-08-15)
+    //
+    // Con uno studio nato dal Vault il prompt non si riempie più "alla
+    // cieca" coi primi 100k caratteri: l'indice decide COSA entra.
+    // - esercizi/flashcard/ripasso: stesso numero di chiamate di oggi,
+    //   ma i materiali sono i chunk scelti per copertura (tutti gli
+    //   argomenti, temi d'esame prioritari per gli esercizi), e la FASE 1
+    //   degli esercizi parte dagli argomenti dell'indice;
+    // - riassunto: deve coprire TUTTO, quindi itera sui chunk in Lite e
+    //   cuce le sezioni nell'ordine del corso.
+
+    // Snapshot Sendable di un chunk: i @Model restano sul MainActor.
+    private struct VaultChunkInfo: Sendable {
+        let order: Int
+        let title: String
+        let text: String
+        let topics: [String]
+        let nature: String
+        let isExamPaper: Bool
+    }
+
+    @MainActor
+    private static func vaultChunkInfos(for study: Study, in context: ModelContext) -> [VaultChunkInfo] {
+        let ids = Set(study.sources.compactMap(\.vaultDocumentID))
+        guard !ids.isEmpty else { return [] }
+        let descriptor = FetchDescriptor<VaultDocument>()
+        let documents = ((try? context.fetch(descriptor)) ?? []).filter { ids.contains($0.id) }
+        var infos: [VaultChunkInfo] = []
+        for document in documents {
+            let chunks = document.sortedChunks
+            if chunks.isEmpty {
+                // Documento letto ma non ancora spezzato in chunk: entra
+                // intero come un blocco unico, senza etichette.
+                let text = document.fullText
+                guard !text.isEmpty else { continue }
+                infos.append(VaultChunkInfo(order: infos.count, title: document.title, text: text, topics: [], nature: "mixed", isExamPaper: document.isExamPaper))
+            } else {
+                for chunk in chunks {
+                    let text = chunk.text
+                    guard !text.isEmpty else { continue }
+                    infos.append(VaultChunkInfo(
+                        order: infos.count,
+                        title: "\(document.title) (pagg. \(chunk.pageStart + 1)-\(chunk.pageEnd + 1))",
+                        text: text,
+                        topics: chunk.topics,
+                        nature: chunk.natureRaw,
+                        isExamPaper: document.isExamPaper
+                    ))
+                }
+            }
+        }
+        // Studio misto: i materiali NON-Vault entrano come pseudo-chunk,
+        // così niente si perde per aver mescolato le sorgenti.
+        if !infos.isEmpty {
+            for material in study.materials where material.kind != .vault && !material.extractedText.isEmpty {
+                infos.append(VaultChunkInfo(order: infos.count, title: material.title, text: material.extractedText, topics: [], nature: "mixed", isExamPaper: material.isExamPaper))
+            }
+        }
+        return infos
+    }
+
+    private static func generateFromVault(kind: StudyModuleKind, chunks: [VaultChunkInfo], options: StudyModuleOptions, progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
+        switch kind {
+        case .summary:
+            // Il riassunto è di teoria: i chunk di soli esercizi/temi
+            // d'esame non c'entrano (a meno che non ci sia altro).
+            let theory = chunks.filter { !$0.isExamPaper && $0.nature != "exercises" }
+            return await generateVaultSummary(chunks: theory.isEmpty ? chunks : theory, options: options, progress: progress)
+        default:
+            let (selected, note) = selectChunks(chunks, for: kind, budget: materialsBudget)
+            let sources = selected.map { ResolvedSource(title: $0.title, text: $0.text, isExamPaper: $0.isExamPaper) }
+            let outcome = await generateWithAI(for: kind, from: sources, options: options, indexTopics: orderedTopics(of: chunks), progress: progress)
+            return outcome.addingWarning(note)
+        }
+    }
+
+    // Selezione nel budget: per gli esercizi prima i temi d'esame e i
+    // blocchi di esercizi (sono la materia prima dei "practical"), poi
+    // la teoria in ordine di copertura; per gli altri moduli solo la
+    // copertura. L'ordine di lettura finale resta quello del corso.
+    private static func selectChunks(_ chunks: [VaultChunkInfo], for kind: StudyModuleKind, budget: Int) -> (selected: [VaultChunkInfo], note: String?) {
+        let prioritized: [VaultChunkInfo]
+        switch kind {
+        case .exercises:
+            let examLike = chunks.filter { $0.isExamPaper || $0.nature == "exercises" }
+            let theory = chunks.filter { !($0.isExamPaper || $0.nature == "exercises") }
+            prioritized = examLike + coverageOrdered(theory)
+        default:
+            prioritized = coverageOrdered(chunks)
+        }
+        var selected: [VaultChunkInfo] = []
+        var used = 0
+        for chunk in prioritized where used + chunk.text.count <= budget {
+            selected.append(chunk)
+            used += chunk.text.count
+        }
+        if selected.isEmpty, let first = prioritized.first {
+            selected = [first]
+        }
+        selected.sort { $0.order < $1.order }
+        let note = selected.count < chunks.count
+            ? "Materiali scelti con l'indice del Vault: \(selected.count) blocchi su \(chunks.count), copertura di tutti gli argomenti."
+            : nil
+        return (selected, note)
+    }
+
+    // Prima i chunk che aggiungono argomenti nuovi (in ordine di corso),
+    // poi gli approfondimenti: ogni argomento compare almeno una volta
+    // prima di spendere budget due volte sullo stesso.
+    private static func coverageOrdered(_ chunks: [VaultChunkInfo]) -> [VaultChunkInfo] {
+        var covered: Set<String> = []
+        var primary: [VaultChunkInfo] = []
+        var secondary: [VaultChunkInfo] = []
+        for chunk in chunks {
+            let fresh = chunk.topics.map { $0.lowercased() }.filter { !covered.contains($0) }
+            if chunk.topics.isEmpty || !fresh.isEmpty {
+                covered.formUnion(fresh)
+                primary.append(chunk)
+            } else {
+                secondary.append(chunk)
+            }
+        }
+        return primary + secondary
+    }
+
+    private static func orderedTopics(of chunks: [VaultChunkInfo]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for chunk in chunks {
+            for topic in chunk.topics where seen.insert(topic.lowercased()).inserted {
+                result.append(topic)
+            }
+        }
+        return result
+    }
+
+    // Il riassunto a mappa: una chiamata Lite per chunk, 3 in parallelo,
+    // sezioni cucite nell'ordine del corso. È il modulo che il
+    // troncamento danneggiava di più: così copre il corso INTERO.
+    private static func generateVaultSummary(chunks: [VaultChunkInfo], options: StudyModuleOptions, progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
+        await withDeadline(seconds: 360) {
+            let total = chunks.count
+            let results = await withTaskGroup(of: (Int, [SummarySection]?).self) { group -> [Int: [SummarySection]] in
+                var out: [Int: [SummarySection]] = [:]
+                var next = 0
+                var done = 0
+                let maxConcurrent = 3
+
+                func add(_ index: Int) {
+                    let chunk = chunks[index]
+                    group.addTask { (index, await summarizeChunk(chunk, options: options)) }
+                }
+
+                while next < chunks.count && next < maxConcurrent {
+                    add(next); next += 1
+                }
+                while let (index, sections) = await group.next() {
+                    done += 1
+                    progress("Riassumo il blocco \(done) di \(total)…")
+                    if let sections { out[index] = sections }
+                    if next < chunks.count { add(next); next += 1 }
+                }
+                return out
+            }
+            let ordered = (0..<chunks.count).compactMap { results[$0] }.flatMap { $0 }
+            guard !ordered.isEmpty else {
+                return .failure("Il riassunto non è riuscito su nessun blocco del Vault. Riprova tra qualche minuto.")
+            }
+            let failed = chunks.count - results.count
+            let warning = failed > 0
+                ? "Riassunto parziale: \(failed) blocchi su \(chunks.count) non sono riusciti — rigenera il modulo per completarlo."
+                : nil
+            return encodePayload(SummaryContent(sections: ordered), warning: warning)
+        }
+    }
+
+    private static func summarizeChunk(_ chunk: VaultChunkInfo, options: StudyModuleOptions) async -> [SummarySection]? {
+        let source = ResolvedSource(title: chunk.title, text: chunk.text, isExamPaper: chunk.isExamPaper)
+        let prompt = buildPrompt(for: .summary, from: [source], options: options)
+        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .lite, schema: responseSchema(for: .summary), thinkingBudget: 0),
+              let json = AIService.extractJSON(from: reply.text),
+              case .success(let dto) = decodeDTO(AISummaryDTO.self, from: json),
+              !dto.sections.isEmpty else {
+            return nil
+        }
+        return dto.sections.map {
+            SummarySection(title: $0.title, body: $0.body, quote: makeCitation(quote: $0.quote, source: $0.source, in: [source]))
         }
     }
 
@@ -382,8 +695,8 @@ enum StudioGenerationService {
         Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials"}]}
         """
 
-        guard case .success(let raw) = await AIService.generate(prompt: prompt),
-              let json = AIService.extractJSON(from: raw),
+        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: exercisesSchema, thinkingBudget: exercisesThinkingBudget),
+              let json = AIService.extractJSON(from: reply.text),
               case .success(let dto) = decodeDTO(AIExercisesDTO.self, from: json),
               let item = dto.exercises.first else {
             return "La rigenerazione non è riuscita. L'esercizio segnalato è rimasto invariato."
@@ -432,8 +745,10 @@ enum StudioGenerationService {
         ESERCIZI DA VERIFICARE:
         \(list)
         """
-        guard case .success(let raw) = await AIService.generate(prompt: prompt, tier: .full),
-              let json = AIService.extractJSON(from: raw),
+        // Stesso budget di thinking degli esercizi: risolvere i problemi
+        // per conto proprio è ragionamento quanto scriverli.
+        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: verdictsSchema, thinkingBudget: exercisesThinkingBudget),
+              let json = AIService.extractJSON(from: reply.text),
               let data = json.data(using: .utf8),
               let dto = try? JSONDecoder().decode(AIVerdictsDTO.self, from: data) else {
             // Verifica non riuscita: non si scarta nulla (meglio un
@@ -452,11 +767,11 @@ enum StudioGenerationService {
         var verdicts: [Verdict]
     }
 
-    private static func encodePayload(_ payload: some Encodable, discarded: Int = 0) -> GenerationOutcome {
+    private static func encodePayload(_ payload: some Encodable, discarded: Int = 0, modelID: String? = nil, warning: String? = nil) -> GenerationOutcome {
         guard let data = try? JSONEncoder().encode(payload), let string = String(data: data, encoding: .utf8) else {
             return .failure("Errore interno di codifica del contenuto.")
         }
-        return .success(string, discarded: discarded)
+        return .success(string, discarded: discarded, modelID: modelID, warning: warning)
     }
 
     // Il blocco materiali è l'UNICA conoscenza ammessa (grounding stretto).
@@ -580,12 +895,97 @@ enum StudioGenerationService {
         """
     }
 
-    private static func buildPrompt(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions) -> String {
+    // MARK: - responseSchema
+    //
+    // Lo schema che Gemini rispetta in decoding vincolato: il JSON esce
+    // sintatticamente valido per costruzione, escape LaTeX compresi.
+    // Prima la sintassi era solo "sperata" e a valle serviva una torre
+    // di riparazioni (protect/sanitize/repair/rewrap), che resta come
+    // rete di sicurezza — e come unico paracadute per Apple locale e
+    // Claude, che uno schema non ce l'hanno.
+    //
+    // `required` tiene il minimo indispensabile, in coerenza con i DTO:
+    // meglio un esercizio senza "quote" che un modulo fallito perché il
+    // modello non trovava una citazione da mettere.
+
+    private static func stringField() -> [String: Any] { ["type": "STRING"] }
+
+    private static func arrayField(of items: [String: Any]) -> [String: Any] {
+        ["type": "ARRAY", "items": items]
+    }
+
+    private static func objectField(_ properties: [String: Any], required: [String]) -> [String: Any] {
+        ["type": "OBJECT", "properties": properties, "required": required]
+    }
+
+    private static func responseSchema(for kind: StudyModuleKind) -> [String: Any] {
+        switch kind {
+        case .summary:
+            return objectField([
+                "sections": arrayField(of: objectField([
+                    "title": stringField(), "body": stringField(),
+                    "quote": stringField(), "source": stringField()
+                ], required: ["title", "body"]))
+            ], required: ["sections"])
+        case .exercises:
+            return exercisesSchema
+        case .reviewPoints:
+            return objectField([
+                "points": arrayField(of: objectField([
+                    "statement": stringField(), "question": stringField(), "answer": stringField(),
+                    "quote": stringField(), "source": stringField()
+                ], required: ["statement", "question", "answer"]))
+            ], required: ["points"])
+        case .flashcards:
+            return objectField([
+                "cards": arrayField(of: objectField([
+                    "front": stringField(), "back": stringField(),
+                    "quote": stringField(), "source": stringField()
+                ], required: ["front", "back"]))
+            ], required: ["cards"])
+        }
+    }
+
+    // Condiviso tra il modulo esercizi e la rigenerazione del singolo.
+    private static var exercisesSchema: [String: Any] {
+        objectField([
+            "exercises": arrayField(of: objectField([
+                "category": stringField(), "difficulty": stringField(), "topic": stringField(),
+                "prompt": stringField(), "steps": arrayField(of: stringField()),
+                "answer": stringField(), "source": stringField(), "quote": stringField(),
+                "checkExpression": stringField(), "origin": stringField()
+            ], required: ["prompt", "answer"]))
+        ], required: ["exercises"])
+    }
+
+    private static var verdictsSchema: [String: Any] {
+        objectField([
+            "verdicts": arrayField(of: objectField([
+                "index": ["type": "INTEGER"], "correct": ["type": "BOOLEAN"]
+            ], required: ["index", "correct"]))
+        ], required: ["verdicts"])
+    }
+
+    private static func buildPrompt(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, indexTopics: [String] = []) -> String {
         let common = commonPreamble(from: sources)
         switch kind {
         case .summary:
+            // Il modello di riferimento sono le "Smart Notes" di
+            // Notability: appunti RIELABORATI da cui si studia, non un
+            // sommario che elenca cosa c'è. La differenza la fanno la
+            // spiegazione in parole semplici dopo ogni definizione e la
+            // gerarchia visiva (grassetti, elenchi, formule a display).
             return common + """
-            Compito: riassumi i materiali di teoria, una sezione per materiale (o per argomento se un materiale copre più argomenti).
+            Compito: trasforma i materiali di teoria in APPUNTI RIELABORATI completi, da cui si possa studiare senza aprire i materiali originali. NON un sommario che dice di cosa parlano: una spiegazione vera e propria.
+
+            Struttura: una sezione per ARGOMENTO (non per materiale), nell'ordine logico in cui gli argomenti si costruiscono l'uno sull'altro. Meglio tante sezioni focalizzate che poche generiche.
+
+            Dentro ogni "body", in Markdown:
+            - Le DEFINIZIONI e gli enunciati formali per primi, completi e precisi: se il materiale li numera (es. "DEF 1.3", "Proposizione 11.7") conserva la numerazione; il termine definito va in **grassetto**; le condizioni come elenco puntato; le formule in $$ su riga propria.
+            - SUBITO DOPO ogni definizione o teorema, la spiegazione in parole semplici: cosa significa e a che cosa serve (es. "La misura 'trasforma' insiemi in numeri, fornendo una dimensione o quantità").
+            - Le conseguenze e le osservazioni come punti dedicati che iniziano con "**Conseguenza**:" o "**Osservazione**:".
+            - Un esempio concreto quando il materiale lo contiene, introdotto da "**Esempio**:".
+            - I passaggi chiave delle dimostrazioni solo se il materiale li riporta, condensati nei 2-3 punti essenziali.
             Schema: {"sections":[{"title":"...","body":"...","quote":"...","source":"..."}]}
             """
         case .exercises:
@@ -594,10 +994,22 @@ enum StudioGenerationService {
             var categoryRule = ""
             if !options.includeTheoretical || options.theoreticalCount == 0 { categoryRule += " Non generare esercizi teorici." }
             if !options.includePractical || options.practicalCount == 0 { categoryRule += " Non generare esercizi pratici." }
+            // Con l'indice del Vault gli argomenti sono GIÀ noti: la
+            // FASE 1 parte da lì invece di riscoprirli sui soli
+            // materiali selezionati — è così che la copertura resta
+            // quella del corso intero anche quando nel prompt entra una
+            // selezione.
+            let phase1 = indexTopics.isEmpty
+                ? """
+                FASE 1 — Individua da solo TUTTI gli argomenti distinti trattati nei materiali (es. "dualità in PL", "analisi di sensitività", "problema di trasporto"). Argomenti diversi tra loro, non sfumature dello stesso. Non scegliere tu quanti: elencali tutti.
+                """
+                : """
+                FASE 1 — L'indice del corso ha già individuato questi argomenti: \(indexTopics.joined(separator: "; ")). Usali come elenco di partenza; aggiungi solo argomenti che vedi nei materiali e che mancano dall'elenco.
+                """
             return common + """
             Compito, in due fasi.
 
-            FASE 1 — Individua da solo TUTTI gli argomenti distinti trattati nei materiali (es. "dualità in PL", "analisi di sensitività", "problema di trasporto"). Argomenti diversi tra loro, non sfumature dello stesso. Non scegliere tu quanti: elencali tutti.
+            \(phase1)
 
             FASE 2 — Per OGNI argomento individuato genera \(options.theoreticalCount) esercizi teorici e \(options.practicalCount) pratici. Il campo "topic" contiene l'argomento.
             Se due esercizi finiscono sullo stesso argomento devono affrontarlo da angoli DIVERSI (dato incognito diverso, verso opposto, caso limite), mai essere la stessa traccia con altri numeri.
