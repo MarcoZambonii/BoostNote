@@ -47,6 +47,19 @@ struct PDFKitPreviewView: UIViewRepresentable {
     }
 }
 
+// Lato del foglio su cui vive il pannello Strumenti. Chi scrive con la
+// destra tiene la mano proprio dove stava il pannello: poterlo mandare a
+// sinistra è la ragione per cui esiste questa scelta.
+enum SidePanelSide: String {
+    case leading, trailing
+
+    var opposite: SidePanelSide { self == .leading ? .trailing : .leading }
+    var label: String { self == .leading ? "sinistra" : "destra" }
+    // Segno con cui una traslazione orizzontale allarga il pannello: a
+    // destra si allarga tirando verso sinistra, a sinistra il contrario.
+    var widthSign: CGFloat { self == .leading ? 1 : -1 }
+}
+
 struct NoteEditorView: View {
     @Bindable var note: Note
     var onBack: () -> Void
@@ -111,7 +124,16 @@ struct NoteEditorView: View {
     @State private var showingRename = false
     @State private var renameText = ""
     @State private var sidePanelDragOffset: CGFloat = 0
-    @State private var researchModel = ArxivSearchModel()
+    // Lato e larghezza del pannello sopravvivono alla nota: sono una
+    // preferenza di postazione (mano con cui si scrive, quanto foglio si
+    // vuole tenere libero), non una proprietà del documento.
+    @AppStorage("sidePanel.side") private var storedPanelSide = SidePanelSide.trailing.rawValue
+    @AppStorage("sidePanel.width") private var storedPanelWidth = 380.0
+    // Larghezza mentre si trascina la maniglia di ridimensionamento:
+    // scrivere in AppStorage a ogni frame farebbe un salvataggio per
+    // movimento del dito.
+    @State private var liveResizeWidth: CGFloat?
+    @State private var researchModel = PaperSearchModel()
     // Stato con cui la penna magica precompila i pannelli Grafici/Wolfram.
     @State private var panelGraphExpression = "x^2 - 9"
     @State private var panelWolframPrefill: String?
@@ -145,8 +167,25 @@ struct NoteEditorView: View {
         note.sidePanelTools.compactMap(NoteTool.init(rawValue:))
     }
 
+    private var panelSide: SidePanelSide {
+        SidePanelSide(rawValue: storedPanelSide) ?? .trailing
+    }
+
+    // Larghezza scelta dall'utente (o quella in corso di trascinamento).
+    private var panelWidth: CGFloat {
+        liveResizeWidth ?? CGFloat(storedPanelWidth)
+    }
+
     private var currentPanelWidth: CGFloat {
-        isSidePanelHidden ? sidePanelDragOffset : (380 + sidePanelDragOffset)
+        isSidePanelHidden ? sidePanelDragOffset : (panelWidth + sidePanelDragOffset)
+    }
+
+    // Estremi del ridimensionamento: sotto i 280pt gli strumenti (Desmos,
+    // Wolfram, PDF) diventano illeggibili; oltre i due terzi del foglio
+    // non resta abbastanza pagina per scriverci.
+    private func clampPanelWidth(_ width: CGFloat, containerWidth: CGFloat) -> CGFloat {
+        let upper = max(280, min(760, containerWidth * 0.66))
+        return min(max(width, 280), upper)
     }
 
     private func openSidePanel(_ tool: NoteTool) {
@@ -165,28 +204,21 @@ struct NoteEditorView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            canvasArea
-                .background(DesignColor.surfacePage)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                if panelSide == .leading {
+                    panelColumn(containerWidth: geometry.size.width)
+                }
 
-            if !sidePanelTools.isEmpty {
-                Divider()
-                    .opacity(isSidePanelHidden ? 0 : 1)
-                sidePanelStack
-                    // Larghezza a zero invece di rimuovere la view: è ciò
-                    // che permette al contenuto di sopravvivere alla
-                    // chiusura del pannello.
-                    .frame(width: max(0, currentPanelWidth))
-                    .clipped()
-                    // `.clipped()` ritaglia il DISEGNO ma NON i tocchi: il
-                    // pannello restava largo 380pt come area sensibile
-                    // anche da chiuso, e si mangiava tutta la fascia
-                    // destra del foglio — non ci si poteva né scrivere né
-                    // toccare. Queste due righe sono la correzione vera.
-                    .contentShape(Rectangle())
-                    .allowsHitTesting(currentPanelWidth > 1)
+                canvasArea
+                    .background(DesignColor.surfacePage)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if panelSide == .trailing {
+                    panelColumn(containerWidth: geometry.size.width)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .alert("Titolo della nota", isPresented: $showingRename) {
             TextField("Titolo", text: $renameText)
@@ -200,7 +232,7 @@ struct NoteEditorView: View {
         .ignoresSafeArea()
         .animation(.spring(response: 0.35, dampingFraction: 0.86), value: sidePanelTools)
         .animation(.spring(response: 0.35, dampingFraction: 0.86), value: isSidePanelHidden)
-        .overlay(alignment: .trailing) {
+        .overlay(alignment: panelSide == .leading ? .leading : .trailing) {
             // Maniglia per aprire/chiudere con uno swipe quando il
             // pannello è nascosto ma ha ancora contenuti dentro.
             if !sidePanelTools.isEmpty && isSidePanelHidden {
@@ -323,6 +355,71 @@ struct NoteEditorView: View {
 
     // MARK: - Pannello laterale (Calcolatrice / Ricerca / Documento)
 
+    // Colonna del pannello con la sua maniglia di ridimensionamento, dal
+    // lato giusto: la maniglia sta sempre sul bordo che confina col
+    // foglio, che è quello che si trascina per allargare o stringere.
+    @ViewBuilder
+    private func panelColumn(containerWidth: CGFloat) -> some View {
+        if !sidePanelTools.isEmpty {
+            if panelSide == .trailing {
+                resizeGrip(containerWidth: containerWidth)
+            }
+            sidePanelStack
+                // Larghezza a zero invece di rimuovere la view: è ciò
+                // che permette al contenuto di sopravvivere alla
+                // chiusura del pannello.
+                .frame(width: max(0, currentPanelWidth))
+                .clipped()
+                // `.clipped()` ritaglia il DISEGNO ma NON i tocchi: il
+                // pannello restava largo come area sensibile anche da
+                // chiuso, e si mangiava tutta la fascia laterale del
+                // foglio — non ci si poteva né scrivere né toccare.
+                // Queste due righe sono la correzione vera.
+                .contentShape(Rectangle())
+                .allowsHitTesting(currentPanelWidth > 1)
+            if panelSide == .leading {
+                resizeGrip(containerWidth: containerWidth)
+            }
+        }
+    }
+
+    // Bordo trascinabile tra foglio e pannello. Da pannello nascosto
+    // resta un semplice divisore invisibile: non c'è niente da
+    // ridimensionare e una zona sensibile lì si mangerebbe i tratti.
+    @ViewBuilder
+    private func resizeGrip(containerWidth: CGFloat) -> some View {
+        if isSidePanelHidden {
+            Divider().opacity(0)
+        } else {
+            ZStack {
+                Rectangle()
+                    .fill(DesignColor.borderDefault)
+                    .frame(width: 1)
+                Capsule()
+                    .fill(DesignColor.textTertiary.opacity(liveResizeWidth == nil ? 0.35 : 0.8))
+                    .frame(width: 4, height: 42)
+            }
+            .frame(width: 12)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { value in
+                        let base = liveResizeWidth ?? CGFloat(storedPanelWidth)
+                        let proposed = base + value.translation.width * panelSide.widthSign
+                        liveResizeWidth = clampPanelWidth(proposed, containerWidth: containerWidth)
+                    }
+                    .onEnded { _ in
+                        if let liveResizeWidth {
+                            storedPanelWidth = Double(liveResizeWidth)
+                        }
+                        liveResizeWidth = nil
+                    }
+            )
+            .accessibilityLabel("Larghezza del pannello strumenti")
+        }
+    }
+
     @ViewBuilder
     // Pila degli strumenti aperti: ognuno con la propria X, che è
     // l'UNICO modo di rimuoverlo davvero. Nascondere il pannello (swipe o
@@ -333,7 +430,7 @@ struct NoteEditorView: View {
                 Button {
                     withAnimation { isSidePanelHidden = true }
                 } label: {
-                    Image(systemName: "chevron.right")
+                    Image(systemName: panelSide == .leading ? "chevron.left" : "chevron.right")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(DesignColor.textSecondary)
                         .frame(width: 28, height: 28)
@@ -347,6 +444,25 @@ struct NoteEditorView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(DesignColor.textTertiary)
                 Spacer()
+
+                // Il pannello passa dall'altro lato del foglio: chi scrive
+                // con la destra ci appoggia sopra la mano.
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                        storedPanelSide = panelSide.opposite.rawValue
+                    }
+                } label: {
+                    Image(systemName: panelSide == .leading
+                          ? "rectangle.trailinghalf.inset.filled"
+                          : "rectangle.leadinghalf.inset.filled")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DesignColor.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DesignColor.surfacePage, in: Circle())
+                        .contentShape(Rectangle().inset(by: -6))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Sposta il pannello a \(panelSide.opposite.label)")
             }
             .padding(.horizontal, DesignSpace.s3)
             .padding(.vertical, DesignSpace.s2)
@@ -365,7 +481,10 @@ struct NoteEditorView: View {
                 }
             }
         }
-        .frame(width: 380, alignment: .leading)
+        // Larghezza NATURALE pari a quella scelta: la `.frame` esterna
+        // (che anima l'apertura) ritaglia, questa tiene il contenuto alla
+        // sua misura invece di comprimerlo mentre il pannello si chiude.
+        .frame(width: panelWidth, alignment: .leading)
         .background(DesignColor.surfaceSunken)
     }
 
@@ -440,47 +559,45 @@ struct NoteEditorView: View {
     // resta sull'intestazione del pannello, dove non c'è nulla da
     // disegnare.
     private var sidePanelHandle: some View {
-        Button {
+        // Gli angoli tondi stanno sul lato interno (verso il foglio),
+        // qualunque sia il bordo su cui il pannello è agganciato.
+        let shape = panelSide == .leading
+            ? UnevenRoundedRectangle(bottomTrailingRadius: DesignRadius.md, topTrailingRadius: DesignRadius.md)
+            : UnevenRoundedRectangle(topLeadingRadius: DesignRadius.md, bottomLeadingRadius: DesignRadius.md)
+        return Button {
             withAnimation { isSidePanelHidden = false }
         } label: {
-            Image(systemName: "chevron.left")
+            Image(systemName: panelSide == .leading ? "chevron.right" : "chevron.left")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(DesignColor.textSecondary)
                 .frame(width: 22, height: 44)
-                .background(.ultraThinMaterial, in: UnevenRoundedRectangle(
-                    topLeadingRadius: DesignRadius.md,
-                    bottomLeadingRadius: DesignRadius.md
-                ))
-                .overlay(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: DesignRadius.md,
-                        bottomLeadingRadius: DesignRadius.md
-                    )
-                    .stroke(DesignColor.borderDefault.opacity(0.6), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.08), radius: 6, x: -2)
+                .background(.ultraThinMaterial, in: shape)
+                .overlay(shape.stroke(DesignColor.borderDefault.opacity(0.6), lineWidth: 1))
+                .shadow(color: .black.opacity(0.08), radius: 6, x: panelSide == .leading ? 2 : -2)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Mostra pannello strumenti")
     }
 
-    // Swipe orizzontale per aprire/chiudere: verso sinistra apre, verso
-    // destra chiude, con il pannello che segue il dito.
+    // Swipe orizzontale per aprire/chiudere, col pannello che segue il
+    // dito: verso il foglio apre, verso il proprio bordo chiude — su
+    // entrambi i lati, da cui il segno che ribalta la traslazione.
     private var panelDragGesture: some Gesture {
         DragGesture(minimumDistance: 12)
             .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                let travel = value.translation.width * panelSide.widthSign
                 if isSidePanelHidden {
-                    sidePanelDragOffset = min(380, max(0, -value.translation.width))
+                    sidePanelDragOffset = min(panelWidth, max(0, travel))
                 } else {
-                    sidePanelDragOffset = min(0, max(-380, -value.translation.width))
+                    sidePanelDragOffset = min(0, max(-panelWidth, travel))
                 }
             }
             .onEnded { value in
-                let travelled = abs(value.translation.width)
+                let travel = value.translation.width * panelSide.widthSign
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    if travelled > 80 {
-                        isSidePanelHidden = value.translation.width > 0
+                    if abs(travel) > 80 {
+                        isSidePanelHidden = travel < 0
                     }
                     sidePanelDragOffset = 0
                 }
@@ -1060,8 +1177,8 @@ struct NoteEditorView: View {
                 result.resultText = text
             } else {
                 switch await AIService.generate(prompt: MagicPenService.latexPrompt(for: text), purpose: .reading) {
-                case .success(let latex):
-                    result.resultText = MagicPenService.cleanLaTeX(latex)
+                case .success(let reply):
+                    result.resultText = MagicPenService.cleanLaTeX(reply.text)
                 case .failure(let error):
                     result.errorMessage = error.message
                 }
@@ -1073,8 +1190,8 @@ struct NoteEditorView: View {
             // Claude) invece di tentare solo il locale, e riporta il
             // motivo vero dell'errore (quota, chiave, rete).
             switch await AIService.generate(prompt: MagicPenService.explainPrompt(for: text)) {
-            case .success(let explanation):
-                result.resultText = explanation
+            case .success(let reply):
+                result.resultText = reply.text
             case .failure(let error):
                 result.errorMessage = error.message
             }

@@ -528,15 +528,14 @@ struct PenToolbarView: View {
             // Cancellazioni in blocco: passare la gomma a mano su una
             // pagina intera è lungo e porta via anche ciò che si voleva
             // tenere. Queste lavorano sui tratti, quindi sono esatte.
-            Text("Sulla pagina corrente")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DesignColor.textTertiary)
-
+            // Lo scopo ("la pagina") sta nelle etichette dei pulsanti: un
+            // titolo che lo ripeteva era una riga in più che diceva la
+            // stessa cosa.
             Button {
                 onClearHighlighter()
                 showingEraserOptions = false
             } label: {
-                Label("Togli solo le evidenziature", systemImage: "highlighter")
+                Label("Togli le evidenziature della pagina", systemImage: "highlighter")
                     .font(.system(size: 14))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())

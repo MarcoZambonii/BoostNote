@@ -1,44 +1,176 @@
 import SwiftUI
 import SwiftData
 
-struct ArxivPaper: Identifiable {
+struct ResearchPaper: Identifiable {
     let id = UUID()
     var title: String
     var authors: String
     var summary: String
     var link: URL?
+    // PDF dichiarato dalla fonte (OpenAlex lo dà solo per l'accesso
+    // aperto). Su arXiv non serve: si ricava dall'URL della scheda.
+    var pdfURL: URL? = nil
 
     // arXiv usa uno schema di URL prevedibile: .../abs/XXXX -> .../pdf/XXXX
     var pdfLink: URL? {
-        guard let link else { return nil }
-        let pdfString = link.absoluteString.replacingOccurrences(of: "/abs/", with: "/pdf/")
-        return URL(string: pdfString)
+        if let pdfURL { return pdfURL }
+        guard let link, link.absoluteString.contains("/abs/") else { return nil }
+        return URL(string: link.absoluteString.replacingOccurrences(of: "/abs/", with: "/pdf/"))
+    }
+}
+
+// Da dove arrivano i risultati.
+//
+// Google Scholar NON ha un'API pubblica e blocca attivamente le ricerche
+// automatiche (CAPTCHA dopo poche chiamate): interrogarlo dall'app non è
+// una cosa che si può far funzionare in modo affidabile, né lecitamente.
+// Il suo equivalente aperto è OpenAlex — stesso indice di riviste,
+// conferenze e citazioni, gratuito e senza chiave, quindi in linea col
+// vincolo che i costi non scalino sullo sviluppatore. Scholar resta
+// raggiungibile come rimando al browser (vedi `scholarWebURL`).
+enum PaperSource: String, CaseIterable, Identifiable {
+    case arxiv, openAlex
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .arxiv: "arXiv"
+        case .openAlex: "Riviste"
+        }
+    }
+
+    var placeholder: String {
+        switch self {
+        case .arxiv: "Cerca su arXiv (es. neural networks)"
+        case .openAlex: "Cerca tra riviste e conferenze (OpenAlex)"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .arxiv: "Preprint di fisica, matematica e informatica. PDF sempre scaricabile."
+        case .openAlex: "OpenAlex: articoli di riviste e conferenze, come su Scholar. Il PDF si scarica solo se ad accesso aperto."
+        }
     }
 }
 
 @Observable
-final class ArxivSearchModel {
+final class PaperSearchModel {
+    var source: PaperSource = .arxiv
     var query = ""
-    var results: [ArxivPaper] = []
+    var results: [ResearchPaper] = []
     var isSearching = false
     var errorMessage: String?
+
+    // Query aperta su Google Scholar nel browser: l'app non lo interroga
+    // (non si può), ma la ricerca già scritta non va ribattuta a mano.
+    var scholarWebURL: URL? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+        return URL(string: "https://scholar.google.com/scholar?q=\(encoded)")
+    }
 
     func search() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return }
-        guard let url = URL(string: "https://export.arxiv.org/api/query?search_query=all:\(encoded)&max_results=20") else { return }
 
         isSearching = true
         errorMessage = nil
         defer { isSearching = false }
 
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            results = ArxivFeedParser.parse(data)
-            if results.isEmpty { errorMessage = "Nessun risultato." }
-        } catch {
-            errorMessage = "Ricerca non riuscita. Controlla la connessione."
+        switch source {
+        case .arxiv:
+            guard let url = URL(string: "https://export.arxiv.org/api/query?search_query=all:\(encoded)&max_results=20") else { return }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                results = ArxivFeedParser.parse(data)
+                if results.isEmpty { errorMessage = "Nessun risultato." }
+            } catch {
+                errorMessage = "Ricerca non riuscita. Controlla la connessione."
+            }
+        case .openAlex:
+            guard let url = URL(string: "https://api.openalex.org/works?search=\(encoded)&per_page=20") else { return }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                results = OpenAlexResponse.papers(from: data)
+                if results.isEmpty { errorMessage = "Nessun risultato." }
+            } catch {
+                errorMessage = "Ricerca non riuscita. Controlla la connessione."
+            }
+        }
+    }
+}
+
+// Risposta di OpenAlex, ridotta ai campi che servono a una riga di
+// risultato: titolo, autori, anno, rivista, scheda e — solo per
+// l'accesso aperto — il PDF.
+private struct OpenAlexResponse: Decodable {
+    var results: [Work]
+
+    struct Work: Decodable {
+        var display_name: String?
+        var publication_year: Int?
+        var doi: String?
+        var authorships: [Authorship]?
+        var primary_location: Location?
+        var best_oa_location: Location?
+        var open_access: OpenAccess?
+    }
+
+    struct Authorship: Decodable {
+        var author: Author?
+        struct Author: Decodable { var display_name: String? }
+    }
+
+    struct Location: Decodable {
+        var pdf_url: String?
+        var landing_page_url: String?
+        var source: Source?
+        struct Source: Decodable { var display_name: String? }
+    }
+
+    struct OpenAccess: Decodable {
+        var oa_url: String?
+    }
+
+    static func papers(from data: Data) -> [ResearchPaper] {
+        guard let decoded = try? JSONDecoder().decode(OpenAlexResponse.self, from: data) else { return [] }
+        return decoded.results.compactMap { work in
+            guard let title = work.display_name?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { return nil }
+            // Sottotitolo alla Scholar: primi autori, anno, rivista.
+            let names = (work.authorships ?? []).compactMap { $0.author?.display_name }
+            var parts: [String] = []
+            if !names.isEmpty {
+                parts.append(names.prefix(4).joined(separator: ", ") + (names.count > 4 ? " et al." : ""))
+            }
+            if let year = work.publication_year { parts.append(String(year)) }
+            if let venue = work.primary_location?.source?.display_name { parts.append(venue) }
+
+            let landing = work.doi
+                ?? work.primary_location?.landing_page_url
+                ?? work.best_oa_location?.landing_page_url
+            let pdf = work.best_oa_location?.pdf_url
+                ?? work.primary_location?.pdf_url
+                ?? work.open_access?.oa_url
+
+            // Un oa_url può puntare alla pagina dell'editore invece che al
+            // file: lo si offre come PDF solo se lo è davvero, altrimenti
+            // l'import si porterebbe dentro una pagina HTML.
+            let pdfURL: URL? = {
+                guard let pdf, pdf.lowercased().contains("pdf") else { return nil }
+                return URL(string: pdf)
+            }()
+
+            return ResearchPaper(
+                title: title,
+                authors: parts.joined(separator: " · "),
+                summary: "",
+                link: landing.flatMap(URL.init),
+                pdfURL: pdfURL
+            )
         }
     }
 }
@@ -51,13 +183,12 @@ struct RecentPaper: Codable, Identifiable, Equatable {
     var authors: String
     var link: URL?
     var viewedAt: Date
+    // Assente nelle voci salvate prima delle fonti non-arXiv: manca la
+    // chiave e si decodifica a nil, che è esattamente il vecchio
+    // comportamento (PDF ricavato dall'URL della scheda).
+    var pdfURL: URL?
 
     var id: String { link?.absoluteString ?? title }
-
-    var pdfLink: URL? {
-        guard let link else { return nil }
-        return URL(string: link.absoluteString.replacingOccurrences(of: "/abs/", with: "/pdf/"))
-    }
 }
 
 enum RecentPapersStore {
@@ -71,8 +202,8 @@ enum RecentPapersStore {
     }
 
     // In testa, senza duplicati (rivedere un paper lo riporta su).
-    static func record(_ paper: ArxivPaper) -> [RecentPaper] {
-        let entry = RecentPaper(title: paper.title, authors: paper.authors, link: paper.link, viewedAt: .now)
+    static func record(_ paper: ResearchPaper) -> [RecentPaper] {
+        let entry = RecentPaper(title: paper.title, authors: paper.authors, link: paper.link, viewedAt: .now, pdfURL: paper.pdfURL)
         var list = load().filter { $0.id != entry.id }
         list.insert(entry, at: 0)
         list = Array(list.prefix(maxCount))
@@ -102,8 +233,8 @@ enum PinnedPapersStore {
         return list
     }
 
-    static func toggle(_ paper: ArxivPaper) -> [RecentPaper] {
-        let entry = RecentPaper(title: paper.title, authors: paper.authors, link: paper.link, viewedAt: .now)
+    static func toggle(_ paper: ResearchPaper) -> [RecentPaper] {
+        let entry = RecentPaper(title: paper.title, authors: paper.authors, link: paper.link, viewedAt: .now, pdfURL: paper.pdfURL)
         var list = load()
         if list.contains(where: { $0.id == entry.id }) {
             list.removeAll { $0.id == entry.id }
@@ -121,12 +252,12 @@ enum PinnedPapersStore {
 // Layout dal mock ResearchScreen.jsx del design system: colonna centrata
 // (max 640), righe con tile icona 36×36 e separatori sottili.
 struct ResearchContentView: View {
-    @Bindable var model: ArxivSearchModel
+    @Bindable var model: PaperSearchModel
     var onImported: (Note) -> Void = { _ in }
     @Environment(\.modelContext) private var context
     @Environment(\.openURL) private var openURL
 
-    @State private var pendingPaper: ArxivPaper?
+    @State private var pendingPaper: ResearchPaper?
     // Presentazione separata dai dati: vedi nota in WebeepEnvironmentView —
     // il Binding calcolato azzerava pendingPaper prima che il Task lo leggesse.
     @State private var showingImportChoice = false
@@ -139,6 +270,7 @@ struct ResearchContentView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
+                sourcePicker
                 searchField
 
                 if let errorMessage = model.errorMessage {
@@ -192,12 +324,55 @@ struct ResearchContentView: View {
 
     // MARK: - Sottoviste
 
+    // Due fonti, stessa ricerca: arXiv per i preprint, OpenAlex per gli
+    // articoli di rivista. Cambiando fonte con una ricerca già scritta la
+    // si rifà da sola, altrimenti si resterebbe a guardare i risultati
+    // della fonte precedente credendoli della nuova.
+    private var sourcePicker: some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s2) {
+            Picker("Fonte", selection: $model.source) {
+                ForEach(PaperSource.allCases) { source in
+                    Text(source.label).tag(source)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: model.source) {
+                model.results = []
+                model.errorMessage = nil
+                if !model.query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Task { await model.search() }
+                }
+            }
+
+            HStack(alignment: .top, spacing: DesignSpace.s2) {
+                Text(model.source.hint)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignColor.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                // Google Scholar non ha un'API e blocca le ricerche
+                // automatiche: quello che si può fare — e che serve
+                // davvero — è portarci la query già scritta.
+                if let scholarURL = model.scholarWebURL {
+                    Button {
+                        openURL(scholarURL)
+                    } label: {
+                        Label("Scholar", systemImage: "arrow.up.right.square")
+                    }
+                    .buttonStyle(PaperActionStyle())
+                    .accessibilityLabel("Apri questa ricerca su Google Scholar")
+                }
+            }
+            .padding(.horizontal, DesignSpace.s1)
+        }
+    }
+
     private var searchField: some View {
         HStack(spacing: DesignSpace.s2) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(DesignColor.textTertiary)
-            TextField("Cerca su arXiv (es. neural networks)", text: $model.query)
+            TextField(model.source.placeholder, text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .submitLabel(.search)
@@ -258,7 +433,7 @@ struct ResearchContentView: View {
             sectionHeader("Fissati")
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(pinned) { entry in
-                    paperRow(for: entry.asArxivPaper, tileIcon: "pin")
+                    paperRow(for: entry.asPaper, tileIcon: "pin")
                     if entry.id != pinned.last?.id {
                         Divider().overlay(DesignColor.borderSubtle)
                     }
@@ -282,7 +457,7 @@ struct ResearchContentView: View {
             }
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(visibleRecents) { recent in
-                    paperRow(for: recent.asArxivPaper, tileIcon: "clock")
+                    paperRow(for: recent.asPaper, tileIcon: "clock")
                     if recent.id != visibleRecents.last?.id {
                         Divider().overlay(DesignColor.borderSubtle)
                     }
@@ -293,7 +468,7 @@ struct ResearchContentView: View {
 
     // Riga unica per risultati, fissati e recenti: cambia solo l'icona del
     // tile, così pin/import/apri si comportano identici ovunque.
-    private func paperRow(for paper: ArxivPaper, tileIcon: String) -> some View {
+    private func paperRow(for paper: ResearchPaper, tileIcon: String) -> some View {
         let rowID = paper.link?.absoluteString ?? paper.title
         return PaperRow(
             title: paper.title,
@@ -301,13 +476,16 @@ struct ResearchContentView: View {
             tileIcon: tileIcon,
             isPinned: isPinned(id: rowID),
             canImport: paper.pdfLink != nil && !isImporting,
+            // Senza accesso aperto il PDF non esiste: si apre la scheda
+            // dell'editore, da cui si passa dalla biblioteca del Poli.
+            openLabel: paper.pdfLink != nil ? "Apri PDF" : "Apri scheda",
             onTogglePin: {
                 withAnimation(.snappy(duration: 0.2)) {
                     pinned = PinnedPapersStore.toggle(paper)
                 }
             },
-            onOpenPDF: paper.pdfLink.map { pdfLink in
-                { openPDF(pdfLink, recording: paper) }
+            onOpenPDF: (paper.pdfLink ?? paper.link).map { url in
+                { openPDF(url, recording: paper) }
             },
             onImport: {
                 pendingPaper = paper
@@ -321,7 +499,7 @@ struct ResearchContentView: View {
             Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 30, weight: .light))
                 .foregroundStyle(DesignColor.textTertiary)
-            Text("Cerca un paper su arXiv")
+            Text(model.source == .arxiv ? "Cerca un preprint su arXiv" : "Cerca un articolo tra riviste e conferenze")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(DesignColor.textSecondary)
             Text("I paper che apri o aggiungi a una nota compariranno qui, tra i visti di recente.")
@@ -342,7 +520,7 @@ struct ResearchContentView: View {
             .padding(.horizontal, DesignSpace.s1)
     }
 
-    private func openPDF(_ url: URL, recording paper: ArxivPaper) {
+    private func openPDF(_ url: URL, recording paper: ResearchPaper) {
         recents = RecentPapersStore.record(paper)
         openURL(url)
     }
@@ -382,10 +560,12 @@ struct ResearchContentView: View {
 }
 
 extension RecentPaper {
-    // Per riusare il flusso di import esistente (che lavora su ArxivPaper).
-    var asArxivPaper: ArxivPaper {
-        ArxivPaper(title: title, authors: authors, summary: "", link: link)
+    // Per riusare il flusso di import esistente (che lavora su ResearchPaper).
+    var asPaper: ResearchPaper {
+        ResearchPaper(title: title, authors: authors, summary: "", link: link, pdfURL: pdfURL)
     }
+
+    var pdfLink: URL? { asPaper.pdfLink }
 }
 
 // Riga paper dal mock: tile icona 36×36 su surfaceSunken, titolo 14
@@ -396,6 +576,7 @@ private struct PaperRow: View {
     var tileIcon: String
     var isPinned: Bool
     var canImport: Bool
+    var openLabel: String = "Apri PDF"
     var onTogglePin: () -> Void
     var onOpenPDF: (() -> Void)?
     var onImport: () -> Void
@@ -426,7 +607,7 @@ private struct PaperRow: View {
                 HStack(spacing: DesignSpace.s2) {
                     if let onOpenPDF {
                         Button(action: onOpenPDF) {
-                            Label("Apri PDF", systemImage: "arrow.up.right.square")
+                            Label(openLabel, systemImage: "arrow.up.right.square")
                         }
                         .buttonStyle(PaperActionStyle())
                     }
@@ -512,7 +693,7 @@ private struct ResearchNotePickerSheet: View {
 
 // Parsing minimale del feed Atom restituito dall'API di arXiv.
 private enum ArxivFeedParser {
-    static func parse(_ data: Data) -> [ArxivPaper] {
+    static func parse(_ data: Data) -> [ResearchPaper] {
         let delegate = Delegate()
         let parser = XMLParser(data: data)
         parser.delegate = delegate
@@ -521,7 +702,7 @@ private enum ArxivFeedParser {
     }
 
     private final class Delegate: NSObject, XMLParserDelegate {
-        var papers: [ArxivPaper] = []
+        var papers: [ResearchPaper] = []
         private var currentElement = ""
         private var title = ""
         private var summary = ""
@@ -554,7 +735,7 @@ private enum ArxivFeedParser {
             if elementName == "entry" {
                 let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 let cleanAuthors = authors.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: ", ")
-                papers.append(ArxivPaper(
+                papers.append(ResearchPaper(
                     title: cleanTitle,
                     authors: cleanAuthors,
                     summary: summary.trimmingCharacters(in: .whitespacesAndNewlines),

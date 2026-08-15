@@ -53,7 +53,7 @@ struct ProfileView: View {
                 aiSection
                 wolframSection
                 anthropicSection
-                scritturaSection
+                developmentSection
                 aboutSection
             }
             .padding(DesignSpace.s6)
@@ -145,34 +145,63 @@ struct ProfileView: View {
         }
     }
 
-    // Taratura della penna: valori di default scelti a mano su iPad
-    // (2026-08-14). I cursori stanno su una pagina propria (il Profilo è
-    // dentro un NavigationStack): qui solo la voce che ci porta.
-    private var scritturaSection: some View {
-        NavigationLink {
-            PenTuningPage()
-        } label: {
-            sectionCard(title: "Scrittura") {
-                HStack(spacing: DesignSpace.s3) {
-                    Image(systemName: "pencil.tip")
-                        .font(.system(size: 18))
-                        .foregroundStyle(DesignColor.brandPrimary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Taratura della penna")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(DesignColor.textPrimary)
-                        Text("Pressione, fluidità del tratto")
-                            .font(.system(size: 12))
-                            .foregroundStyle(DesignColor.textTertiary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(DesignColor.textTertiary)
+    // "Sviluppo": le manopole che si toccano di rado e che vanno capite
+    // prima di girarle (curva della penna, quota dei modelli). Stavano
+    // sparse tra le altre sezioni e sembravano impostazioni quotidiane;
+    // raccolte qui restano raggiungibili senza stare in mezzo.
+    private var developmentSection: some View {
+        sectionCard(title: "Sviluppo") {
+            VStack(spacing: DesignSpace.s3) {
+                NavigationLink {
+                    PenTuningPage()
+                } label: {
+                    settingsRow(
+                        icon: "pencil.tip",
+                        title: "Taratura della penna",
+                        subtitle: "Pressione, fluidità del tratto"
+                    )
                 }
+                .buttonStyle(.plain)
+
+                Divider()
+
+                NavigationLink {
+                    MaterialReadingPage(
+                        readingTierRaw: $readingTierRaw,
+                        generationTierRaw: $generationTierRaw
+                    )
+                } label: {
+                    settingsRow(
+                        icon: "text.viewfinder",
+                        title: "Lettura dei materiali",
+                        subtitle: "Quota Gemini: modelli Lite o Flash"
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func settingsRow(icon: String, title: String, subtitle: String) -> some View {
+        HStack(spacing: DesignSpace.s3) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundStyle(DesignColor.brandPrimary)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(DesignColor.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignColor.textTertiary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DesignColor.textTertiary)
+        }
+        .contentShape(Rectangle())
     }
 
     private var syncSection: some View {
@@ -256,18 +285,12 @@ struct ProfileView: View {
                 if aiProviderRaw == AIProviderKind.gemini.rawValue {
                     Divider()
 
-                    // La scelta NON è "quanto è bravo" ma "quante chiamate
-                    // al giorno": sul piano gratuito il Flash pieno ne
-                    // concede ~20, il Lite ~500. Lettura e generazione
-                    // sono separate perché hanno profili opposti.
-                    modelTierPicker(for: .reading, selection: $readingTierRaw)
-                    modelTierPicker(for: .generation, selection: $generationTierRaw)
-
-                    Label("Se la quota di un modello finisce, l'app passa da sola all'altro.", systemImage: "arrow.triangle.2.circlepath")
+                    // La scelta di quale modello usare (quante chiamate al
+                    // giorno, non "quanto è bravo") vive in Sviluppo ›
+                    // Lettura dei materiali: qui basta la chiave.
+                    Label("Quale modello Gemini usare per lettura e generazione si sceglie in Sviluppo › Lettura dei materiali.", systemImage: "slider.horizontal.3")
                         .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.success)
-
-                    Divider()
+                        .foregroundStyle(DesignColor.textTertiary)
 
                     credentialEditor(
                         placeholder: "Chiave API Gemini",
@@ -341,29 +364,6 @@ struct ProfileView: View {
                 Label("Aggiungi chiave", systemImage: "plus.circle.fill")
             }
             .buttonStyle(.borderedProminent)
-        }
-    }
-
-    private func modelTierPicker(for purpose: AIPurpose, selection: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: DesignSpace.s2) {
-            Text(purpose.label.uppercased())
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(DesignColor.textTertiary)
-            Text(purpose.explanation)
-                .font(.system(size: 12))
-                .foregroundStyle(DesignColor.textTertiary)
-            Picker(purpose.label, selection: selection) {
-                ForEach(GeminiModelTier.allCases, id: \.rawValue) { tier in
-                    Text(tier.label).tag(tier.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            if let tier = GeminiModelTier(rawValue: selection.wrappedValue) {
-                Text(tier.hint)
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignColor.textTertiary)
-            }
         }
     }
 
@@ -454,6 +454,67 @@ private struct PenTuningPage: View {
         }
         .background(DesignColor.surfacePage)
         .navigationTitle("Scrittura")
+    }
+}
+
+// Pagina "Lettura dei materiali": quale modello Gemini usare per leggere
+// i materiali e per generare i contenuti. La scelta non è "quanto è
+// bravo" ma QUANTE chiamate al giorno concede il piano gratuito — il
+// Flash ne dà ~20, il Lite ~500 — quindi il contatore di consumo di oggi
+// sta sulla stessa pagina, altrimenti si sceglie alla cieca.
+private struct MaterialReadingPage: View {
+    @Binding var readingTierRaw: String
+    @Binding var generationTierRaw: String
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DesignSpace.s5) {
+                Text("Lettura e generazione sono separate perché hanno profili opposti: trascrivere pagine costa tante chiamate su un compito semplice, generare ne costa poche ma è lì che serve un modello capace.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesignColor.textTertiary)
+
+                modelTierPicker(for: .reading, selection: $readingTierRaw)
+                modelTierPicker(for: .generation, selection: $generationTierRaw)
+
+                Label("Se la quota di un modello finisce, l'app passa da sola all'altro.", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignColor.success)
+
+                Divider()
+
+                GeminiQuotaPanel()
+            }
+            .padding(DesignSpace.s5)
+            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+            .padding(DesignSpace.s6)
+            .frame(maxWidth: 560, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        .background(DesignColor.surfacePage)
+        .navigationTitle("Lettura dei materiali")
+    }
+
+    private func modelTierPicker(for purpose: AIPurpose, selection: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s2) {
+            Text(purpose.label.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(DesignColor.textTertiary)
+            Text(purpose.explanation)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignColor.textTertiary)
+            Picker(purpose.label, selection: selection) {
+                ForEach(GeminiModelTier.allCases, id: \.rawValue) { tier in
+                    Text(tier.label).tag(tier.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            if let tier = GeminiModelTier(rawValue: selection.wrappedValue) {
+                Text(tier.hint)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignColor.textTertiary)
+            }
+        }
     }
 }
 

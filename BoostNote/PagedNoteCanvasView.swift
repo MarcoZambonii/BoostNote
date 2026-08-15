@@ -1383,7 +1383,12 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
     // pagata col canvas): ogni commit passa da qui, che salva, fa
     // crescere le pagine se serve e registra l'annullamento con il
     // ripristino annidato.
-    let inkUndoManager = UndoManager()
+    //
+    // È lo STESSO manager del DrawingController (glielo assegna
+    // PagedNoteCanvasView appena creato il contenitore): testo, immagini
+    // e pagine si registrano lì, e una cronologia sola tiene l'ordine
+    // vero delle modifiche invece di due pile che si ignorano.
+    var inkUndoManager = UndoManager()
     // Impostati dal coordinatore: portano il dato a SwiftData e chiedono
     // pagine nuove quando si scrive vicino al fondo.
     var onPageDataChanged: ((Int, Data) -> Void)?
@@ -1597,6 +1602,9 @@ struct PagedNoteCanvasView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PagedCanvasContainer {
         let container = PagedCanvasContainer(pageWidth: pageWidth)
+        // Prima di qualunque commit: da qui in poi i tratti si registrano
+        // nella cronologia del documento, insieme a testo e immagini.
+        container.inkUndoManager = controller.history
         if initialPage > 0 {
             container.pendingInitialPage = initialPage
         }

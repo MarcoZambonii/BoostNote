@@ -13,14 +13,78 @@ final class DrawingController: ObservableObject {
     fileprivate weak var canvasView: InfiniteCanvasView?
     weak var pagedContainer: PagedCanvasContainer?
 
+    // Cronologia UNICA del documento (note a pagine): inchiostro,
+    // caselle di testo, immagini e formule, pagine importate finiscono
+    // tutte qui, in ordine di tempo. Prima l'annullamento conosceva solo
+    // i tratti: cancellare un'immagine o spostare una casella era
+    // definitivo, e la freccia indietro tornava all'ultimo tratto come se
+    // in mezzo non fosse successo niente.
+    //
+    // Il contenitore delle pagine usa QUESTO manager per i propri commit
+    // (glielo passa PagedNoteCanvasView), così l'ordine è uno solo.
+    // La lavagna infinita resta su PencilKit e sul suo undo manager.
+    let history = UndoManager()
+
+    // Specchio per la barra: le frecce si spengono quando non c'è niente
+    // da annullare, invece di offrire un gesto che non farebbe nulla.
+    @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
+
+    private var historyObservers: [NSObjectProtocol] = []
+
+    init() {
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            .NSUndoManagerCheckpoint,
+            .NSUndoManagerDidUndoChange,
+            .NSUndoManagerDidRedoChange,
+            .NSUndoManagerDidCloseUndoGroup
+        ]
+        historyObservers = names.map { name in
+            // Consegna asincrona sulla coda principale: le registrazioni
+            // avvengono in mezzo al tocco, e scrivere una @Published lì
+            // vorrebbe dire cambiare stato durante un aggiornamento di
+            // vista.
+            center.addObserver(forName: name, object: history, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                if canUndo != history.canUndo { canUndo = history.canUndo }
+                if canRedo != history.canRedo { canRedo = history.canRedo }
+            }
+        }
+    }
+
+    deinit {
+        historyObservers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    // MARK: - Registrazione delle modifiche non-inchiostro
+    //
+    // Un'azione GIÀ eseguita, con come disfarla e come rifarla. Il
+    // ripristino si registra dentro l'annullamento (e viceversa): è lo
+    // stesso schema annidato dei tratti, l'unico che dà anche il "ripeti".
+
+    func record(_ name: String, undo undoBlock: @escaping () -> Void, redo redoBlock: @escaping () -> Void) {
+        guard pagedContainer != nil else { return }
+        history.registerUndo(withTarget: self) { controller in
+            undoBlock()
+            controller.record(name, undo: redoBlock, redo: undoBlock)
+        }
+        history.setActionName(name)
+    }
+
+    // Modifica di un valore (posizione di una casella, elenco delle
+    // caselle, misure di un'immagine): basta l'"prima" e il "dopo".
+    func recordChange<Value>(_ name: String, from previous: Value, to current: Value, apply: @escaping (Value) -> Void) {
+        record(name, undo: { apply(previous) }, redo: { apply(current) })
+    }
 
     func undo() {
-        if let pagedContainer { pagedContainer.undo(); return }
+        if pagedContainer != nil { history.undo(); return }
         canvasView?.undoManager?.undo()
     }
 
     func redo() {
-        if let pagedContainer { pagedContainer.redo(); return }
+        if pagedContainer != nil { history.redo(); return }
         canvasView?.undoManager?.redo()
     }
 
