@@ -1,22 +1,30 @@
 import SwiftUI
 import SwiftData
+import PencilKit
 import UniformTypeIdentifiers
 
-// Schermata Home: saluto, azioni rapide (nuova nota / cartella / importa
-// PDF) e griglia delle note recenti — landing dell'ambiente "Note".
+// Schermata Home, sul modello del mock dell'utente (2026-08-16):
+// saluto + azioni compatte in alto a destra (Nota / Cartella / PDF),
+// "Riprendi da dove eri" con le ultime note (miniatura vera, cartella
+// colorata, tempo relativo) e "Da ripassare" — i ponti verso lo Studio:
+// le flashcard pronte e gli esercizi sbagliati di recente.
 struct HomeView: View {
     @Environment(\.modelContext) private var context
     @AppStorage("profileName") private var profileName = ""
     @Binding var selectedNote: Note?
+    // Ponti verso lo Studio: la Home non possiede quella navigazione,
+    // la chiede alla radice.
+    var onOpenStudyModule: (Study, StudyModule) -> Void = { _, _ in }
+    var onOpenProgress: () -> Void = {}
 
     @Query(sort: \Note.updatedAt, order: .reverse) private var allNotes: [Note]
-
-    @AppStorage("homeViewMode") private var viewModeRaw = FolderViewMode.grid.rawValue
-    private var viewMode: FolderViewMode { FolderViewMode(rawValue: viewModeRaw) ?? .grid }
+    @Query(sort: \Study.updatedAt, order: .reverse) private var studies: [Study]
+    @Query(sort: \ExerciseAttempt.date, order: .reverse) private var attempts: [ExerciseAttempt]
 
     @State private var showingNoteCreate = false
-    @State private var showingNewFolderSheet = false
     @State private var showingPDFImporter = false
+    @State private var showingNewFolderSheet = false
+    @State private var showingWebeepPDFPicker = false
 
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: .now)
@@ -28,71 +36,21 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignSpace.s8) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(greeting)
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(DesignColor.textPrimary)
-                        Image(systemName: "sparkles")
-                            .foregroundStyle(DesignColor.brandPrimary)
-                    }
-                    Text(Date.now.formatted(date: .long, time: .omitted))
-                        .font(.system(size: 14))
-                        .foregroundStyle(DesignColor.textTertiary)
-                }
-
-                HStack(spacing: DesignSpace.s4) {
-                    quickActionCard(title: "Nuova nota", subtitle: "Canvas vuoto", icon: "square.and.pencil", color: DesignColor.brandPrimary) {
-                        showingNoteCreate = true
-                    }
-                    quickActionCard(title: "Nuova cartella", subtitle: "Organizza", icon: "folder.badge.plus", color: DesignColor.success) {
-                        showingNewFolderSheet = true
-                    }
-                    quickActionCard(title: "Importa PDF", subtitle: "Come pagine su cui scrivere", icon: "doc.badge.plus", color: DesignColor.toolWolfram) {
-                        showingPDFImporter = true
-                    }
-                }
+                header
 
                 if !allNotes.isEmpty {
-                    VStack(alignment: .leading, spacing: DesignSpace.s3) {
-                        HStack {
-                            Text("RECENTI")
-                                .font(.system(size: 11, weight: .semibold))
-                                .tracking(0.6)
-                                .foregroundStyle(DesignColor.textTertiary)
-                            Spacer()
-                            viewModePicker
-                        }
+                    resumeSection
+                }
 
-                        switch viewMode {
-                        case .grid:
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: DesignSpace.s4)], spacing: DesignSpace.s4) {
-                                ForEach(allNotes.prefix(12)) { note in
-                                    Button {
-                                        selectedNote = note
-                                    } label: {
-                                        recentNoteCard(note)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        case .list:
-                            VStack(spacing: 1) {
-                                ForEach(allNotes.prefix(12)) { note in
-                                    Button {
-                                        selectedNote = note
-                                    } label: {
-                                        recentNoteListRow(note)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
-                        }
-                    }
+                reviewSection
+
+                if allNotes.isEmpty {
+                    emptyState
                 }
             }
             .padding(DesignSpace.s6)
+            .frame(maxWidth: 900, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .background(DesignColor.surfacePage)
         .navigationTitle("")
@@ -106,8 +64,12 @@ struct HomeView: View {
                 guard case .new(let parent) = mode else { return }
                 let trimmed = name.trimmingCharacters(in: .whitespaces)
                 guard !trimmed.isEmpty else { return }
-                let folder = Folder(name: trimmed, parent: parent, color: color)
-                context.insert(folder)
+                context.insert(Folder(name: trimmed, parent: parent, color: color))
+            }
+        }
+        .sheet(isPresented: $showingWebeepPDFPicker) {
+            WebeepFilePickerSheet { data, name in
+                importPDFNote(data: data, title: (name as NSString).deletingPathExtension)
             }
         }
         .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf]) { result in
@@ -115,112 +77,348 @@ struct HomeView: View {
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else { return }
-            let title = url.deletingPathExtension().lastPathComponent
-            let note = Note(title: title.isEmpty ? "Nuova nota" : title, folder: nil)
-            context.insert(note)
-            note.appendPages(fromPDF: data, in: context)
-            selectedNote = note
+            importPDFNote(data: data, title: url.deletingPathExtension().lastPathComponent)
         }
     }
 
-    private var viewModePicker: some View {
-        HStack(spacing: 2) {
-            ForEach([FolderViewMode.grid, .list], id: \.self) { mode in
-                Button {
-                    viewModeRaw = mode.rawValue
+    // Una nota nuova con il PDF come pagine, qualunque sia la fonte.
+    private func importPDFNote(data: Data, title: String) {
+        let note = Note(title: title.isEmpty ? "Nuova nota" : title, folder: nil)
+        context.insert(note)
+        note.appendPages(fromPDF: data, in: context)
+        selectedNote = note
+    }
+
+    // MARK: - Testata
+
+    // Saluto a sinistra, azioni COMPATTE a destra: le tre card grandi
+    // spingevano in basso il contenuto vero (le note e i ripassi).
+    private var header: some View {
+        HStack(alignment: .top, spacing: DesignSpace.s4) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(greeting)
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(DesignColor.textPrimary)
+                Text(Date.now.formatted(date: .long, time: .omitted))
+                    .font(.system(size: 14))
+                    .foregroundStyle(DesignColor.textTertiary)
+            }
+            Spacer(minLength: 0)
+            // Design system dei colori (2026-08-16): UNA sola azione
+            // blu per schermata — è quella che il blu deve indicare.
+            // Le organizzative (cartella, import) sono neutre bordate.
+            HStack(spacing: DesignSpace.s2) {
+                headerAction(title: "Nuova nota", icon: "square.and.pencil", tint: DesignColor.brandPrimary) { showingNoteCreate = true }
+                headerAction(title: "Nuova cartella", icon: "folder.badge.plus", tint: nil) { showingNewFolderSheet = true }
+                // Il PDF entra da TUTTE le fonti dell'app, non solo dai
+                // file: stesso paio di porte del Vault e dello Studio.
+                Menu {
+                    Button {
+                        showingPDFImporter = true
+                    } label: {
+                        Label("Dai file", systemImage: "folder")
+                    }
+                    Button {
+                        showingWebeepPDFPicker = true
+                    } label: {
+                        Label("Da WeBeep", systemImage: "graduationcap")
+                    }
                 } label: {
-                    Image(systemName: mode.systemImage)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(viewMode == mode ? DesignColor.brandPrimary : DesignColor.textTertiary)
-                        .frame(width: 30, height: 30)
-                        .background(
-                            viewMode == mode ? DesignColor.brandPrimarySubtle : Color.clear,
-                            in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
-                        )
+                    headerActionLabel(title: "Importa PDF", icon: "doc.badge.plus", tint: nil)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(2)
-        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
     }
 
-    @ViewBuilder
-    private func recentNoteListRow(_ note: Note) -> some View {
-        HStack(spacing: DesignSpace.s3) {
-            Image(systemName: "note.text")
-                .font(.system(size: 15))
-                .foregroundStyle(DesignColor.textSecondary)
-                .frame(width: 22)
-            Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(DesignColor.textPrimary)
-            if let folder = note.folder {
-                Label(folder.name, systemImage: "folder")
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignColor.textTertiary)
-            }
-            Spacer()
-            Text(note.updatedAt.formatted(date: .abbreviated, time: .omitted))
-                .font(.system(size: 12))
-                .foregroundStyle(DesignColor.textTertiary)
-        }
-        .padding(.horizontal, DesignSpace.s3 + 2)
-        .padding(.vertical, DesignSpace.s3)
-        .contentShape(Rectangle())
-    }
-
-    @ViewBuilder
-    private func quickActionCard(title: String, subtitle: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+    // Stesso vestito dei pulsanti della testata Studio ("Nuovo Vault").
+    // tint nil = azione secondaria: neutra, col bordo — presente ma non
+    // protagonista (il blu resta l'unica guida della schermata).
+    private func headerAction(title: String, icon: String, tint: Color?, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: DesignSpace.s3) {
-                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                    .fill(color.opacity(0.12))
-                    .frame(width: 36, height: 36)
-                    .overlay(Image(systemName: icon).font(.system(size: 16, weight: .medium)).foregroundStyle(color))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(DesignColor.textPrimary)
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.textTertiary)
-                }
-            }
-            .padding(DesignSpace.s4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+            headerActionLabel(title: title, icon: icon, tint: tint)
         }
         .buttonStyle(.plain)
     }
 
     @ViewBuilder
-    private func recentNoteCard(_ note: Note) -> some View {
-        VStack(alignment: .leading, spacing: DesignSpace.s2) {
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
-                    .fill(Color.white)
-                VStack(alignment: .leading, spacing: 6) {
+    private func headerActionLabel(title: String, icon: String, tint: Color?) -> some View {
+        let label = Label(title, systemImage: icon)
+            .font(.system(size: 13, weight: .semibold))
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s2)
+        if let tint {
+            label
+                .foregroundStyle(tint)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+        } else {
+            label
+                .foregroundStyle(DesignColor.textPrimary)
+                .background(
+                    RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                        .strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+                )
+        }
+    }
+
+    // MARK: - Riprendi da dove eri
+
+    private var resumeSection: some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s3) {
+            Text("RIPRENDI DA DOVE ERI")
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(DesignColor.textTertiary)
+
+            VStack(spacing: 0) {
+                ForEach(Array(allNotes.prefix(4).enumerated()), id: \.element.persistentModelID) { index, note in
+                    Button {
+                        selectedNote = note
+                    } label: {
+                        resumeRow(note)
+                    }
+                    .buttonStyle(.plain)
+                    if index < min(allNotes.count, 4) - 1 {
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+
+    private func resumeRow(_ note: Note) -> some View {
+        HStack(spacing: DesignSpace.s4) {
+            NoteThumbnail(note: note)
+                .frame(width: 64, height: 64)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(note.title.isEmpty ? "Senza titolo" : note.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(DesignColor.textPrimary)
+                    .lineLimit(1)
+                HStack(spacing: DesignSpace.s2) {
+                    if let folder = note.folder {
+                        folderChip(folder)
+                    }
+                    Text(relativeTime(note.updatedAt))
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DesignColor.textTertiary)
+        }
+        .padding(.vertical, DesignSpace.s3)
+        .contentShape(Rectangle())
+    }
+
+    private func folderChip(_ folder: Folder) -> some View {
+        HStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                .fill(folder.folderColor.color)
+                .frame(width: 9, height: 9)
+            Text(folder.name)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(folder.folderColor.color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(folder.folderColor.color.opacity(0.12), in: Capsule())
+    }
+
+    private func relativeTime(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "it_IT")
+        formatter.unitsStyle = .short
+        // "Modificata ieri" suona da persona; "modificata 2 gg fa" da log.
+        // Il formatter di sistema fa già il lavoro giusto.
+        return formatter.localizedString(for: date, relativeTo: .now)
+    }
+
+    // MARK: - Da ripassare
+
+    // I ponti verso lo Studio, mostrati SOLO quando i dati esistono
+    // davvero: niente card finte con numeri inventati.
+    private var flashcardSuggestion: (study: Study, module: StudyModule, count: Int)? {
+        for study in studies {
+            for module in study.sortedModules where module.kind == .flashcards && module.status == .ready {
+                let count = module.decodeContent(FlashcardsContent.self)?.cards.count ?? 0
+                if count > 0 { return (study, module, count) }
+            }
+        }
+        return nil
+    }
+
+    private var recentWrongCount: Int {
+        let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: .now) ?? .now
+        return attempts.prefix(while: { $0.date >= weekAgo }).filter { !$0.isCorrect }.count
+    }
+
+    @ViewBuilder
+    private var reviewSection: some View {
+        let flashcards = flashcardSuggestion
+        let wrong = recentWrongCount
+        if flashcards != nil || wrong > 0 {
+            VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                Text("DA RIPASSARE")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(DesignColor.textTertiary)
+
+                if let flashcards {
+                    reviewCard(
+                        icon: "rectangle.on.rectangle",
+                        tint: DesignColor.review,
+                        title: "\(flashcards.count) carte da rivedere",
+                        subtitle: flashcards.study.name,
+                        buttonLabel: "Ripassa"
+                    ) {
+                        onOpenStudyModule(flashcards.study, flashcards.module)
+                    }
+                }
+
+                if wrong > 0 {
+                    reviewCard(
+                        icon: "pencil.line",
+                        tint: DesignColor.attention,
+                        title: "\(wrong) esercizi sbagliati di recente",
+                        subtitle: "riprova sugli argomenti deboli degli ultimi 7 giorni",
+                        buttonLabel: "Riprova"
+                    ) {
+                        onOpenProgress()
+                    }
+                }
+            }
+        }
+    }
+
+    private func reviewCard(icon: String, tint: Color, title: String, subtitle: String, buttonLabel: String, action: @escaping () -> Void) -> some View {
+        HStack(spacing: DesignSpace.s4) {
+            RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                .fill(tint.opacity(0.12))
+                .frame(width: 44, height: 44)
+                .overlay(
+                    Image(systemName: icon)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(tint)
+                )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(DesignColor.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignColor.textTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: DesignSpace.s3)
+            Button(action: action) {
+                HStack(spacing: 4) {
+                    Text(buttonLabel)
+                        .font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundStyle(tint)
+                .padding(.horizontal, DesignSpace.s4)
+                .padding(.vertical, DesignSpace.s2 + 2)
+                .background(tint.opacity(0.12), in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(DesignSpace.s4)
+        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: DesignSpace.s3) {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 34))
+                .foregroundStyle(DesignColor.textTertiary)
+            Text("Ancora nessuna nota")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(DesignColor.textPrimary)
+            Text("Crea una nota o importa un PDF su cui scrivere: i pulsanti sono qui sopra.")
+                .font(.system(size: 13))
+                .foregroundStyle(DesignColor.textTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DesignSpace.s8)
+    }
+}
+
+// Miniatura VERA della prima pagina della nota: l'inchiostro composto su
+// bianco, in piccolo. Il mock la mostrava, e ha ragione: si riconosce la
+// propria calligrafia prima ancora di leggere il titolo. Il rendering è
+// fuori dal main thread e parte solo quando la riga appare.
+private struct NoteThumbnail: View {
+    let note: Note
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                .fill(Color.white)
+            if let image {
+                // Color.clear.overlay + clipped: scaledToFill da solo
+                // SBORDA dal riquadro (l'inchiostro finiva sopra la
+                // lista) — l'overlay lo costringe nei 64 punti proposti.
+                Color.clear
+                    .overlay(
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    )
+                    .clipped()
+            } else {
+                // Segnaposto: righe di quaderno, come le card di prima.
+                VStack(spacing: 7) {
                     ForEach(0..<4, id: \.self) { _ in
                         Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
                     }
                 }
-                .padding(10)
-            }
-            .frame(height: 90)
-            .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm).stroke(DesignColor.borderDefault))
-
-            Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DesignColor.textPrimary)
-                .lineLimit(1)
-            if let folder = note.folder {
-                Label(folder.name, systemImage: "folder")
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignColor.textTertiary)
+                .padding(9)
             }
         }
-        .padding(DesignSpace.s3)
-        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                .stroke(DesignColor.borderDefault, lineWidth: 1)
+        )
+        .task(id: note.updatedAt) {
+            image = await Self.render(note: note)
+        }
+    }
+
+    private static func render(note: Note) async -> UIImage? {
+        // Solo il disegno della prima pagina: è la firma visiva della
+        // nota, e tenere leggera questa miniatura conta più della
+        // completezza.
+        let data = note.pages.isEmpty
+            ? note.drawingData
+            : note.sortedPages.first?.drawingData
+        guard let data else { return nil }
+        return await Task.detached(priority: .utility) { () -> UIImage? in
+            guard let drawing = try? PKDrawing(data: data) else { return nil }
+            let bounds = drawing.bounds
+            guard bounds.width > 1, bounds.height > 1 else { return nil }
+            let side = max(bounds.width, bounds.height)
+            let scale = min(1, 256 / side)
+            let ink = drawing.image(from: bounds, scale: scale)
+            // Su bianco, come sul foglio: l'immagine di PencilKit ha lo
+            // sfondo trasparente (stessa trappola dell'OCR).
+            let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+            let renderer = UIGraphicsImageRenderer(size: size)
+            return renderer.image { context in
+                UIColor.white.setFill()
+                context.fill(CGRect(origin: .zero, size: size))
+                ink.draw(in: CGRect(origin: .zero, size: size))
+            }
+        }.value
     }
 }

@@ -604,13 +604,18 @@ enum AIService {
         // (checklist anti-allucinazione).
         var generationConfig: [String: Any] = [
             "temperature": 0.2,
-            "maxOutputTokens": purpose.maxOutputTokens,
-            "responseMimeType": "application/json"
+            "maxOutputTokens": purpose.maxOutputTokens
         ]
-        // responseSchema: la sintassi JSON la garantisce l'API (decoding
-        // vincolato), escape LaTeX compresi. Verificato 2026-08-15:
-        // 3-flash-preview senza schema produceva JSON rotto, con schema no.
+        // Il MIME JSON si imposta SOLO insieme allo schema. Prima era
+        // fisso su application/json per ogni chiamata testuale, anche
+        // quelle che chiedono prosa: il modello, costretto al JSON,
+        // inventava un involucro con chiavi sue ("Spiega" mostrava
+        // {"titolo": ...} crudo) e il doppio strato di escape maciullava
+        // i backslash del LaTeX (\in → in). Chi vuole JSON passa uno
+        // schema, e allora la sintassi la garantisce l'API (decoding
+        // vincolato, verificato 2026-08-15); chi vuole testo, riceve testo.
         if let schema {
+            generationConfig["responseMimeType"] = "application/json"
             generationConfig["responseSchema"] = schema
         }
         // thinkingConfig va DENTRO generationConfig. Il vecchio commento

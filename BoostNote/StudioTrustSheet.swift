@@ -132,7 +132,7 @@ struct StudioTrustSheet: View {
         VStack(alignment: .leading, spacing: DesignSpace.s2) {
             Label("Cosa non possiamo garantire", systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(DesignColor.toolWolfram)
+                .foregroundStyle(DesignColor.attention)
             Text("Questi controlli riducono molto gli errori, ma non li eliminano. Un modello può leggere male una formula, attribuire un enunciato alla sezione sbagliata o produrre una soluzione che sembra corretta e non lo è. Prima di un esame, considera i contenuti generati un aiuto al ripasso, non una fonte da citare: la fonte restano i tuoi materiali, che sono sempre a un tocco di distanza dalla citazione.")
                 .font(.system(size: 13))
                 .foregroundStyle(DesignColor.textSecondary)
@@ -144,7 +144,7 @@ struct StudioTrustSheet: View {
         }
         .padding(DesignSpace.s4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DesignColor.toolWolframBg, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
     }
 
     // Come vengono scelti i modelli: stessa regola del resto della

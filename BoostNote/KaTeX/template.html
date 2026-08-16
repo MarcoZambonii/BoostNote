@@ -59,6 +59,15 @@
      invece di far scorrere l'intera pagina. */
   .katex-display { margin: 0.6em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
   .katex { font-size: 1.05em; }
+  /* Formula che KaTeX non compila: sorgente leggibile, tono neutro —
+     mai più la colata di testo rosso. */
+  .math-broken {
+    display: inline-block;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    color: #6e6e73;
+  }
 
   @media (prefers-color-scheme: dark) {
     body { color: #f2f2f7; }
@@ -95,17 +104,51 @@
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // Una formula si accetta solo se KaTeX la compilerebbe davvero.
+  //
+  // Senza questo controllo, un $$ di chiusura perso accoppiava l'apertura
+  // con il $$ della formula SUCCESSIVA: tutto quello in mezzo — prosa e
+  // grassetti compresi — finiva a KaTeX come un'unica "formula", e
+  // throwOnError:false vomitava il sorgente in rosso su mezza card.
+  // Due filtri: uno strutturale (una formula vera non contiene righe
+  // vuote né ** di Markdown: se ci sono, lo span ha inghiottito prosa) e
+  // la compilazione di prova vera e propria.
+  function validFormula(raw) {
+    var display = false, inner = raw;
+    if (raw.slice(0, 2) === '$$' || raw.slice(0, 2) === '\\[') { display = true; inner = raw.slice(2, -2); }
+    else if (raw.slice(0, 2) === '\\(') { inner = raw.slice(2, -2); }
+    else if (raw.charAt(0) === '$') { inner = raw.slice(1, -1); }
+    else { display = true; }
+    if (/\n\s*\n/.test(inner) || inner.indexOf('**') !== -1) { return false; }
+    try {
+      katex.renderToString(inner, { displayMode: display, throwOnError: true, strict: false });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function markdownToHTML(markdown) {
     var formulas = [];
     var guarded = markdown.replace(MATH_PATTERN, function (match) {
-      formulas.push(match.charAt(0) === '\\' && match.charAt(1) === 'b' ? '$$' + match + '$$' : match);
+      var normalized = match.charAt(0) === '\\' && match.charAt(1) === 'b' ? '$$' + match + '$$' : match;
+      if (validFormula(normalized)) {
+        formulas.push({ text: normalized });
+      } else {
+        // Sorgente in un blocco di codice neutro: leggibile e onesto,
+        // al posto della colata rossa.
+        formulas.push({ html: '<code class="math-broken">' + escapeHTML(match) + '</code>' });
+      }
       return '@@MATH' + (formulas.length - 1) + '@@';
     });
     var html = marked.parse(guarded, { breaks: true, gfm: true });
-    // Rientrano come TESTO: auto-render legge il testo del nodo, quindi
-    // le entità tornano caratteri veri al momento della composizione.
+    // Le formule valide rientrano come TESTO: auto-render legge il testo
+    // del nodo, quindi le entità tornano caratteri veri al momento della
+    // composizione. Quelle rotte rientrano già come HTML pronto
+    // (auto-render ignora i tag <code>, quindi non le tocca).
     return html.replace(/@@MATH(\d+)@@/g, function (_, index) {
-      return escapeHTML(formulas[index]);
+      var formula = formulas[index];
+      return formula.html ? formula.html : escapeHTML(formula.text);
     });
   }
 
@@ -113,7 +156,13 @@
     var el = document.getElementById('content');
     try {
       if (mathOnly) {
-        katex.render(markdown, el, { throwOnError: false, displayMode: true });
+        // Stessa regola del percorso Markdown: se non compila, sorgente
+        // in codice neutro invece del rosso.
+        try {
+          katex.render(markdown, el, { throwOnError: true, displayMode: true, strict: false });
+        } catch (mathError) {
+          el.innerHTML = '<code class="math-broken">' + escapeHTML(markdown) + '</code>';
+        }
       } else {
         el.innerHTML = markdownToHTML(markdown);
         renderMathInElement(el, {

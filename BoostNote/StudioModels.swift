@@ -403,6 +403,22 @@ struct StudyModuleOptions: Codable {
     var theoreticalCountValue: Int?
     var practicalCountValue: Int?
 
+    // Argomenti scelti dall'indice del Vault. nil o vuoto = tutti quelli
+    // dei materiali scelti (comportamento di sempre). Servono a due cose
+    // insieme: restringere il campo per avere PROFONDITÀ invece di un
+    // esercizio a testa su trenta argomenti, e dare al modello un
+    // VOCABOLARIO CONTROLLATO per il campo "topic" — senza, ogni
+    // generazione se lo inventa con parole sue ("dualità in PL" vs
+    // "problema duale") e l'analisi dei progressi, che raggruppa per
+    // quella stringa, frantuma le statistiche dello stesso argomento.
+    // Opzionale per la stessa trappola Codable di qui sopra.
+    var selectedTopicsValue: [String]?
+
+    var selectedTopics: [String] {
+        get { selectedTopicsValue ?? [] }
+        set { selectedTopicsValue = newValue.isEmpty ? nil : newValue }
+    }
+
     var theoreticalCount: Int {
         get { theoreticalCountValue ?? 1 }
         set { theoreticalCountValue = newValue }

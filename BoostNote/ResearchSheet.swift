@@ -10,6 +10,9 @@ struct ResearchPaper: Identifiable {
     // PDF dichiarato dalla fonte (OpenAlex lo dà solo per l'accesso
     // aperto). Su arXiv non serve: si ricava dall'URL della scheda.
     var pdfURL: URL? = nil
+    // Da quale indice arriva: non è più una scelta dell'utente ma
+    // un'etichetta sul risultato.
+    var origin: PaperOrigin = .arxiv
 
     // arXiv usa uno schema di URL prevedibile: .../abs/XXXX -> .../pdf/XXXX
     var pdfLink: URL? {
@@ -19,7 +22,12 @@ struct ResearchPaper: Identifiable {
     }
 }
 
-// Da dove arrivano i risultati.
+// Da dove arriva un risultato. NON è più un selettore: una ricerca
+// interroga entrambi gli indici e mescola gli esiti, perché scegliere la
+// fonte prima di sapere cosa c'è era una decisione che l'utente non
+// aveva gli elementi per prendere. Resta come etichetta sulla riga, che
+// serve invece a leggere il risultato (un preprint non è un articolo
+// peer-reviewed).
 //
 // Google Scholar NON ha un'API pubblica e blocca attivamente le ricerche
 // automatiche (CAPTCHA dopo poche chiamate): interrogarlo dall'app non è
@@ -28,36 +36,33 @@ struct ResearchPaper: Identifiable {
 // conferenze e citazioni, gratuito e senza chiave, quindi in linea col
 // vincolo che i costi non scalino sullo sviluppatore. Scholar resta
 // raggiungibile come rimando al browser (vedi `scholarWebURL`).
-enum PaperSource: String, CaseIterable, Identifiable {
+enum PaperOrigin: String {
     case arxiv, openAlex
-
-    var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .arxiv: "arXiv"
-        case .openAlex: "Riviste"
+        case .arxiv: "Preprint"
+        case .openAlex: "Rivista"
         }
     }
 
-    var placeholder: String {
+    var tint: Color {
         switch self {
-        case .arxiv: "Cerca su arXiv (es. neural networks)"
-        case .openAlex: "Cerca tra riviste e conferenze (OpenAlex)"
+        case .arxiv: DesignColor.toolLatex
+        case .openAlex: DesignColor.toolExplain
         }
     }
 
-    var hint: String {
+    var tintBackground: Color {
         switch self {
-        case .arxiv: "Preprint di fisica, matematica e informatica. PDF sempre scaricabile."
-        case .openAlex: "OpenAlex: articoli di riviste e conferenze, come su Scholar. Il PDF si scarica solo se ad accesso aperto."
+        case .arxiv: DesignColor.toolLatexBg
+        case .openAlex: DesignColor.toolExplainBg
         }
     }
 }
 
 @Observable
 final class PaperSearchModel {
-    var source: PaperSource = .arxiv
     var query = ""
     var results: [ResearchPaper] = []
     var isSearching = false
@@ -72,6 +77,10 @@ final class PaperSearchModel {
         return URL(string: "https://scholar.google.com/scholar?q=\(encoded)")
     }
 
+    // Una ricerca, due indici interrogati INSIEME. Le due liste vengono
+    // poi alternate invece che accodate: ciascuna arriva già ordinata
+    // per pertinenza dalla sua API, e concatenarle seppellirebbe la
+    // seconda sotto venti risultati dell'altra.
     func search() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -81,26 +90,50 @@ final class PaperSearchModel {
         errorMessage = nil
         defer { isSearching = false }
 
-        switch source {
-        case .arxiv:
-            guard let url = URL(string: "https://export.arxiv.org/api/query?search_query=all:\(encoded)&max_results=20") else { return }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                results = ArxivFeedParser.parse(data)
-                if results.isEmpty { errorMessage = "Nessun risultato." }
-            } catch {
-                errorMessage = "Ricerca non riuscita. Controlla la connessione."
-            }
-        case .openAlex:
-            guard let url = URL(string: "https://api.openalex.org/works?search=\(encoded)&per_page=20") else { return }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                results = OpenAlexResponse.papers(from: data)
-                if results.isEmpty { errorMessage = "Nessun risultato." }
-            } catch {
-                errorMessage = "Ricerca non riuscita. Controlla la connessione."
+        async let arxiv = Self.fetchArxiv(encoded)
+        async let openAlex = Self.fetchOpenAlex(encoded)
+        let (preprints, journals) = await (arxiv, openAlex)
+
+        // Se una sola fonte cade, l'altra si mostra comunque: un indice
+        // irraggiungibile non deve azzerare una ricerca riuscita a metà.
+        results = Self.interleave(preprints ?? [], journals ?? [])
+        if results.isEmpty {
+            errorMessage = (preprints == nil && journals == nil)
+                ? "Ricerca non riuscita. Controlla la connessione."
+                : "Nessun risultato."
+        }
+    }
+
+    // nil = la fonte non ha risposto (rete, servizio giù); [] = ha
+    // risposto e non ha trovato nulla. La differenza serve al messaggio.
+    private static func fetchArxiv(_ encoded: String) async -> [ResearchPaper]? {
+        guard let url = URL(string: "https://export.arxiv.org/api/query?search_query=all:\(encoded)&max_results=20") else { return nil }
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        return ArxivFeedParser.parse(data)
+    }
+
+    private static func fetchOpenAlex(_ encoded: String) async -> [ResearchPaper]? {
+        guard let url = URL(string: "https://api.openalex.org/works?search=\(encoded)&per_page=20") else { return nil }
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        return OpenAlexResponse.papers(from: data)
+    }
+
+    private static func interleave(_ first: [ResearchPaper], _ second: [ResearchPaper]) -> [ResearchPaper] {
+        var merged: [ResearchPaper] = []
+        merged.reserveCapacity(first.count + second.count)
+        // Lo stesso lavoro può stare in entrambi gli indici (un preprint
+        // arXiv poi pubblicato): si tiene la prima occorrenza, che per
+        // costruzione è quella meglio posizionata.
+        var seenTitles: Set<String> = []
+        for index in 0..<max(first.count, second.count) {
+            for candidate in [first.dropFirst(index).first, second.dropFirst(index).first] {
+                guard let paper = candidate else { continue }
+                let key = paper.title.lowercased().filter { !$0.isWhitespace }
+                guard seenTitles.insert(key).inserted else { continue }
+                merged.append(paper)
             }
         }
+        return merged
     }
 }
 
@@ -169,7 +202,8 @@ private struct OpenAlexResponse: Decodable {
                 authors: parts.joined(separator: " · "),
                 summary: "",
                 link: landing.flatMap(URL.init),
-                pdfURL: pdfURL
+                pdfURL: pdfURL,
+                origin: .openAlex
             )
         }
     }
@@ -270,8 +304,8 @@ struct ResearchContentView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
-                sourcePicker
                 searchField
+                sourceNote
 
                 if let errorMessage = model.errorMessage {
                     Text(errorMessage)
@@ -324,47 +358,28 @@ struct ResearchContentView: View {
 
     // MARK: - Sottoviste
 
-    // Due fonti, stessa ricerca: arXiv per i preprint, OpenAlex per gli
-    // articoli di rivista. Cambiando fonte con una ricerca già scritta la
-    // si rifà da sola, altrimenti si resterebbe a guardare i risultati
-    // della fonte precedente credendoli della nuova.
-    private var sourcePicker: some View {
-        VStack(alignment: .leading, spacing: DesignSpace.s2) {
-            Picker("Fonte", selection: $model.source) {
-                ForEach(PaperSource.allCases) { source in
-                    Text(source.label).tag(source)
+    // Niente più selettore di fonte: la ricerca interroga entrambi gli
+    // indici e mescola. Qui resta la nota su cosa copre la ricerca e il
+    // rimando a Scholar, che l'app non può interrogare ma può aprire con
+    // la query già scritta.
+    private var sourceNote: some View {
+        HStack(alignment: .center, spacing: DesignSpace.s2) {
+            Text("Preprint (arXiv) e articoli di riviste e conferenze (OpenAlex), insieme.")
+                .font(.system(size: 11))
+                .foregroundStyle(DesignColor.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            if let scholarURL = model.scholarWebURL {
+                Button {
+                    openURL(scholarURL)
+                } label: {
+                    Label("Cerca su Scholar", systemImage: "arrow.up.right.square")
                 }
+                .buttonStyle(PaperActionStyle())
+                .accessibilityLabel("Apri questa ricerca su Google Scholar nel browser")
             }
-            .pickerStyle(.segmented)
-            .onChange(of: model.source) {
-                model.results = []
-                model.errorMessage = nil
-                if !model.query.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Task { await model.search() }
-                }
-            }
-
-            HStack(alignment: .top, spacing: DesignSpace.s2) {
-                Text(model.source.hint)
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignColor.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                // Google Scholar non ha un'API e blocca le ricerche
-                // automatiche: quello che si può fare — e che serve
-                // davvero — è portarci la query già scritta.
-                if let scholarURL = model.scholarWebURL {
-                    Button {
-                        openURL(scholarURL)
-                    } label: {
-                        Label("Scholar", systemImage: "arrow.up.right.square")
-                    }
-                    .buttonStyle(PaperActionStyle())
-                    .accessibilityLabel("Apri questa ricerca su Google Scholar")
-                }
-            }
-            .padding(.horizontal, DesignSpace.s1)
         }
+        .padding(.horizontal, DesignSpace.s1)
     }
 
     private var searchField: some View {
@@ -372,7 +387,7 @@ struct ResearchContentView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(DesignColor.textTertiary)
-            TextField(model.source.placeholder, text: $model.query)
+            TextField("Cerca un paper (es. neural networks)", text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .submitLabel(.search)
@@ -490,7 +505,8 @@ struct ResearchContentView: View {
             onImport: {
                 pendingPaper = paper
                 showingImportChoice = true
-            }
+            },
+            origin: paper.origin
         )
     }
 
@@ -499,7 +515,7 @@ struct ResearchContentView: View {
             Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 30, weight: .light))
                 .foregroundStyle(DesignColor.textTertiary)
-            Text(model.source == .arxiv ? "Cerca un preprint su arXiv" : "Cerca un articolo tra riviste e conferenze")
+            Text("Cerca preprint e articoli")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(DesignColor.textSecondary)
             Text("I paper che apri o aggiungi a una nota compariranno qui, tra i visti di recente.")
@@ -580,6 +596,9 @@ private struct PaperRow: View {
     var onTogglePin: () -> Void
     var onOpenPDF: (() -> Void)?
     var onImport: () -> Void
+    // nil per le righe di cronologia: la provenienza non viene salvata
+    // fra le voci recenti, e inventarla sarebbe peggio che ometterla.
+    var origin: PaperOrigin? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: DesignSpace.s3 + 2) {
@@ -597,11 +616,26 @@ private struct PaperRow: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(3)
-                if !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.textTertiary)
-                        .lineLimit(2)
+                HStack(spacing: DesignSpace.s2) {
+                    // Da quale indice arriva. Non è un dettaglio tecnico:
+                    // dice se stai guardando un preprint o un articolo
+                    // pubblicato, che è la prima cosa da sapere per
+                    // citarlo.
+                    if let origin {
+                        Text(origin.label.uppercased())
+                            .font(.system(size: 9, weight: .semibold))
+                            .tracking(0.4)
+                            .foregroundStyle(origin.tint)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(origin.tintBackground, in: Capsule())
+                    }
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesignColor.textTertiary)
+                            .lineLimit(2)
+                    }
                 }
 
                 HStack(spacing: DesignSpace.s2) {

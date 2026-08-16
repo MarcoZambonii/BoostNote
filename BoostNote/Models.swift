@@ -41,15 +41,21 @@ extension Folder {
 enum FolderColor: String, CaseIterable, Codable {
     case gray, blue, red, green, orange, purple, teal
 
+    // Tavolozza DEDICATA alle cartelle, più docile dei colori degli
+    // strumenti (richiesta utente 2026-08-16): prima riusava i token
+    // accesi dell'app — blu elettrico, arancio Wolfram — e nella barra
+    // laterale urlavano. Queste sono le stesse tinte, desaturate e
+    // scurite quel tanto che basta a reggere anche come colore del
+    // glifo su fondo chiaro. Solo qui: gli strumenti restano accesi.
     var color: Color {
         switch self {
-        case .gray: DesignColor.textSecondary
-        case .blue: DesignColor.brandPrimary
-        case .red: DesignColor.danger
-        case .green: DesignColor.success
-        case .orange: DesignColor.toolWolfram
-        case .purple: DesignColor.toolLatex
-        case .teal: DesignColor.toolExplain
+        case .gray: Color(hex: 0x8A857F)
+        case .blue: Color(hex: 0x6E87D8)
+        case .red: Color(hex: 0xC96A5E)
+        case .green: Color(hex: 0x5E9678)
+        case .orange: Color(hex: 0xC08552)
+        case .purple: Color(hex: 0x8B7FD0)
+        case .teal: Color(hex: 0x5F9EA0)
         }
     }
 }

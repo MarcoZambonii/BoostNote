@@ -36,6 +36,23 @@ enum DesignColor {
     static let toolDraw = Color(hex: 0x1F9D55)
     static let toolDrawBg = Color(hex: 0xE7F7EC)
 
+    // MARK: Ruoli semantici (design system 2026-08-16, approvato)
+    // Un colore = un significato, in tutta l'app. I colori degli
+    // strumenti (toolWolfram, toolLatex, ...) restano un ALTRO spazio,
+    // valido solo dentro la nota: qui sotto ci sono i ruoli di interfaccia.
+    // - actionPrimary: creare/agire — UNA sola azione blu per schermata.
+    // - review: ripasso e memoria (flashcard, Ripassa, spaced repetition).
+    // - insight: analisi e progressi. NON è il teal di "Spiega" né il
+    //   verde degli esiti: è un petrolio suo, distinguibile da entrambi.
+    // - attention: avvisi, limiti dichiarati, azioni di recupero.
+    static let actionPrimary = blue500
+    static let review = Color(hex: 0x9438D6)
+    static let reviewBg = Color(hex: 0xF3E9FC)
+    static let insight = Color(hex: 0x1D7F9E)
+    static let insightBg = Color(hex: 0xE4F3F8)
+    static let attention = Color(hex: 0xC1591F)
+    static let attentionBg = Color(hex: 0xFBEEE3)
+
     static let success = Color(hex: 0x1F9D55)
     static let successBg = Color(hex: 0xE7F7EC)
     static let danger = Color(hex: 0xD63A2E)

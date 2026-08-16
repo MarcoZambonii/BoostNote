@@ -67,6 +67,10 @@ struct SidebarView: View {
     @State private var dropTargetFolderID: PersistentIdentifier?
     @State private var dropTargetingRoot = false
     @State private var outlineResetID = UUID()
+    // Cartelle aperte nell'albero. Rimpiazza l'espansione interna di
+    // OutlineGroup, che non è pilotabile: serve un Set nostro perché il
+    // DOPPIO TOCCO su una cartella deve aprire/chiudere la tendina.
+    @State private var expandedFolders: Set<PersistentIdentifier> = []
 
     @State private var folderSheetMode: FolderSheetMode?
 
@@ -89,8 +93,8 @@ struct SidebarView: View {
 
             List(selection: $selectedNote) {
                 let rootItems = rootFolders.map(SidebarItem.folder) + unfiledNotes.map(SidebarItem.note)
-                OutlineGroup(rootItems, children: \.children) { item in
-                    row(for: item)
+                ForEach(rootItems) { item in
+                    sidebarNode(item)
                 }
             }
             .id(outlineResetID)
@@ -101,6 +105,15 @@ struct SidebarView: View {
             footer
         }
         .background(DesignColor.surfaceSunken)
+        // Un filo di bordo sul lato del contenuto: stacca la barra dal
+        // foglio bianco della pagina (mock utente 2026-08-16 — prima i
+        // due grigi si fondevano e la barra "galleggiava" senza confine).
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(DesignColor.borderSubtle)
+                .frame(width: 1)
+                .ignoresSafeArea()
+        }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $folderSheetMode) { mode in
@@ -136,7 +149,7 @@ struct SidebarView: View {
 
     // Riga fissa sopra all'elenco delle cartelle: etichetta "Cartelle" e,
     // a destra, le azioni rapide (nuova nota, nuova cartella, nuova
-    // lavagna infinita, comprimi tutto). È anche il punto dove trascinare
+    // comprimi tutto). È anche il punto dove trascinare
     // una nota per toglierla dalla cartella in cui si trova.
     private var folderListHeader: some View {
         HStack(spacing: DesignSpace.s3) {
@@ -168,13 +181,7 @@ struct SidebarView: View {
             .accessibilityLabel("Nuova cartella")
 
             Button {
-                createWhiteboard(in: nil)
-            } label: {
-                Image(systemName: "scribble.variable")
-            }
-            .accessibilityLabel("Nuova lavagna infinita")
-
-            Button {
+                expandedFolders.removeAll()
                 outlineResetID = UUID()
             } label: {
                 Image(systemName: "rectangle.compress.vertical")
@@ -265,7 +272,7 @@ struct SidebarView: View {
         .padding(.bottom, DesignSpace.s3)
     }
 
-    // Menu "Nuovo documento": scegli tra cartella, lavagna infinita o nota.
+    // Menu "Nuovo documento": scegli tra cartella o nota.
     // Usato sia dalla barra laterale che dalla toolbar in alto.
     @ViewBuilder
     private func newDocumentMenu(folder: Folder?, @ViewBuilder label: () -> some View) -> some View {
@@ -276,11 +283,6 @@ struct SidebarView: View {
                 Label("Cartella", systemImage: "folder.badge.plus")
             }
             Button {
-                createWhiteboard(in: folder)
-            } label: {
-                Label("Lavagna infinita", systemImage: "scribble.variable")
-            }
-            Button {
                 noteCreateFolder = folder
                 showingNoteCreate = true
             } label: {
@@ -289,14 +291,6 @@ struct SidebarView: View {
         } label: {
             label()
         }
-    }
-
-    private func createWhiteboard(in folder: Folder?) {
-        let note = Note(title: "Lavagna infinita", folder: folder)
-        note.isWhiteboard = true
-        note.template = .cross
-        context.insert(note)
-        selectedNote = note
     }
 
     // WeBeep connesso se esiste un token salvato in Keychain (verificato
@@ -334,44 +328,89 @@ struct SidebarView: View {
         )
     }
 
+    // Albero ricorsivo con DisclosureGroup espliciti al posto di
+    // OutlineGroup: identico a vedersi, ma l'espansione è NOSTRA — e
+    // quindi il doppio tocco può pilotarla. L'AnyView spezza la
+    // ricorsione infinita del type-checker.
+    @ViewBuilder
+    private func sidebarNode(_ item: SidebarItem) -> some View {
+        switch item {
+        case .note:
+            row(for: item)
+        case .folder(let folder):
+            if let children = item.children {
+                DisclosureGroup(isExpanded: expansionBinding(folder)) {
+                    ForEach(children) { child in
+                        AnyView(sidebarNode(child))
+                    }
+                } label: {
+                    row(for: item)
+                }
+            } else {
+                row(for: item)
+            }
+        }
+    }
+
+    private func expansionBinding(_ folder: Folder) -> Binding<Bool> {
+        Binding(
+            get: { expandedFolders.contains(folder.persistentModelID) },
+            set: { open in
+                if open {
+                    expandedFolders.insert(folder.persistentModelID)
+                } else {
+                    expandedFolders.remove(folder.persistentModelID)
+                }
+            }
+        )
+    }
+
+    private func toggleExpansion(_ folder: Folder) {
+        withAnimation(.snappy(duration: 0.22)) {
+            if expandedFolders.contains(folder.persistentModelID) {
+                expandedFolders.remove(folder.persistentModelID)
+            } else {
+                expandedFolders.insert(folder.persistentModelID)
+            }
+        }
+    }
+
     @ViewBuilder
     private func row(for item: SidebarItem) -> some View {
         switch item {
         case .folder(let folder):
             HStack(spacing: 10) {
-                Button {
+                HStack(spacing: 10) {
+                    // Tessera MORBIDA (mock utente 2026-08-16, secondo
+                    // giro): tinta al 15% con il glifo nel colore — la
+                    // versione piena era troppo accesa accanto al resto
+                    // del documento. Niente conteggio elementi: non è
+                    // un'informazione utile (sua richiesta esplicita).
+                    RoundedRectangle(cornerRadius: DesignRadius.sm + 1, style: .continuous)
+                        .fill(folder.folderColor.color.opacity(0.15))
+                        .frame(width: 28, height: 28)
+                        .overlay(
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(folder.folderColor.color)
+                        )
+                    Text(folder.name)
+                        .font(.system(size: 14, weight: selectedFolder == folder ? .semibold : .medium))
+                        .foregroundStyle(selectedFolder == folder ? DesignColor.brandPrimary : DesignColor.textPrimary)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+                // L'ordine conta: il doppio tocco va dichiarato PRIMA del
+                // singolo, così SwiftUI aspetta a decidere. Due tocchi =
+                // apri/chiudi la tendina; uno = apri la cartella.
+                .onTapGesture(count: 2) {
+                    toggleExpansion(folder)
+                }
+                .onTapGesture {
                     selectedNote = nil
                     selectedFolder = folder
-                } label: {
-                    HStack(spacing: 10) {
-                        // Icona in una tessera colorata come le card degli
-                        // studi: dà peso visivo alla cartella e rende i
-                        // due ambienti riconoscibilmente parenti.
-                        RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
-                            .fill(folder.folderColor.color.opacity(0.14))
-                            .frame(width: 26, height: 26)
-                            .overlay(
-                                Image(systemName: "folder.fill")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(folder.folderColor.color)
-                            )
-                        Text(folder.name)
-                            .font(.system(size: 14, weight: selectedFolder == folder ? .semibold : .medium))
-                            .foregroundStyle(selectedFolder == folder ? DesignColor.brandPrimary : DesignColor.textPrimary)
-                        Spacer(minLength: 0)
-                    }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
 
-                if !folder.notes.isEmpty {
-                    Text("\(folder.notes.count)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(DesignColor.textTertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(DesignColor.surfacePage, in: Capsule())
-                }
                 newDocumentMenu(folder: folder) {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 15))
