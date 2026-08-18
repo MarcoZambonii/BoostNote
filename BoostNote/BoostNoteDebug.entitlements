@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Entitlements per il solo Debug, VUOTO di proposito.
+
+	     Un team Apple personale (gratuito) non può firmare iCloud né Push
+	     Notifications: con BoostNote.entitlements la build su dispositivo
+	     fallisce con "Personal development teams do not support the iCloud
+	     and Push Notifications capabilities". Qui non si chiede nulla, così
+	     l'app si installa sull'iPad con l'account personale.
+
+	     Non si perde niente a runtime: StudioApp prova CloudKit e, quando
+	     non c'è, ripiega sullo store locale da sé.
+
+	     Release continua a usare BoostNote.entitlements con iCloud+CloudKit
+	     e aps-environment: quando arriverà l'account a pagamento la
+	     configurazione è già pronta e questo file si può cancellare. -->
+</dict>
+</plist>
