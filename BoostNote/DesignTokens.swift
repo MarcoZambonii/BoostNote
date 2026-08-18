@@ -1,5 +1,15 @@
 import SwiftUI
 
+// Dispositivo, non size class: i popover su iPad hanno SEMPRE size class
+// compatta, quindi per dimensionare i pannelli fissi serve sapere se si
+// è davvero su iPhone. Un solo posto per la domanda, invece di
+// UIDevice sparso per le viste.
+enum DeviceLayout {
+    static var isPhone: Bool {
+        UIDevice.current.userInterfaceIdiom == .phone
+    }
+}
+
 // Porta manuale dei token da Claude Design (progetto "BoostNote Design
 // System" — tokens/colors.css, spacing.css, radius.css, elevation.css).
 // I colori erano definiti in OKLCH: qui sono approssimati in sRGB, dato

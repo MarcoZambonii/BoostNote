@@ -90,7 +90,10 @@ struct NoteEditorView: View {
     @State private var toolBeforeLasso: PenTool?
     @State private var magicAction: MagicAction?
     @State private var isMagicProcessing = false
-    @State private var toolbarDock: ToolbarDock = .top
+    // Su iPhone la barra parte in basso, a portata di pollice: in alto
+    // condividerebbe la riga con back e controlli, e su 400pt di
+    // larghezza non ci sta niente.
+    @State private var toolbarDock: ToolbarDock = DeviceLayout.isPhone ? .bottom : .top
     @State private var dragPreviewDock: ToolbarDock?
     @StateObject private var drawingController = DrawingController()
 
@@ -174,9 +177,15 @@ struct NoteEditorView: View {
         SidePanelSide(rawValue: storedPanelSide) ?? .trailing
     }
 
+    // Larghezza del contenitore, letta dal GeometryReader del body: serve
+    // al pannello su iPhone, dove non c'è spazio per foglio e strumenti
+    // affiancati e il pannello occupa tutta la larghezza.
+    @State private var editorContainerWidth: CGFloat = 0
+
     // Larghezza scelta dall'utente (o quella in corso di trascinamento).
     private var panelWidth: CGFloat {
-        liveResizeWidth ?? CGFloat(storedPanelWidth)
+        if DeviceLayout.isPhone { return editorContainerWidth }
+        return liveResizeWidth ?? CGFloat(storedPanelWidth)
     }
 
     private var currentPanelWidth: CGFloat {
@@ -222,6 +231,10 @@ struct NoteEditorView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear { editorContainerWidth = geometry.size.width }
+            .onChange(of: geometry.size.width) { _, width in
+                editorContainerWidth = width
+            }
         }
         .alert("Titolo della nota", isPresented: $showingRename) {
             TextField("Titolo", text: $renameText)
@@ -255,6 +268,10 @@ struct NoteEditorView: View {
             // Segnalibro automatico: alla prossima apertura si riparte da qui.
             note.lastViewedPage = drawingController.currentPageIndex(pageHeight: pageHeight)
             saveToolPreferences()
+            // L'assicurazione: il pacchetto .boostnote nella cartella
+            // d'archivio (se configurata). Snapshot sul main, scrittura
+            // in background — la chiusura non aspetta.
+            NoteArchiveService.archive(note)
         }
         .onChange(of: note.title) { note.updatedAt = .now }
         .onChange(of: note.drawingData) { note.updatedAt = .now }
@@ -392,7 +409,9 @@ struct NoteEditorView: View {
     // ridimensionare e una zona sensibile lì si mangerebbe i tratti.
     @ViewBuilder
     private func resizeGrip(containerWidth: CGFloat) -> some View {
-        if isSidePanelHidden {
+        if isSidePanelHidden || DeviceLayout.isPhone {
+            // Su iPhone il pannello è a tutta larghezza: non c'è nessun
+            // confine col foglio da trascinare.
             Divider().opacity(0)
         } else {
             ZStack {
@@ -430,6 +449,12 @@ struct NoteEditorView: View {
     // maniglia) non tocca il contenuto.
     private var sidePanelStack: some View {
         VStack(spacing: 0) {
+            // Su iPhone il pannello parte dal bordo fisico dello schermo
+            // (l'editor ignora la safe area): l'intestazione scende sotto
+            // la Dynamic Island come i controlli del foglio.
+            if DeviceLayout.isPhone {
+                Color.clear.frame(height: phoneTopInset)
+            }
             HStack(spacing: DesignSpace.s2) {
                 Button {
                     withAnimation { isSidePanelHidden = true }
@@ -762,6 +787,7 @@ struct NoteEditorView: View {
                     backButton
                 }
                 .padding(8)
+                .padding(.top, phoneTopInset)
                 .safeAreaPadding(.top)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
@@ -769,6 +795,7 @@ struct NoteEditorView: View {
                 // agganciata la barra della penna (che invece si sposta).
                 topRightToolbar
                     .padding(8)
+                    .padding(.top, phoneTopInset)
                     .safeAreaPadding(.top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
@@ -805,10 +832,16 @@ struct NoteEditorView: View {
         // se li rubava a vicenda.
         .padding(.leading, toolbarDock == .top ? 64 : 8)
         .padding(.trailing, toolbarDock == .top ? 216 : 8)
-        .padding(.top, 8)
+        .padding(.top, toolbarDock == .top ? 8 + phoneTopInset : 8)
         .safeAreaPadding(.top)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: toolbarDock.alignment)
     }
+
+    // L'editor ignora la safe area (il foglio deve arrivare ai bordi), e
+    // su iPad andava bene anche per i controlli. Su iPhone però la
+    // Dynamic Island copriva undo/strumenti: i controlli fissi in alto
+    // scendono sotto di lei.
+    private var phoneTopInset: CGFloat { DeviceLayout.isPhone ? 48 : 0 }
 
     // Placeholder fantasma ai 4 lati, mostrati mentre si trascina la barra:
     // quello più vicino al punto di rilascio si evidenzia.
@@ -903,7 +936,12 @@ struct NoteEditorView: View {
                     showingToolsPicker = false
                     openSidePanel(tool)
                 }
-                .presentationCompactAdaptation(.popover)
+                // Su iPad (anche in Split View) resta il popover a
+                // cascata; su iPhone un popover largo 680pt non esiste:
+                // meglio lo sheet coi detent. I detent sugli altri
+                // dispositivi vengono semplicemente ignorati.
+                .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
+                .presentationDetents([.medium, .large])
             }
 
             Button {
@@ -924,7 +962,8 @@ struct NoteEditorView: View {
                     drawingController.scrollToPage(index, pageHeight: pageHeight)
                     showingSearch = false
                 }
-                .presentationCompactAdaptation(.popover)
+                .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
+                .presentationDetents([.medium, .large])
             }
 
             Menu {

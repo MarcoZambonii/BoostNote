@@ -668,8 +668,11 @@ struct StudioCreateFlowView: View {
                     .popover(isPresented: $showingQuotaInfo, arrowEdge: .bottom) {
                         GeminiQuotaPanel()
                             .padding(DesignSpace.s4)
-                            .frame(width: 420)
-                            .presentationCompactAdaptation(.popover)
+                            // 420pt non stanno in un popover su iPhone:
+                            // lì diventa uno sheet a larghezza piena.
+                            .frame(width: DeviceLayout.isPhone ? nil : 420)
+                            .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
+                            .presentationDetents([.medium, .large])
                     }
                 }
                 VStack(alignment: .trailing, spacing: 4) {

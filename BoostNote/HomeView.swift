@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 // le flashcard pronte e gli esercizi sbagliati di recente.
 struct HomeView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @AppStorage("profileName") private var profileName = ""
     @Binding var selectedNote: Note?
     // Ponti verso lo Studio: la Home non possiede quella navigazione,
@@ -93,41 +94,65 @@ struct HomeView: View {
 
     // Saluto a sinistra, azioni COMPATTE a destra: le tre card grandi
     // spingevano in basso il contenuto vero (le note e i ripassi).
+    @ViewBuilder
     private var header: some View {
-        HStack(alignment: .top, spacing: DesignSpace.s4) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(greeting)
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(DesignColor.textPrimary)
-                Text(Date.now.formatted(date: .long, time: .omitted))
-                    .font(.system(size: 14))
-                    .foregroundStyle(DesignColor.textTertiary)
-            }
-            Spacer(minLength: 0)
-            // Design system dei colori (2026-08-16): UNA sola azione
-            // blu per schermata — è quella che il blu deve indicare.
-            // Le organizzative (cartella, import) sono neutre bordate.
-            HStack(spacing: DesignSpace.s2) {
-                headerAction(title: "Nuova nota", icon: "square.and.pencil", tint: DesignColor.brandPrimary) { showingNoteCreate = true }
-                headerAction(title: "Nuova cartella", icon: "folder.badge.plus", tint: nil) { showingNewFolderSheet = true }
-                // Il PDF entra da TUTTE le fonti dell'app, non solo dai
-                // file: stesso paio di porte del Vault e dello Studio.
-                Menu {
-                    Button {
-                        showingPDFImporter = true
-                    } label: {
-                        Label("Dai file", systemImage: "folder")
-                    }
-                    Button {
-                        showingWebeepPDFPicker = true
-                    } label: {
-                        Label("Da WeBeep", systemImage: "graduationcap")
-                    }
-                } label: {
-                    headerActionLabel(title: "Importa PDF", icon: "doc.badge.plus", tint: nil)
+        // Su iPhone saluto e azioni non stanno sulla stessa riga (il
+        // testo dei pulsanti andava a capo lettera per lettera): si
+        // impilano, saluto sopra e azioni sotto.
+        if horizontalSizeClass == .compact {
+            VStack(alignment: .leading, spacing: DesignSpace.s4) {
+                greetingBlock
+                // Le tre azioni insieme superano i ~400pt di un iPhone:
+                // la riga scorre invece di schiacciare i pulsanti.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    headerActions
                 }
-                .buttonStyle(.plain)
+                .scrollClipDisabled()
             }
+        } else {
+            HStack(alignment: .top, spacing: DesignSpace.s4) {
+                greetingBlock
+                Spacer(minLength: 0)
+                headerActions
+            }
+        }
+    }
+
+    private var greetingBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(greeting)
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(DesignColor.textPrimary)
+            Text(Date.now.formatted(date: .long, time: .omitted))
+                .font(.system(size: 14))
+                .foregroundStyle(DesignColor.textTertiary)
+        }
+    }
+
+    // Design system dei colori (2026-08-16): UNA sola azione
+    // blu per schermata — è quella che il blu deve indicare.
+    // Le organizzative (cartella, import) sono neutre bordate.
+    private var headerActions: some View {
+        HStack(spacing: DesignSpace.s2) {
+            headerAction(title: "Nuova nota", icon: "square.and.pencil", tint: DesignColor.brandPrimary) { showingNoteCreate = true }
+            headerAction(title: "Nuova cartella", icon: "folder.badge.plus", tint: nil) { showingNewFolderSheet = true }
+            // Il PDF entra da TUTTE le fonti dell'app, non solo dai
+            // file: stesso paio di porte del Vault e dello Studio.
+            Menu {
+                Button {
+                    showingPDFImporter = true
+                } label: {
+                    Label("Dai file", systemImage: "folder")
+                }
+                Button {
+                    showingWebeepPDFPicker = true
+                } label: {
+                    Label("Da WeBeep", systemImage: "graduationcap")
+                }
+            } label: {
+                headerActionLabel(title: "Importa PDF", icon: "doc.badge.plus", tint: nil)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -145,6 +170,10 @@ struct HomeView: View {
     private func headerActionLabel(title: String, icon: String, tint: Color?) -> some View {
         let label = Label(title, systemImage: icon)
             .font(.system(size: 13, weight: .semibold))
+            // Mai a capo: se lo spazio manca, il pulsante non si spezza
+            // lettera per lettera (successo su iPhone).
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, DesignSpace.s3)
             .padding(.vertical, DesignSpace.s2)
         if let tint {

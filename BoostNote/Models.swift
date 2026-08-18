@@ -7,21 +7,37 @@ import PencilKit
 // MARK: - Cartella
 // Rappresenta una cartella nell'organizzazione delle note.
 // Supporta cartelle annidate tramite la relazione parent/children.
+// NOTA CloudKit (sync iCloud, 2026-08-17): ogni proprietà persistita di
+// OGNI @Model deve avere un default o essere opzionale, niente
+// @Attribute(.unique), relazioni opzionali o con default. Un campo senza
+// default aggiunto qui spegne il sync alla prima apertura.
 @Model
 final class Folder {
-    var name: String
-    var createdAt: Date
+    var name: String = ""
+    var createdAt: Date = Date.now
     var parent: Folder?
 
     // Colore dell'icona cartella, salvato come rawValue di FolderColor.
     // Il default qui serve alla migrazione automatica di SwiftData.
     var colorRaw: String = FolderColor.blue.rawValue
 
-    @Relationship(deleteRule: .cascade, inverse: \Folder.parent)
-    var children: [Folder] = []
+    // Le to-many sono OPZIONALI (requisito CloudKit, non basta il
+    // default []): lo storage sta nella proprietà privata con
+    // originalName, il wrapper calcolato conserva l'API non-opzionale
+    // per tutto il resto dell'app.
+    @Relationship(deleteRule: .cascade, originalName: "children", inverse: \Folder.parent)
+    private var childrenStorage: [Folder]? = []
+    var children: [Folder] {
+        get { childrenStorage ?? [] }
+        set { childrenStorage = newValue }
+    }
 
-    @Relationship(deleteRule: .cascade, inverse: \Note.folder)
-    var notes: [Note] = []
+    @Relationship(deleteRule: .cascade, originalName: "notes", inverse: \Note.folder)
+    private var notesStorage: [Note]? = []
+    var notes: [Note] {
+        get { notesStorage ?? [] }
+        set { notesStorage = newValue }
+    }
 
     init(name: String, parent: Folder? = nil, color: FolderColor = .blue) {
         self.name = name
@@ -69,12 +85,12 @@ final class Note {
     // UUID stabile usata per il drag-and-drop tra cartelle (NSItemProvider
     // vuole un identificatore serializzabile, non il PersistentIdentifier di SwiftData).
     var id: UUID = UUID()
-    var title: String
+    var title: String = ""
     // Testo ricavato dalle caselle di testo, usato solo per l'anteprima
     // nella lista note e per la ricerca. Non è editabile direttamente.
-    var content: String
-    var createdAt: Date
-    var updatedAt: Date
+    var content: String = ""
+    var createdAt: Date = Date.now
+    var updatedAt: Date = Date.now
     var folder: Folder?
 
     // Caselle di testo posizionate sul foglio, serializzate come JSON.
@@ -92,9 +108,14 @@ final class Note {
     // Il default qui (non solo nell'init) serve alla migrazione automatica di SwiftData.
     var templateRaw: String = NoteTemplate.blank.rawValue
 
-    // Immagini e PDF inseriti sul foglio.
-    @Relationship(deleteRule: .cascade, inverse: \NoteMedia.note)
-    var media: [NoteMedia] = []
+    // Immagini e PDF inseriti sul foglio. (Opzionale + wrapper: vedi la
+    // nota CloudKit su Folder.)
+    @Relationship(deleteRule: .cascade, originalName: "media", inverse: \NoteMedia.note)
+    private var mediaStorage: [NoteMedia]? = []
+    var media: [NoteMedia] {
+        get { mediaStorage ?? [] }
+        set { mediaStorage = newValue }
+    }
 
     // Dimensione pagina (A3/A4/A5) e scala del pattern (quadretti/righe/crocette).
     var pageSizeRaw: String = PageSize.a4.rawValue
@@ -104,8 +125,12 @@ final class Note {
     // gli strumenti vivono nel pannello laterale destro). La relazione e
     // il tipo NoteWidget restano dichiarati solo per compatibilità con lo
     // store già scritto su disco — non rimuoverli senza una migrazione.
-    @Relationship(deleteRule: .cascade, inverse: \NoteWidget.note)
-    var widgets: [NoteWidget] = []
+    @Relationship(deleteRule: .cascade, originalName: "widgets", inverse: \NoteWidget.note)
+    private var widgetsStorage: [NoteWidget]? = []
+    var widgets: [NoteWidget] {
+        get { widgetsStorage ?? [] }
+        set { widgetsStorage = newValue }
+    }
 
     // Campi legacy: usati solo per migrare al volo le note create prima
     // del modello a pagine reali (vedi migrateLegacyContentToPages). La
@@ -119,8 +144,12 @@ final class Note {
     // scorrimento continuo verticale — come Notability. Permette di avere
     // pagine scritte a mano prima e dopo un PDF importato, non solo un
     // unico sfondo per l'intera nota. Non usate dalla lavagna infinita.
-    @Relationship(deleteRule: .cascade, inverse: \NotePage.note)
-    var pages: [NotePage] = []
+    @Relationship(deleteRule: .cascade, originalName: "pages", inverse: \NotePage.note)
+    private var pagesStorage: [NotePage]? = []
+    var pages: [NotePage] {
+        get { pagesStorage ?? [] }
+        set { pagesStorage = newValue }
+    }
 
     // Strumenti aperti nel pannello laterale destro, come JSON di
     // rawValue. Stanno sulla NOTA e non nella view: il pannello è parte
@@ -204,10 +233,10 @@ enum NoteMediaKind: String, Codable {
 // possono essere pesanti.
 @Model
 final class NoteMedia {
-    var x: Double
-    var y: Double
-    var width: Double
-    var height: Double
+    var x: Double = 0
+    var y: Double = 0
+    var width: Double = 260
+    var height: Double = 200
     var kindRaw: String = NoteMediaKind.image.rawValue
     @Attribute(.externalStorage) var data: Data = Data()
     // Sorgente da cui l'immagine è stata generata (il LaTeX di una
@@ -437,10 +466,10 @@ enum NoteWidgetKind: String, Codable {
 // come JSON in `dataJSON` per restare flessibile senza nuove tabelle.
 @Model
 final class NoteWidget {
-    var x: Double
-    var y: Double
-    var width: Double
-    var height: Double
+    var x: Double = 0
+    var y: Double = 0
+    var width: Double = 260
+    var height: Double = 200
     var kindRaw: String = NoteWidgetKind.todo.rawValue
     var dataJSON: String = "{}"
     var note: Note?

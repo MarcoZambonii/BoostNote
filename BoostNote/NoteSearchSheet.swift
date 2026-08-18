@@ -54,7 +54,13 @@ struct NoteSearchSheet: View {
             Divider()
             content
         }
-        .frame(width: 380, height: 460)
+        // Su iPad è un popover a misura fissa; su iPhone diventa uno
+        // sheet e deve riempire lo spazio che il detent gli dà.
+        .frame(
+            width: DeviceLayout.isPhone ? nil : 380,
+            height: DeviceLayout.isPhone ? nil : 460
+        )
+        .frame(maxWidth: DeviceLayout.isPhone ? .infinity : nil, maxHeight: DeviceLayout.isPhone ? .infinity : nil)
         .background(DesignColor.surfacePage)
         .onChange(of: query) { _, _ in scheduleSearch() }
         .onDisappear { searchTask?.cancel() }

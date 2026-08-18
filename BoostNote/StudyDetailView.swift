@@ -690,6 +690,16 @@ private struct ExercisesModuleView: View {
     let study: Study
     let module: StudyModule
 
+    // Scrive nel payload l'esito della compilazione della figura ("" =
+    // fallita, non ritentare): la prossima apertura non ricompila.
+    private func persistFigure(_ svg: String, for exerciseID: UUID) {
+        guard var updated = module.decodeContent(ExerciseSetContent.self),
+              let index = updated.exercises.firstIndex(where: { $0.id == exerciseID }) else { return }
+        guard updated.exercises[index].figureSVG != svg else { return }
+        updated.exercises[index].figureSVG = svg
+        module.encodeContent(updated)
+    }
+
     // Verifica Wolfram, eseguita su richiesta alla rivelazione della
     // risposta: è un oracolo ESTERNO al modello, quindi vale molto più di
     // un'autovalutazione dell'AI. Chiave presa dal Profilo (BYOK).
@@ -926,10 +936,24 @@ private struct ExercisesModuleView: View {
                     Spacer()
                 }
 
-                StudioRichText(text: exercise.prompt, size: 17, color: DesignColor.textPrimary)
-                    .padding(DesignSpace.s5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+                VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                    StudioRichText(text: exercise.prompt, size: 17, color: DesignColor.textPrimary)
+                    // La figura della traccia, se il modello l'ha scritta:
+                    // compilata con TikZJax alla prima apertura, poi
+                    // l'SVG vive nel payload. Se il TeX non compila, la
+                    // figura non appare e il fallimento viene ricordato.
+                    if let tikz = exercise.figureTikZ, !tikz.isEmpty {
+                        TikZFigureView(
+                            tikz: tikz,
+                            cachedSVG: exercise.figureSVG,
+                            onCompiled: { svg in persistFigure(svg, for: exercise.id) },
+                            onFailed: { persistFigure("", for: exercise.id) }
+                        )
+                    }
+                }
+                .padding(DesignSpace.s5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
 
                 if revealedSteps > 0 {
                     VStack(alignment: .leading, spacing: DesignSpace.s3) {

@@ -22,5 +22,70 @@
 	<true/>
 	<key>UIUserInterfaceStyle</key>
 	<string>Light</string>
+
+	<!-- I pacchetti d'archivio .boostnote sono un TIPO DI DOCUMENTO
+	     NOSTRO, dichiarato qui. È ciò che dà loro l'icona BoostNote
+	     ovunque (Files su iPad, Finder su Mac, la cartella OneDrive) e
+	     permette di aprirne uno con un tocco per ripristinarlo.
+	     Nota: l'icona di CARTELLA personalizzata non esiste su iPadOS —
+	     si può marcare il contenuto, non il contenitore. -->
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>BN.BoostNote.package</string>
+			<key>UTTypeDescription</key>
+			<string>Nota BoostNote</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>boostnote</string>
+				</array>
+			</dict>
+			<key>UTTypeIconFiles</key>
+			<array>
+				<string>BoostNotePackage-512.png</string>
+				<string>BoostNotePackage-320.png</string>
+				<string>BoostNotePackage-64.png</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- Aprire un .boostnote da Files lancia BoostNote, che lo
+	     ripristina (vedi StudioApp.onOpenURL). -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Nota BoostNote</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>BN.BoostNote.package</string>
+			</array>
+			<key>CFBundleTypeIconFiles</key>
+			<array>
+				<string>BoostNotePackage-512.png</string>
+				<string>BoostNotePackage-320.png</string>
+				<string>BoostNotePackage-64.png</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- La cartella dell'app dentro Files, con la SUA icona: è quello
+	     che fa Amphi. Resta memoria locale (l'assicurazione vera è
+	     l'archivio su OneDrive), ma dà a BoostNote una casa visibile. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>

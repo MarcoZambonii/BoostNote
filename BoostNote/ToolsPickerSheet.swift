@@ -16,15 +16,76 @@ struct ToolsPickerSheet: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            list
-                .frame(width: 240)
-            Divider()
-            detail(for: selectedTool)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        if DeviceLayout.isPhone {
+            // Su iPhone non c'è spazio per master/detail affiancati: solo
+            // l'elenco, e il tocco su una riga apre subito lo strumento
+            // (la descrizione sta sotto il nome, al posto dell'anteprima).
+            phoneList
+                .background(DesignColor.surfacePage)
+        } else {
+            HStack(spacing: 0) {
+                list
+                    .frame(width: 240)
+                Divider()
+                detail(for: selectedTool)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(width: 680, height: 460)
+            .background(DesignColor.surfacePage)
         }
-        .frame(width: 680, height: 460)
-        .background(DesignColor.surfacePage)
+    }
+
+    private var phoneList: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: DesignSpace.s2) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DesignColor.textTertiary)
+                TextField("Cerca strumenti", text: $query)
+                    .font(.system(size: 14))
+                    .textFieldStyle(.plain)
+            }
+            .padding(DesignSpace.s3)
+            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+            .padding(DesignSpace.s3)
+
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(filteredTools) { tool in
+                        Button {
+                            onSelect(tool)
+                        } label: {
+                            HStack(spacing: DesignSpace.s3) {
+                                Image(systemName: tool.systemImage)
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(DesignColor.brandPrimary)
+                                    .frame(width: 26)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(tool.label)
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundStyle(DesignColor.textPrimary)
+                                    Text(tool.toolDescription)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(DesignColor.textTertiary)
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.leading)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(DesignColor.textTertiary)
+                            }
+                            .padding(.horizontal, DesignSpace.s3)
+                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, DesignSpace.s2)
+                .padding(.bottom, DesignSpace.s3)
+            }
+        }
     }
 
     private var list: some View {

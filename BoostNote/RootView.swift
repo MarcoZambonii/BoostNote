@@ -1,13 +1,28 @@
 import SwiftUI
 import SwiftData
 
+// Destinazioni della navigazione su iPhone: la split view collassata non
+// mostrava MAI il dettaglio (la selezione passa da binding nostri, non
+// dalla List), quindi su schermo compatto l'app si fermava alla sidebar.
+// Qui ogni scelta della sidebar diventa un push esplicito su uno stack.
+private enum CompactDestination: Hashable {
+    case environment(AppEnvironment)
+    case folder(Folder)
+}
+
 struct RootView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedNote: Note?
     @State private var selectedFolder: Folder?
     @State private var environment: AppEnvironment = .home
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showingProfile = false
+    // Percorso dello stack su iPhone. Vive anche quando si è su iPad:
+    // ruotando o entrando in Split View il size class cambia e lo stato
+    // non deve perdersi.
+    @State private var compactPath: [CompactDestination] = []
+    private var archiveOpenRequest = ArchiveOpenRequest.shared
 
     // Selezione dell'ambiente Studio. Vive qui e non dentro
     // StudioEnvironmentView perché ora è la barra laterale principale a
@@ -25,7 +40,11 @@ struct RootView: View {
         // Coprendo tutto, il gesto può pure scattare: succede sotto,
         // invisibile, e l'unica uscita resta il pulsante indietro.
         ZStack {
-            splitView
+            if horizontalSizeClass == .compact {
+                compactStack
+            } else {
+                splitView
+            }
             if let selectedNote {
                 NoteEditorView(note: selectedNote, onBack: { self.selectedNote = nil })
                     .id(selectedNote.persistentModelID)
@@ -47,6 +66,17 @@ struct RootView: View {
         .task {
             migrateSubjectsToFolders()
             retireWhiteboards()
+        }
+        // Pacchetto .boostnote aperto da Files: si ripristina e la nota
+        // si apre subito, così il ripristino si vede invece di essere
+        // solo "avvenuto".
+        .onChange(of: archiveOpenRequest.url) { _, url in
+            guard let url else { return }
+            archiveOpenRequest.url = nil
+            if let note = try? NoteArchiveService.restore(from: url, in: context) {
+                environment = .home
+                selectedNote = note
+            }
         }
         .onChange(of: selectedNote) { _, newValue in
             // Non tocca selectedFolder: chiudendo la nota si torna alla
@@ -93,6 +123,113 @@ struct RootView: View {
             detail
                 .toolbar(removing: .sidebarToggle)
         }
+    }
+
+    // Su iPhone la sidebar è la radice e ogni destinazione si impila
+    // sopra con il back di sistema. Le viste ambiente restano le stesse
+    // dell'iPad: cambiano solo i binding, che oltre a selezionare
+    // spingono la destinazione sullo stack.
+    private var compactStack: some View {
+        NavigationStack(path: $compactPath) {
+            SidebarView(
+                environment: compactEnvironmentBinding,
+                selectedNote: $selectedNote,
+                selectedFolder: compactFolderBinding,
+                selectedStudy: $selectedStudy,
+                selectedStudyModule: $selectedStudyModule,
+                showingStudioProgress: $showingStudioProgress,
+                onCreateStudy: {
+                    selectedStudy = nil
+                    selectedStudyModule = nil
+                    showingStudioProgress = false
+                    showingStudioCreate = true
+                    pushIfNeeded(.environment(.studio))
+                },
+                onOpenProfile: { showingProfile = true }
+            )
+            // La sidebar ha già la sua intestazione "BoostNote": la barra
+            // di navigazione vuota sopra sarebbe solo spazio perso.
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: CompactDestination.self) { destination in
+                compactDetail(for: destination)
+            }
+        }
+        // Tornati alla sidebar, la selezione evidenziata non deve
+        // sopravvivere alla schermata da cui si è usciti.
+        .onChange(of: compactPath) { _, newValue in
+            if newValue.isEmpty {
+                selectedFolder = nil
+                selectedStudy = nil
+                selectedStudyModule = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func compactDetail(for destination: CompactDestination) -> some View {
+        switch destination {
+        case .environment(.home):
+            HomeView(
+                selectedNote: $selectedNote,
+                onOpenStudyModule: { study, module in
+                    selectedStudy = study
+                    selectedStudyModule = module
+                    environment = .studio
+                    pushIfNeeded(.environment(.studio))
+                },
+                onOpenProgress: {
+                    selectedStudy = nil
+                    selectedStudyModule = nil
+                    showingStudioProgress = true
+                    environment = .studio
+                    pushIfNeeded(.environment(.studio))
+                }
+            )
+        case .environment(.studio):
+            StudioEnvironmentView(
+                selectedStudy: $selectedStudy,
+                selectedModule: $selectedStudyModule,
+                showingProgress: $showingStudioProgress,
+                showingCreate: $showingStudioCreate
+            )
+        case .environment(.ricerca):
+            ResearchEnvironmentView(selectedNote: $selectedNote, embedsNavigationStack: false)
+        case .environment(.webeep):
+            WebeepEnvironmentView(selectedNote: $selectedNote)
+        case .folder(let folder):
+            FolderContentsView(folder: folder, selectedNote: $selectedNote, selectedFolder: compactFolderBinding)
+                .id(folder.persistentModelID)
+        }
+    }
+
+    // Selezionare un ambiente dalla sidebar su iPhone = spingerlo sullo
+    // stack. Il binding "vero" resta la fonte di verità condivisa con
+    // l'iPad, così ruotando lo schermo lo stato non si perde.
+    private var compactEnvironmentBinding: Binding<AppEnvironment> {
+        Binding(
+            get: { environment },
+            set: { newValue in
+                environment = newValue
+                pushIfNeeded(.environment(newValue))
+            }
+        )
+    }
+
+    private var compactFolderBinding: Binding<Folder?> {
+        Binding(
+            get: { selectedFolder },
+            set: { newValue in
+                selectedFolder = newValue
+                if let folder = newValue {
+                    pushIfNeeded(.folder(folder))
+                }
+            }
+        )
+    }
+
+    private func pushIfNeeded(_ destination: CompactDestination) {
+        guard compactPath.last != destination else { return }
+        compactPath.append(destination)
     }
 
     @ViewBuilder

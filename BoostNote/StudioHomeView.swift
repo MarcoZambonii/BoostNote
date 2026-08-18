@@ -12,6 +12,7 @@ import SwiftData
 // contenuti stanno dove si guarda dopo aver cliccato.
 struct StudioHomeView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Binding var selectedStudy: Study?
     @Binding var showingProgress: Bool
@@ -82,28 +83,46 @@ struct StudioHomeView: View {
     // lo sono i Vault che già esistono, con i loro studi. Prima una card
     // blu a tutta larghezza gridava "Crea nuovo studio" sopra ogni cosa,
     // e portava a un flusso che poteva anche non passare dal Vault.
+    @ViewBuilder
     private var header: some View {
-        HStack(alignment: .top, spacing: DesignSpace.s4) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text("Studio")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(DesignColor.textPrimary)
-                    Image(systemName: "graduationcap.fill")
-                        .foregroundStyle(DesignColor.brandPrimary)
-                }
-                Text(subtitleText)
-                    .font(.system(size: 14))
-                    .foregroundStyle(DesignColor.textTertiary)
+        // Su iPhone titolo e azioni si impilano: sulla stessa riga i
+        // pulsanti andavano a capo lettera per lettera.
+        if horizontalSizeClass == .compact {
+            VStack(alignment: .leading, spacing: DesignSpace.s4) {
+                headerTitle
+                headerButtons
             }
-            Spacer(minLength: 0)
-            HStack(spacing: DesignSpace.s2) {
-                headerButton(title: "Analisi progressi", icon: "chart.bar.xaxis", tint: DesignColor.insight) {
-                    showingProgress = true
-                }
-                headerButton(title: "Nuovo Vault", icon: "plus", tint: DesignColor.brandPrimary) {
-                    folderSheet = .new(parent: nil)
-                }
+        } else {
+            HStack(alignment: .top, spacing: DesignSpace.s4) {
+                headerTitle
+                Spacer(minLength: 0)
+                headerButtons
+            }
+        }
+    }
+
+    private var headerTitle: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("Studio")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(DesignColor.textPrimary)
+                Image(systemName: "graduationcap.fill")
+                    .foregroundStyle(DesignColor.brandPrimary)
+            }
+            Text(subtitleText)
+                .font(.system(size: 14))
+                .foregroundStyle(DesignColor.textTertiary)
+        }
+    }
+
+    private var headerButtons: some View {
+        HStack(spacing: DesignSpace.s2) {
+            headerButton(title: "Analisi progressi", icon: "chart.bar.xaxis", tint: DesignColor.insight) {
+                showingProgress = true
+            }
+            headerButton(title: "Nuovo Vault", icon: "plus", tint: DesignColor.brandPrimary) {
+                folderSheet = .new(parent: nil)
             }
         }
     }
@@ -125,6 +144,8 @@ struct StudioHomeView: View {
         Button(action: action) {
             Label(title, systemImage: icon)
                 .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
                 .foregroundStyle(tint)
                 .padding(.horizontal, DesignSpace.s3)
                 .padding(.vertical, DesignSpace.s2)

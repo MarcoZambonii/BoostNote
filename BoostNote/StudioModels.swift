@@ -15,20 +15,33 @@ final class StudyFolder {
     var colorRaw: String = FolderColor.purple.rawValue
     var parent: StudyFolder?
 
-    @Relationship(deleteRule: .cascade, inverse: \StudyFolder.parent)
-    var children: [StudyFolder] = []
+    // To-many opzionali con wrapper: requisito CloudKit, vedi Folder.
+    @Relationship(deleteRule: .cascade, originalName: "children", inverse: \StudyFolder.parent)
+    private var childrenStorage: [StudyFolder]? = []
+    var children: [StudyFolder] {
+        get { childrenStorage ?? [] }
+        set { childrenStorage = newValue }
+    }
 
     // Eliminando la cartella gli studi NON si perdono: tornano alla
     // radice (regola .nullify), perché uno studio è lavoro costoso da
     // rigenerare e non deve sparire per un riordino.
-    @Relationship(deleteRule: .nullify, inverse: \Study.folder)
-    var studies: [Study] = []
+    @Relationship(deleteRule: .nullify, originalName: "studies", inverse: \Study.folder)
+    private var studiesStorage: [Study]? = []
+    var studies: [Study] {
+        get { studiesStorage ?? [] }
+        set { studiesStorage = newValue }
+    }
 
     // Il vault del corso (cartella = corso, deciso 2026-08-15): i
     // documenti del vault muoiono con la cartella — a differenza degli
     // studi, il loro contenuto si può sempre rileggere dalle fonti.
-    @Relationship(deleteRule: .cascade, inverse: \VaultDocument.folder)
-    var vaultDocuments: [VaultDocument] = []
+    @Relationship(deleteRule: .cascade, originalName: "vaultDocuments", inverse: \VaultDocument.folder)
+    private var vaultDocumentsStorage: [VaultDocument]? = []
+    var vaultDocuments: [VaultDocument] {
+        get { vaultDocumentsStorage ?? [] }
+        set { vaultDocumentsStorage = newValue }
+    }
 
     init(name: String, parent: StudyFolder? = nil, color: FolderColor = .purple) {
         self.id = UUID()
@@ -55,14 +68,14 @@ final class StudyFolder {
 @Model
 final class Study {
     var id: UUID = UUID()
-    var name: String
+    var name: String = ""
     // Materia libera usata per raggruppare gli studi nella sidebar
     // (vuota = "Senza materia"). Testo libero e non un'entità dedicata:
     // stessa scelta fatta per i titoli delle note, si può promuovere a
     // modello se un giorno servirà colore/ordinamento per materia.
     var subject: String = ""
-    var createdAt: Date
-    var updatedAt: Date
+    var createdAt: Date = Date.now
+    var updatedAt: Date = Date.now
     // Cartella che lo contiene; nil = radice dell'albero.
     var folder: StudyFolder?
 
@@ -77,14 +90,26 @@ final class Study {
     // c'erano i soli metadati, e il testo veniva riletto ogni volta dalla
     // nota — impossibile per PDF e file WeBeep, e comunque uno spreco
     // visto che l'OCR della scrittura a mano non è istantaneo.
-    @Relationship(deleteRule: .cascade, inverse: \StudyMaterial.study)
-    var materials: [StudyMaterial] = []
+    @Relationship(deleteRule: .cascade, originalName: "materials", inverse: \StudyMaterial.study)
+    private var materialsStorage: [StudyMaterial]? = []
+    var materials: [StudyMaterial] {
+        get { materialsStorage ?? [] }
+        set { materialsStorage = newValue }
+    }
 
-    @Relationship(deleteRule: .cascade, inverse: \StudyModule.study)
-    var modules: [StudyModule] = []
+    @Relationship(deleteRule: .cascade, originalName: "modules", inverse: \StudyModule.study)
+    private var modulesStorage: [StudyModule]? = []
+    var modules: [StudyModule] {
+        get { modulesStorage ?? [] }
+        set { modulesStorage = newValue }
+    }
 
-    @Relationship(deleteRule: .cascade, inverse: \ExerciseAttempt.study)
-    var attempts: [ExerciseAttempt] = []
+    @Relationship(deleteRule: .cascade, originalName: "attempts", inverse: \ExerciseAttempt.study)
+    private var attemptsStorage: [ExerciseAttempt]? = []
+    var attempts: [ExerciseAttempt] {
+        get { attemptsStorage ?? [] }
+        set { attemptsStorage = newValue }
+    }
 
     init(name: String, subject: String = "") {
         self.id = UUID()
@@ -533,6 +558,13 @@ struct StudyExercise: Codable, Identifiable {
     // calcolate qui sotto.
     var verificationRaw: String?
     var originRaw: String?
+    // Figura TikZ della traccia (grafi, funzioni, catene di Markov…):
+    // il sorgente scritto dal modello e, una volta compilato con
+    // TikZJax, l'SVG risultante. La compilazione avviene alla prima
+    // visualizzazione e il risultato si persiste qui: mai due volte.
+    // figureSVG vuoto (non nil) = compilazione fallita, non ritentare.
+    var figureTikZ: String?
+    var figureSVG: String?
 
     var category: ExerciseCategory { ExerciseCategory(rawValue: categoryRaw) ?? .theoretical }
     var difficulty: ExerciseDifficulty { ExerciseDifficulty(rawValue: difficultyRaw) ?? .base }
