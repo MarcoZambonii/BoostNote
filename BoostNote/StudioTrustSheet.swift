@@ -167,8 +167,8 @@ struct StudioTrustSheet: View {
                 detail: "Claude non ha modelli di riserva: se la chiamata fallisce, il modulo riporta il motivo e puoi riprovare."
             )
         case .gemini:
-            let capable = GeminiModelTier.full.modelChain
-            let fast = GeminiModelTier.lite.modelChain
+            let capable = GeminiModelTier.full.modelChain()
+            let fast = GeminiModelTier.lite.modelChain()
             info(
                 icon: "arrow.triangle.branch",
                 title: "Una catena di modelli, non uno solo",
@@ -186,8 +186,8 @@ struct StudioTrustSheet: View {
             )
             info(
                 icon: "timer",
-                title: "Mai più di tre minuti per modulo",
-                detail: "Ogni modulo ha un tetto di tempo complessivo: scaduto quello, la generazione si ferma con un errore chiaro invece di girare a vuoto. Mentre genera, la card mostra quale modello sta provando e puoi annullare in ogni momento."
+                title: "Un tetto di tempo per ogni modulo",
+                detail: "Tre minuti per riassunti, flashcard e ripasso; cinque per gli esercizi, che prima di accontentarsi provano tutti i modelli capaci compreso il più lento. Scaduto il tetto la generazione si ferma con un errore chiaro invece di girare a vuoto. Mentre genera, la card mostra quale modello sta provando e puoi annullare in ogni momento."
             )
         }
     }

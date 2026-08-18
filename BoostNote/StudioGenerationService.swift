@@ -274,10 +274,21 @@ enum StudioGenerationService {
     // Tetto complessivo per modulo. Senza, il caso peggiore era il
     // prodotto di tutti i moltiplicatori della catena: ~40 minuti di
     // "Generazione in corso…" che nessuno poteva fermare.
-    private static let moduleDeadline: TimeInterval = 180
+    //
+    // Gli esercizi hanno un tetto più alto, e NON è una preferenza: con
+    // `qualityFirst` la loro catena mette il Flash lento in terza
+    // posizione, quindi il caso peggiore diventa due 503 da ~20s + fino a
+    // 120s di timeout su quel modello + i Lite in coda. Con 180s si
+    // sfonderebbe proprio mentre restano modelli liberi da provare, e il
+    // risultato non sarebbe "esercizi più semplici" ma "nessun esercizio"
+    // — cioè peggio di prima. Il tetto serve a fermare le derive, non a
+    // impedire l'attesa che abbiamo scelto di accettare.
+    private static func moduleDeadline(for kind: StudyModuleKind) -> TimeInterval {
+        kind == .exercises ? 300 : 180
+    }
 
     private static func generateWithAI(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, indexTopics: [String] = [], progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
-        await withDeadline(seconds: moduleDeadline) {
+        await withDeadline(seconds: moduleDeadline(for: kind)) {
             // Il retry sul JSON malformato resta SOLO per i provider
             // senza structured output (Apple locale, Claude): su Gemini
             // il responseSchema garantisce la sintassi, e il retry era
@@ -342,6 +353,11 @@ enum StudioGenerationService {
             tier: kind == .exercises ? .full : .lite,
             schema: responseSchema(for: kind),
             thinkingBudget: kind == .exercises ? exercisesThinkingBudget : 0,
+            // Sugli esercizi si spendono TUTTI i Flash prima di scendere
+            // sui Lite, anche il lento da ~58s (scelta dell'utente,
+            // 2026-08-17): il declassamento qui non è un rallentamento,
+            // è un esercizio peggiore.
+            qualityFirst: kind == .exercises,
             onAttempt: { modelID, position, total in
                 progress("Provo \(modelID) (\(position)/\(total))…")
             }
@@ -402,7 +418,8 @@ enum StudioGenerationService {
                     quote: makeCitation(quote: item.quote, source: item.source, in: sources),
                     checkExpression: item.checkExpression,
                     verificationRaw: ExerciseVerification.notChecked.rawValue,
-                    originRaw: (ExerciseOrigin(rawValue: item.origin ?? "") ?? .invented).rawValue
+                    originRaw: (ExerciseOrigin(rawValue: item.origin ?? "") ?? .invented).rawValue,
+                    figureTikZ: item.figureTikZ
                 )
             }
             // Doppio passaggio: gli esercizi che non reggono una seconda
@@ -778,7 +795,7 @@ enum StudioGenerationService {
         Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials"}]}
         """
 
-        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: exercisesSchema, thinkingBudget: exercisesThinkingBudget),
+        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: exercisesSchema, thinkingBudget: exercisesThinkingBudget, qualityFirst: true),
               let json = AIService.extractJSON(from: reply.text),
               case .success(let dto) = decodeDTO(AIExercisesDTO.self, from: json),
               let item = dto.exercises.first else {
@@ -829,8 +846,11 @@ enum StudioGenerationService {
         \(list)
         """
         // Stesso budget di thinking degli esercizi: risolvere i problemi
-        // per conto proprio è ragionamento quanto scriverli.
-        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: verdictsSchema, thinkingBudget: exercisesThinkingBudget),
+        // per conto proprio è ragionamento quanto scriverli. E stesso
+        // `qualityFirst`, per lo stesso motivo: un Lite che fa il
+        // "correttore severo" di esercizi è un giudice debole, e il
+        // secondo passaggio vale esattamente per la sua severità.
+        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: verdictsSchema, thinkingBudget: exercisesThinkingBudget, qualityFirst: true),
               let json = AIService.extractJSON(from: reply.text),
               let data = json.data(using: .utf8),
               let dto = try? JSONDecoder().decode(AIVerdictsDTO.self, from: data) else {
@@ -983,12 +1003,14 @@ enum StudioGenerationService {
 
     // MARK: - responseSchema
     //
-    // Lo schema che Gemini rispetta in decoding vincolato: il JSON esce
-    // sintatticamente valido per costruzione, escape LaTeX compresi.
+    // Lo schema che il modello rispetta in decoding vincolato: il JSON
+    // esce sintatticamente valido per costruzione, escape LaTeX compresi.
     // Prima la sintassi era solo "sperata" e a valle serviva una torre
     // di riparazioni (protect/sanitize/repair/rewrap), che resta come
-    // rete di sicurezza — e come unico paracadute per Apple locale e
-    // Claude, che uno schema non ce l'hanno.
+    // rete di sicurezza — e come unico paracadute per Apple locale, che
+    // uno schema non ce l'ha. Claude invece lo rispetta: `AIService` lo
+    // traduce in JSON Schema e lo passa in `output_config.format` (era
+    // ignorato in silenzio fino al 2026-08-17).
     //
     // `required` tiene il minimo indispensabile, in coerenza con i DTO:
     // meglio un esercizio senza "quote" che un modulo fallito perché il
@@ -1039,7 +1061,8 @@ enum StudioGenerationService {
                 "category": stringField(), "difficulty": stringField(), "topic": stringField(),
                 "prompt": stringField(), "steps": arrayField(of: stringField()),
                 "answer": stringField(), "source": stringField(), "quote": stringField(),
-                "checkExpression": stringField(), "origin": stringField()
+                "checkExpression": stringField(), "origin": stringField(),
+                "figureTikZ": stringField()
             ], required: ["prompt", "answer"]))
         ], required: ["exercises"])
     }
@@ -1121,6 +1144,7 @@ enum StudioGenerationService {
 
             Ogni esercizio ha una soluzione guidata in 3-5 passi concreti e una risposta finale; "topic" è l'argomento in 2-4 parole; "source" è il titolo del materiale a cui ti sei ispirato e "quote" il passaggio originale (servono solo alla tracciabilità, NON vanno citati nella traccia).
             Indica "origin": "invented" se hai scritto tu la traccia ispirandoti ai materiali (è il caso normale), "fromMaterials" solo se la traccia è già presente come tale nei materiali e l'hai riportata.
+            FIGURA (facoltativa ma preziosa): se la traccia beneficia di un disegno — un grafo con nodi e pesi, il grafico di una funzione, una catena di Markov, una figura geometrica — includi "figureTikZ" con SOLO il codice dell'ambiente, da \\begin{tikzpicture} a \\end{tikzpicture} (eventuali \\usetikzlibrary su righe precedenti). Librerie disponibili: pgfplots (\\begin{axis} per le funzioni), automata, positioning, arrows.meta, matrix, calc, shapes. NON usare circuitikz né tikz-cd: non sono disponibili e la figura verrebbe scartata. I dati della figura devono coincidere ESATTAMENTE con quelli della traccia (stessi pesi, stessi nodi, stessa funzione). Se la figura non serve, ometti il campo.
             Includi "checkExpression" SOLO quando la risposta è un valore matematico verificabile in modo indipendente: mettici l'espressione da calcolare in sintassi Wolfram Alpha, il cui risultato deve coincidere con "answer". Omettilo per gli esercizi discorsivi.
             IMPORTANTE su checkExpression: dev'essere una FORMULA o una grandezza, non la descrizione di un compito. Wolfram accetta "integrate x^2 from 0 to 1", "eigenvalues {{2,1},{1,2}}", "roots of s^2+3s+2", "10*2000/(1000+2000)", "bode plot 1/(s+1)"; RIFIUTA fraseggi come "step response 1/(s^2+2s+1)", "voltage divider 10V 1kohm 2kohm", "beam deflection cantilever", "is G(s) stable". Se il calcolo è ingegneristico, scrivilo come espressione numerica esplicita con i valori già sostituiti.
             Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["...","..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials"}]}
@@ -1176,9 +1200,10 @@ enum StudioGenerationService {
             var quote: String?
             var checkExpression: String?
             var origin: String?
+            var figureTikZ: String?
 
             enum CodingKeys: String, CodingKey {
-                case category, difficulty, topic, prompt, answer, source, quote, checkExpression, origin
+                case category, difficulty, topic, prompt, answer, source, quote, checkExpression, origin, figureTikZ
                 case stepList = "steps"
             }
         }
