@@ -132,7 +132,7 @@ struct StudioTrustSheet: View {
         VStack(alignment: .leading, spacing: DesignSpace.s2) {
             Label("Cosa non possiamo garantire", systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(DesignColor.toolWolfram)
+                .foregroundStyle(DesignColor.attention)
             Text("Questi controlli riducono molto gli errori, ma non li eliminano. Un modello può leggere male una formula, attribuire un enunciato alla sezione sbagliata o produrre una soluzione che sembra corretta e non lo è. Prima di un esame, considera i contenuti generati un aiuto al ripasso, non una fonte da citare: la fonte restano i tuoi materiali, che sono sempre a un tocco di distanza dalla citazione.")
                 .font(.system(size: 13))
                 .foregroundStyle(DesignColor.textSecondary)
@@ -144,7 +144,7 @@ struct StudioTrustSheet: View {
         }
         .padding(DesignSpace.s4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DesignColor.toolWolframBg, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
     }
 
     // Come vengono scelti i modelli: stessa regola del resto della
@@ -167,8 +167,8 @@ struct StudioTrustSheet: View {
                 detail: "Claude non ha modelli di riserva: se la chiamata fallisce, il modulo riporta il motivo e puoi riprovare."
             )
         case .gemini:
-            let capable = GeminiModelTier.full.modelChain
-            let fast = GeminiModelTier.lite.modelChain
+            let capable = GeminiModelTier.full.modelChain()
+            let fast = GeminiModelTier.lite.modelChain()
             info(
                 icon: "arrow.triangle.branch",
                 title: "Una catena di modelli, non uno solo",
@@ -186,8 +186,8 @@ struct StudioTrustSheet: View {
             )
             info(
                 icon: "timer",
-                title: "Mai più di tre minuti per modulo",
-                detail: "Ogni modulo ha un tetto di tempo complessivo: scaduto quello, la generazione si ferma con un errore chiaro invece di girare a vuoto. Mentre genera, la card mostra quale modello sta provando e puoi annullare in ogni momento."
+                title: "Un tetto di tempo per ogni modulo",
+                detail: "Tre minuti per riassunti, flashcard e ripasso; cinque per gli esercizi, che prima di accontentarsi provano tutti i modelli capaci compreso il più lento. Scaduto il tetto la generazione si ferma con un errore chiaro invece di girare a vuoto. Mentre genera, la card mostra quale modello sta provando e puoi annullare in ogni momento."
             )
         }
     }

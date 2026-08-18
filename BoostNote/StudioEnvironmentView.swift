@@ -22,25 +22,43 @@ struct StudioEnvironmentView: View {
     // Cartella da cui precompilare il flusso di creazione ("Crea da
     // questo Vault"): materia e materiali già pronti.
     @State private var createPrefillFolder: StudyFolder?
+    // Argomenti su cui puntare, arrivati dall'analisi dei progressi.
+    @State private var createPrefillTopics: [String] = []
 
     var body: some View {
         Group {
             if showingProgress {
-                StudioProgressView(studies: studies, onBack: { showingProgress = false })
+                StudioProgressView(
+                    studies: studies,
+                    onBack: { showingProgress = false },
+                    onGenerateWeak: { folder, topics in
+                        createPrefillFolder = folder
+                        createPrefillTopics = topics
+                        showingProgress = false
+                        showingCreate = true
+                    }
+                )
             } else if showingCreate {
                 StudioCreateFlowView(
                     prefillFolder: createPrefillFolder,
+                    prefillTopics: createPrefillTopics,
+                    // Recupero mirato: solo esercizi. Un riassunto sugli
+                    // argomenti che già sbagli non aggiunge niente.
+                    prefillKinds: createPrefillTopics.isEmpty ? nil : [.exercises],
                     onCancel: {
                         showingCreate = false
                         createPrefillFolder = nil
+                        createPrefillTopics = []
                     },
                     onCreated: { study in
                         selectedStudy = study
                         selectedModule = nil
                         showingCreate = false
                         createPrefillFolder = nil
+                        createPrefillTopics = []
                     }
                 )
+                .id(createPrefillTopics.joined(separator: "|"))
             } else if selectedStudy == nil {
                 StudioHomeView(
                     selectedStudy: $selectedStudy,

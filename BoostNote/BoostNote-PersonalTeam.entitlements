@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Entitlements ATTIVI (Debug e Release), VUOTI di proposito.
+
+	     Un team Apple personale (gratuito) non può firmare iCloud né Push
+	     Notifications. Con BoostNote.entitlements la build su dispositivo
+	     fallisce con "Personal development teams do not support the iCloud
+	     and Push Notifications capabilities": non è una configurazione da
+	     aggiustare, è una regola di Apple.
+
+	     Qui non si chiede nulla, così l'app si costruisce e si installa in
+	     locale con l'account personale — Release compresa, che serve per
+	     misurare davvero l'inchiostro (in Debug Swift è molto più lento).
+
+	     Niente da gestire a runtime: StudioApp prova CloudKit e ripiega da
+	     sé sullo store locale quando non c'è.
+
+	     QUANDO ARRIVERÀ L'ACCOUNT A PAGAMENTO: rimettere
+	     CODE_SIGN_ENTITLEMENTS = BoostNote/BoostNote.entitlements su
+	     entrambe le configurazioni e cancellare questo file. Senza quel
+	     passaggio il sync iCloud resta spento in silenzio. -->
+</dict>
+</plist>

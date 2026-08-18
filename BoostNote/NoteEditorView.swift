@@ -90,7 +90,10 @@ struct NoteEditorView: View {
     @State private var toolBeforeLasso: PenTool?
     @State private var magicAction: MagicAction?
     @State private var isMagicProcessing = false
-    @State private var toolbarDock: ToolbarDock = .top
+    // Su iPhone la barra parte in basso, a portata di pollice: in alto
+    // condividerebbe la riga con back e controlli, e su 400pt di
+    // larghezza non ci sta niente.
+    @State private var toolbarDock: ToolbarDock = DeviceLayout.isPhone ? .bottom : .top
     @State private var dragPreviewDock: ToolbarDock?
     @StateObject private var drawingController = DrawingController()
 
@@ -148,6 +151,9 @@ struct NoteEditorView: View {
     @State private var magicResult: MagicResult?
     // Formula sul foglio aperta per la correzione del suo LaTeX.
     @State private var editingFormula: NoteMedia?
+    // Immagine e sorgente della formula PRIMA della modifica: il "prima"
+    // per la cronologia si fotografa all'apertura dello sheet.
+    @State private var formulaBeforeEdit: (data: Data, sourceText: String?)?
 
     // "Pagine": segmenti virtuali di altezza `pageHeight` calcolati sull'unico
     // scorrimento continuo del foglio — non pagine reali separate.
@@ -171,9 +177,15 @@ struct NoteEditorView: View {
         SidePanelSide(rawValue: storedPanelSide) ?? .trailing
     }
 
+    // Larghezza del contenitore, letta dal GeometryReader del body: serve
+    // al pannello su iPhone, dove non c'è spazio per foglio e strumenti
+    // affiancati e il pannello occupa tutta la larghezza.
+    @State private var editorContainerWidth: CGFloat = 0
+
     // Larghezza scelta dall'utente (o quella in corso di trascinamento).
     private var panelWidth: CGFloat {
-        liveResizeWidth ?? CGFloat(storedPanelWidth)
+        if DeviceLayout.isPhone { return editorContainerWidth }
+        return liveResizeWidth ?? CGFloat(storedPanelWidth)
     }
 
     private var currentPanelWidth: CGFloat {
@@ -219,6 +231,10 @@ struct NoteEditorView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear { editorContainerWidth = geometry.size.width }
+            .onChange(of: geometry.size.width) { _, width in
+                editorContainerWidth = width
+            }
         }
         .alert("Titolo della nota", isPresented: $showingRename) {
             TextField("Titolo", text: $renameText)
@@ -244,18 +260,18 @@ struct NoteEditorView: View {
             // da quando è tornato): genera le pagine dai campi legacy.
             // Poi garantisce sempre una pagina vuota in fondo, così lo
             // scorrimento continua oltre l'ultimo contenuto (Notability).
-            if !note.isWhiteboard {
-                note.migrateLegacyContentToPages(in: context)
-                note.ensureTrailingBlankPage(in: context)
-            }
+            note.migrateLegacyContentToPages(in: context)
+            note.ensureTrailingBlankPage(in: context)
             restoreToolPreferences()
         }
         .onDisappear {
             // Segnalibro automatico: alla prossima apertura si riparte da qui.
-            if !note.isWhiteboard {
-                note.lastViewedPage = drawingController.currentPageIndex(pageHeight: pageHeight)
-            }
+            note.lastViewedPage = drawingController.currentPageIndex(pageHeight: pageHeight)
             saveToolPreferences()
+            // L'assicurazione: il pacchetto .boostnote nella cartella
+            // d'archivio (se configurata). Snapshot sul main, scrittura
+            // in background — la chiusura non aspetta.
+            NoteArchiveService.archive(note)
         }
         .onChange(of: note.title) { note.updatedAt = .now }
         .onChange(of: note.drawingData) { note.updatedAt = .now }
@@ -288,12 +304,7 @@ struct NoteEditorView: View {
                 // Import diretto come pagine in coda alla nota aperta: si
                 // continua a scrivere prima e dopo. Su lavagna diventa lo
                 // sfondo del foglio.
-                if note.isWhiteboard {
-                    note.pdfBackgroundData = data
-                } else {
-                    note.appendPages(fromPDF: data, in: context)
-                }
-                note.updatedAt = .now
+                appendPDFPagesRecorded(data)
             case .documentPanel:
                 documentPreviewData = data
                 documentPreviewName = url.deletingPathExtension().lastPathComponent
@@ -331,19 +342,29 @@ struct NoteEditorView: View {
             )
         }
         .sheet(item: $editingFormula) { media in
-            FormulaEditSheet(media: media) { note.updatedAt = .now }
+            FormulaEditSheet(media: media) {
+                note.updatedAt = .now
+                // La vista si aggiorna da sola (syncMedia confronta la
+                // versione del contenuto): qui resta solo da registrare.
+                if let before = formulaBeforeEdit,
+                   before.data != media.data || before.sourceText != media.sourceText {
+                    let id = media.persistentModelID
+                    let after = (data: media.data, sourceText: media.sourceText)
+                    drawingController.record("Modifica formula", undo: { [self] in
+                        applyFormulaContent(id: id, data: before.data, sourceText: before.sourceText)
+                    }, redo: { [self] in
+                        applyFormulaContent(id: id, data: after.data, sourceText: after.sourceText)
+                    })
+                }
+                formulaBeforeEdit = nil
+            }
         }
         .sheet(isPresented: $showingWebeepDocPicker) {
             WebeepFilePickerSheet { data, name in
                 switch webeepPickerTarget {
                 case .notePages:
                     // Import diretto come pagine in coda, come dai File.
-                    if note.isWhiteboard {
-                        note.pdfBackgroundData = data
-                    } else {
-                        note.appendPages(fromPDF: data, in: context)
-                    }
-                    note.updatedAt = .now
+                    appendPDFPagesRecorded(data)
                 case .documentPanel:
                     documentPreviewData = data
                     documentPreviewName = name
@@ -388,7 +409,9 @@ struct NoteEditorView: View {
     // ridimensionare e una zona sensibile lì si mangerebbe i tratti.
     @ViewBuilder
     private func resizeGrip(containerWidth: CGFloat) -> some View {
-        if isSidePanelHidden {
+        if isSidePanelHidden || DeviceLayout.isPhone {
+            // Su iPhone il pannello è a tutta larghezza: non c'è nessun
+            // confine col foglio da trascinare.
             Divider().opacity(0)
         } else {
             ZStack {
@@ -426,6 +449,12 @@ struct NoteEditorView: View {
     // maniglia) non tocca il contenuto.
     private var sidePanelStack: some View {
         VStack(spacing: 0) {
+            // Su iPhone il pannello parte dal bordo fisico dello schermo
+            // (l'editor ignora la safe area): l'intestazione scende sotto
+            // la Dynamic Island come i controlli del foglio.
+            if DeviceLayout.isPhone {
+                Color.clear.frame(height: phoneTopInset)
+            }
             HStack(spacing: DesignSpace.s2) {
                 Button {
                     withAnimation { isSidePanelHidden = true }
@@ -710,32 +739,7 @@ struct NoteEditorView: View {
                 // Immagini e PDF si inseriscono dalla barra e restano
                 // trascinabili sul foglio; gli strumenti vivono nel
                 // pannello laterale, non più come widget sul foglio.
-                if note.isWhiteboard {
-                    DrawingCanvasView(
-                        drawingData: $note.drawingData,
-                        textBoxes: $note.textBoxes,
-                        media: note.media,
-                        tool: selectedTool,
-                        color: activeColor,
-                        inkWidth: activeInkWidth,
-                        eraserType: eraserType,
-                        eraserWidth: eraserWidth,
-                        template: note.template,
-                        patternScale: note.patternScale,
-                        pageWidth: note.pageSize.width,
-                        pageHeight: pageHeight,
-                        pdfBackgroundData: note.pdfBackgroundData,
-                        isWhiteboard: true,
-                        magicAction: magicAction,
-                        controller: drawingController,
-                        onDeleteMedia: deleteMedia,
-                        onEditMedia: { editingFormula = $0 },
-                        onMagicCapture: handleMagicCapture,
-                        onEraseStrokeCompleted: handleEraseStrokeCompleted,
-                        onPencilDoubleTap: handlePencilDoubleTap
-                    )
-                } else {
-                    PagedNoteCanvasView(
+                PagedNoteCanvasView(
                         pages: note.sortedPages,
                         initialPage: note.lastViewedPage,
                         textBoxes: $note.textBoxes,
@@ -752,7 +756,7 @@ struct NoteEditorView: View {
                         magicAction: magicAction,
                         controller: drawingController,
                         onDeleteMedia: deleteMedia,
-                        onEditMedia: { editingFormula = $0 },
+                        onEditMedia: { item in formulaBeforeEdit = (item.data, item.sourceText); editingFormula = item },
                         onMagicCapture: handleMagicCapture,
                         onEraseStrokeCompleted: handleEraseStrokeCompleted,
                         onLassoFinished: handleLassoFinished,
@@ -769,8 +773,7 @@ struct NoteEditorView: View {
                         onNeedMorePages: {
                             note.appendBlankPage(in: context)
                         }
-                    )
-                }
+                )
 
                 // Placeholder "aggancio" ai 4 lati, visibili solo mentre si
                 // trascina la barra — non intercettano tocchi.
@@ -784,6 +787,7 @@ struct NoteEditorView: View {
                     backButton
                 }
                 .padding(8)
+                .padding(.top, phoneTopInset)
                 .safeAreaPadding(.top)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
@@ -791,6 +795,7 @@ struct NoteEditorView: View {
                 // agganciata la barra della penna (che invece si sposta).
                 topRightToolbar
                     .padding(8)
+                    .padding(.top, phoneTopInset)
                     .safeAreaPadding(.top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
@@ -817,8 +822,7 @@ struct NoteEditorView: View {
             onInsertImage: { showingPhotosPicker = true },
             onInsertPDF: { pdfPickerTarget = .notePages; showingPDFPicker = true },
             onInsertPDFFromWebeep: { webeepPickerTarget = .notePages; showingWebeepDocPicker = true },
-            onClearPage: { drawingController.clearCurrentPage() },
-            onClearHighlighter: { drawingController.clearHighlighterOnCurrentPage() }
+
         )
         .padding(.bottom, 8)
         // In alto la barra condivide la riga con i controlli agli angoli:
@@ -828,10 +832,16 @@ struct NoteEditorView: View {
         // se li rubava a vicenda.
         .padding(.leading, toolbarDock == .top ? 64 : 8)
         .padding(.trailing, toolbarDock == .top ? 216 : 8)
-        .padding(.top, 8)
+        .padding(.top, toolbarDock == .top ? 8 + phoneTopInset : 8)
         .safeAreaPadding(.top)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: toolbarDock.alignment)
     }
+
+    // L'editor ignora la safe area (il foglio deve arrivare ai bordi), e
+    // su iPad andava bene anche per i controlli. Su iPhone però la
+    // Dynamic Island copriva undo/strumenti: i controlli fissi in alto
+    // scendono sotto di lei.
+    private var phoneTopInset: CGFloat { DeviceLayout.isPhone ? 48 : 0 }
 
     // Placeholder fantasma ai 4 lati, mostrati mentre si trascina la barra:
     // quello più vicino al punto di rilascio si evidenzia.
@@ -898,6 +908,8 @@ struct NoteEditorView: View {
                     .frame(width: 34, height: 34)
                     .contentShape(Rectangle())
             }
+            .disabled(drawingController.pagedContainer != nil && !drawingController.canUndo)
+            .opacity(drawingController.pagedContainer != nil && !drawingController.canUndo ? 0.35 : 1)
             .accessibilityLabel("Annulla")
 
             Button(action: drawingController.redo) {
@@ -905,6 +917,8 @@ struct NoteEditorView: View {
                     .frame(width: 34, height: 34)
                     .contentShape(Rectangle())
             }
+            .disabled(drawingController.pagedContainer != nil && !drawingController.canRedo)
+            .opacity(drawingController.pagedContainer != nil && !drawingController.canRedo ? 0.35 : 1)
             .accessibilityLabel("Ripeti")
 
             Divider().frame(height: 20)
@@ -922,7 +936,12 @@ struct NoteEditorView: View {
                     showingToolsPicker = false
                     openSidePanel(tool)
                 }
-                .presentationCompactAdaptation(.popover)
+                // Su iPad (anche in Split View) resta il popover a
+                // cascata; su iPhone un popover largo 680pt non esiste:
+                // meglio lo sheet coi detent. I detent sugli altri
+                // dispositivi vengono semplicemente ignorati.
+                .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
+                .presentationDetents([.medium, .large])
             }
 
             Button {
@@ -943,7 +962,8 @@ struct NoteEditorView: View {
                     drawingController.scrollToPage(index, pageHeight: pageHeight)
                     showingSearch = false
                 }
-                .presentationCompactAdaptation(.popover)
+                .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
+                .presentationDetents([.medium, .large])
             }
 
             Menu {
@@ -985,10 +1005,57 @@ struct NoteEditorView: View {
     }
 
     private func insertTextBox(_ text: String, at rect: CGRect) {
+        let before = note.textBoxes
         var box = NoteTextBox(x: rect.minX, y: rect.maxY + 12)
         box.text = text
         note.textBoxes.append(box)
         note.updatedAt = .now
+        // Aggiunta/rimozione pura: il sync per ID del canvas basta, non
+        // serve riscrivere frame di caselle esistenti.
+        drawingController.recordChange("Casella di testo", from: before, to: note.textBoxes) { boxes in
+            note.textBoxes = boxes
+            note.updatedAt = .now
+        }
+    }
+
+    // Scatola col riferimento VIVO a un media: quando undo/redo lo
+    // eliminano e lo ricreano, l'oggetto SwiftData rinasce con un'altra
+    // identità, e i passi successivi della cronologia devono seguire
+    // quella nuova — un riferimento diretto punterebbe a un morto.
+    private final class MediaRef {
+        var item: NoteMedia
+        init(_ item: NoteMedia) { self.item = item }
+    }
+
+    // Ciò che serve per far rinascere un media identico (tranne l'identità).
+    private struct MediaSnapshot {
+        let x: Double, y: Double, width: Double, height: Double
+        let kind: NoteMediaKind
+        let data: Data
+        let sourceText: String?
+
+        init(_ item: NoteMedia) {
+            x = item.x; y = item.y; width = item.width; height = item.height
+            kind = item.kind; data = item.data; sourceText = item.sourceText
+        }
+
+        func make(note: Note) -> NoteMedia {
+            NoteMedia(x: x, y: y, width: width, height: height, kind: kind, data: data, sourceText: sourceText, note: note)
+        }
+    }
+
+    private func recordMediaLifecycle(_ name: String, ref: MediaRef, snapshot: MediaSnapshot, inserted: Bool) {
+        let remove = { [context] in
+            context.delete(ref.item)
+            note.updatedAt = .now
+        }
+        let restore = { [context] in
+            let reborn = snapshot.make(note: note)
+            context.insert(reborn)
+            ref.item = reborn
+            note.updatedAt = .now
+        }
+        drawingController.record(name, undo: inserted ? remove : restore, redo: inserted ? restore : remove)
     }
 
     private func insertMedia(kind: NoteMediaKind, data: Data) {
@@ -996,11 +1063,51 @@ struct NoteEditorView: View {
         let item = NoteMedia(x: 60 + offset, y: currentPageTop + offset, kind: kind, data: data, note: note)
         context.insert(item)
         note.updatedAt = .now
+        recordMediaLifecycle("Inserimento", ref: MediaRef(item), snapshot: MediaSnapshot(item), inserted: true)
     }
 
     private func deleteMedia(_ item: NoteMedia) {
+        let snapshot = MediaSnapshot(item)
+        let ref = MediaRef(item)
         context.delete(item)
         note.updatedAt = .now
+        recordMediaLifecycle("Eliminazione", ref: ref, snapshot: snapshot, inserted: false)
+    }
+
+    // Ripristino del contenuto di una formula (undo/redo): per ID
+    // persistente, come i frame dei media — su un oggetto morto è no-op.
+    private func applyFormulaContent(id: PersistentIdentifier, data: Data, sourceText: String?) {
+        guard let item = note.media.first(where: { $0.persistentModelID == id }) else { return }
+        item.data = data
+        item.sourceText = sourceText
+        note.updatedAt = .now
+    }
+
+    // Scatola per le pagine importate da un PDF: come MediaRef, segue le
+    // identità nuove quando un redo le ricrea.
+    private final class PagesRef {
+        var pages: [NotePage] = []
+    }
+
+    // Import di un PDF come pagine della nota, registrato in cronologia.
+    // L'annulla elimina ESATTAMENTE le pagine aggiunte da questo import
+    // (diff sugli ID persistenti), il ripeti le ricrea dagli stessi byte.
+    private func appendPDFPagesRecorded(_ data: Data) {
+        let before = Set(note.pages.map(\.persistentModelID))
+        note.appendPages(fromPDF: data, in: context)
+        note.updatedAt = .now
+        let ref = PagesRef()
+        ref.pages = note.pages.filter { !before.contains($0.persistentModelID) }
+        guard !ref.pages.isEmpty else { return }
+        drawingController.record("Import PDF", undo: { [context] in
+            ref.pages.forEach(context.delete)
+            note.updatedAt = .now
+        }, redo: { [context] in
+            let existing = Set(note.pages.map(\.persistentModelID))
+            note.appendPages(fromPDF: data, in: context)
+            ref.pages = note.pages.filter { !existing.contains($0.persistentModelID) }
+            note.updatedAt = .now
+        })
     }
 
     // Scrive colori/spessori scelti alla chiusura della nota (un solo
@@ -1243,6 +1350,7 @@ struct NoteEditorView: View {
                     )
                     context.insert(item)
                     note.updatedAt = .now
+                    recordMediaLifecycle("Formula", ref: MediaRef(item), snapshot: MediaSnapshot(item), inserted: true)
                 } else {
                     insertTextBox(text, at: rect)
                 }

@@ -64,15 +64,32 @@ enum GeminiModelTier: String, CaseIterable {
     // fallirebbe comunque la validazione dello schema.
     // Ordine tarato sui tempi MISURATI sullo stesso prompt da 21k token:
     // flash-lite 1,7s - 3-flash-preview 9,8s - flash-latest 11,3s -
-    // 3.5-flash 57,9s. Quest'ultimo sta in fondo a entrambe le catene:
-    // supera il timeout di rete, va toccato solo se non resta altro.
-    var modelChain: [String] {
+    // 3.5-flash 57,9s. Quest'ultimo è l'ultima cartuccia: ci sta sotto il
+    // timeout di rete (120s), ma in coda a una catena che ha già speso
+    // tempo in 503 rischia di sfondare il tetto per modulo — per questo
+    // di norma sta in fondo, e va davanti ai Lite solo dove la qualità
+    // vale l'attesa (vedi `qualityFirst`).
+    // `qualityFirst` sposta il Flash lento DAVANTI ai Lite invece che in
+    // fondo. Serve agli esercizi e alla loro verifica, e solo a loro
+    // (scelta dell'utente, 2026-08-17): lì la differenza Flash/Lite è
+    // qualitativa — il Lite produce domande di definizione, il Flash
+    // problemi con dati da applicare — quindi esaurire TUTTI i Flash
+    // disponibili prima di scendere vale l'attesa. Un esercizio vero
+    // dopo un minuto batte una domanda di definizione dopo due secondi.
+    //
+    // Sugli altri moduli resta l'ordine di prima: riassunti, flashcard e
+    // ripasso sono compiti estrattivi dove il Lite non si distingue, e
+    // far aspettare un minuto per un pareggio è solo attesa sprecata.
+    //
+    // Su `.lite` non cambia niente: chi sceglie quel tier ha scelto la
+    // quota, e comunque gli esercizi passano da `.full` esplicito.
+    func modelChain(qualityFirst: Bool = false) -> [String] {
         let lite = ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"]
         let capable = ["gemini-flash-latest", "gemini-3-flash-preview"]
         let slow = ["gemini-3.5-flash"]
         switch self {
         case .lite: return lite + capable + slow
-        case .full: return capable + lite + slow
+        case .full: return qualityFirst ? capable + slow + lite : capable + lite + slow
         }
     }
 
@@ -315,15 +332,16 @@ enum AIService {
         tier: GeminiModelTier? = nil,
         schema: [String: Any]? = nil,
         thinkingBudget: Int = 0,
+        qualityFirst: Bool = false,
         onAttempt: (@Sendable (_ modelID: String, _ position: Int, _ total: Int) -> Void)? = nil
     ) async -> Result<AIReply, AIServiceError> {
         switch selectedProvider {
         case .appleLocal:
             return await generateWithAppleLocal(prompt: prompt).map { AIReply(text: $0, modelID: nil) }
         case .gemini:
-            return await generateWithGemini(prompt: prompt, purpose: purpose, tier: tier, schema: schema, thinkingBudget: thinkingBudget, onAttempt: onAttempt)
+            return await generateWithGemini(prompt: prompt, purpose: purpose, tier: tier, schema: schema, thinkingBudget: thinkingBudget, qualityFirst: qualityFirst, onAttempt: onAttempt)
         case .claude:
-            return await generateWithClaude(prompt: prompt).map { AIReply(text: $0, modelID: "claude-haiku") }
+            return await generateWithClaude(prompt: prompt, purpose: purpose, schema: schema).map { AIReply(text: $0, modelID: "claude-haiku") }
         }
     }
 
@@ -350,7 +368,7 @@ enum AIService {
     // fallback la generazione ripiegherebbe sul mock pur avendo quota
     // altrove.
     private static func geminiModelChain(for purpose: AIPurpose) -> [String] {
-        geminiTier(for: purpose).modelChain
+        geminiTier(for: purpose).modelChain()
     }
 
     // True quando l'ultima generazione è finita sui modelli Lite pur
@@ -369,7 +387,7 @@ enum AIService {
     // solo dei modelli già provati: meglio un avviso mancato che uno
     // sbagliato.
     static func capableQuotaLooksExhausted() async -> Bool {
-        let capable = GeminiModelTier.full.modelChain.filter { !isLiteModel($0) }
+        let capable = GeminiModelTier.full.modelChain().filter { !isLiteModel($0) }
         for modelID in capable where !(await GeminiModelLedger.shared.isExhausted(modelID)) {
             return false
         }
@@ -447,12 +465,12 @@ enum AIService {
         }
     }
 
-    private static func generateWithGemini(prompt: String, purpose: AIPurpose, tier: GeminiModelTier? = nil, schema: [String: Any]? = nil, thinkingBudget: Int = 0, onAttempt: (@Sendable (String, Int, Int) -> Void)? = nil) async -> Result<AIReply, AIServiceError> {
+    private static func generateWithGemini(prompt: String, purpose: AIPurpose, tier: GeminiModelTier? = nil, schema: [String: Any]? = nil, thinkingBudget: Int = 0, qualityFirst: Bool = false, onAttempt: (@Sendable (String, Int, Int) -> Void)? = nil) async -> Result<AIReply, AIServiceError> {
         guard geminiKey != nil else {
             return .failure(.notConfigured("Nessuna chiave Gemini: creane una gratuita su aistudio.google.com e salvala nel Profilo."))
         }
 
-        let chain = tier?.modelChain ?? geminiModelChain(for: purpose)
+        let chain = tier?.modelChain(qualityFirst: qualityFirst) ?? geminiModelChain(for: purpose)
         var lastError: AIServiceError = .badResponse(nil)
         var attemptedAny = false
         var skippedBusy = false
@@ -604,13 +622,18 @@ enum AIService {
         // (checklist anti-allucinazione).
         var generationConfig: [String: Any] = [
             "temperature": 0.2,
-            "maxOutputTokens": purpose.maxOutputTokens,
-            "responseMimeType": "application/json"
+            "maxOutputTokens": purpose.maxOutputTokens
         ]
-        // responseSchema: la sintassi JSON la garantisce l'API (decoding
-        // vincolato), escape LaTeX compresi. Verificato 2026-08-15:
-        // 3-flash-preview senza schema produceva JSON rotto, con schema no.
+        // Il MIME JSON si imposta SOLO insieme allo schema. Prima era
+        // fisso su application/json per ogni chiamata testuale, anche
+        // quelle che chiedono prosa: il modello, costretto al JSON,
+        // inventava un involucro con chiavi sue ("Spiega" mostrava
+        // {"titolo": ...} crudo) e il doppio strato di escape maciullava
+        // i backslash del LaTeX (\in → in). Chi vuole JSON passa uno
+        // schema, e allora la sintassi la garantisce l'API (decoding
+        // vincolato, verificato 2026-08-15); chi vuole testo, riceve testo.
         if let schema {
+            generationConfig["responseMimeType"] = "application/json"
             generationConfig["responseSchema"] = schema
         }
         // thinkingConfig va DENTRO generationConfig. Il vecchio commento
@@ -931,7 +954,57 @@ enum AIService {
 
     // MARK: - Claude (BYOK)
 
-    private static func generateWithClaude(prompt: String) async -> Result<String, AIServiceError> {
+    // Tetto in uscita per Claude, DIVERSO da quello di Gemini: Haiku 4.5
+    // arriva a 64k token, ma questa è una richiesta non-streaming su
+    // URLSession e sopra i ~16k si rischia il timeout HTTP prima che il
+    // modello abbia finito. Restare sotto quella soglia è la scelta
+    // conservativa: chi vuole i 64k pieni deve prima passare allo
+    // streaming SSE. Comunque molto più dei 3000 di prima, che erano la
+    // stessa trappola già pagata su Gemini (vedi maxOutputTokens): un set
+    // di esercizi con traccia, passaggi e citazione non ci sta, la
+    // risposta veniva troncata e il JSON non decodificava.
+    private static func claudeMaxOutputTokens(for purpose: AIPurpose) -> Int {
+        switch purpose {
+        case .reading: 8192
+        case .generation: 16000
+        }
+    }
+
+    // Traduce lo schema in dialetto Gemini (tipi in MAIUSCOLO) in JSON
+    // Schema, che è quello che vuole `output_config.format` di Anthropic.
+    // Oltre al case dei tipi c'è un requisito non negoziabile: ogni
+    // oggetto deve portare "additionalProperties": false, altrimenti la
+    // compilazione dello schema viene rifiutata con un 400.
+    //
+    // `required` viene lasciato COM'È, cioè minimo (vedi il commento su
+    // responseSchema in StudioGenerationService): "quote" e "source" sono
+    // opzionali per scelta, meglio un esercizio senza citazione che un
+    // modulo fallito. Se la compilazione dovesse pretendere tutti i campi
+    // in required, il 400 lo dice esplicitamente.
+    private static func claudeJSONSchema(from node: Any) -> Any {
+        guard var dict = node as? [String: Any] else { return node }
+        var lowercased: String?
+        if let type = dict["type"] as? String {
+            lowercased = type.lowercased()
+            dict["type"] = lowercased
+        }
+        if let properties = dict["properties"] as? [String: Any] {
+            dict["properties"] = properties.mapValues { claudeJSONSchema(from: $0) }
+        }
+        if lowercased == "object" {
+            dict["additionalProperties"] = false
+        }
+        if let items = dict["items"] {
+            dict["items"] = claudeJSONSchema(from: items)
+        }
+        return dict
+    }
+
+    private static func generateWithClaude(
+        prompt: String,
+        purpose: AIPurpose = .generation,
+        schema: [String: Any]? = nil
+    ) async -> Result<String, AIServiceError> {
         guard let key = claudeKey else {
             return .failure(.notConfigured("Nessuna chiave Anthropic configurata nel Profilo."))
         }
@@ -943,12 +1016,22 @@ enum AIService {
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 3000,
+            "max_tokens": claudeMaxOutputTokens(for: purpose),
             "temperature": 0.2,
             "messages": [["role": "user", "content": prompt]]
         ]
+        // Output strutturato garantito lato server, l'equivalente del
+        // responseSchema di Gemini: il JSON esce valido per costruzione
+        // invece che sperato. Prima lo schema arrivava fin qui e veniva
+        // ignorato in silenzio, quindi su questo provider la torre di
+        // riparazioni a valle era l'UNICA difesa.
+        if let schema {
+            body["output_config"] = [
+                "format": ["type": "json_schema", "schema": claudeJSONSchema(from: schema)]
+            ]
+        }
         guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
             return .failure(.badResponse(nil))
         }
@@ -970,8 +1053,20 @@ enum AIService {
            let message = apiError["message"] as? String {
             return .failure(.network(message))
         }
+        // Il perché si è fermato va guardato PRIMA di leggere il contenuto:
+        // con l'output strutturato un troncamento produce JSON incompleto
+        // che a valle diventerebbe un generico "formato inatteso", e su un
+        // rifiuto il contenuto non rispetta lo schema per definizione.
+        switch json["stop_reason"] as? String {
+        case "refusal":
+            return .failure(.badResponse("Il modello ha rifiutato di rispondere a questo contenuto."))
+        case "max_tokens":
+            return .failure(.badResponse("Risposta troncata: ha superato il tetto di token in uscita. Riprova con meno materiale o meno elementi."))
+        default:
+            break
+        }
         guard let content = json["content"] as? [[String: Any]],
-              let text = content.first?["text"] as? String else {
+              let text = content.first(where: { $0["type"] as? String == "text" })?["text"] as? String else {
             return .failure(.badResponse(nil))
         }
         return .success(text)

@@ -56,8 +56,8 @@ final class GeminiQuotaMeter {
 
     // Le famiglie e i loro tetti noti (20/giorno i capaci, 500 i Lite):
     // le quote dei modelli in catena si sommano.
-    static var capableModels: [String] { GeminiModelTier.full.modelChain.filter { !AIService.isLiteModel($0) } }
-    static var liteModels: [String] { GeminiModelTier.lite.modelChain.filter { AIService.isLiteModel($0) } }
+    static var capableModels: [String] { GeminiModelTier.full.modelChain().filter { !AIService.isLiteModel($0) } }
+    static var liteModels: [String] { GeminiModelTier.lite.modelChain().filter { AIService.isLiteModel($0) } }
     static var capableLimit: Int { capableModels.count * 20 }
     static var liteLimit: Int { liteModels.count * 500 }
 }

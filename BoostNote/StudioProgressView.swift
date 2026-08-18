@@ -8,6 +8,9 @@ import Charts
 struct StudioProgressView: View {
     let studies: [Study]
     var onBack: () -> Void
+    // Chiude il cerchio: dai risultati a un nuovo studio mirato sugli
+    // argomenti andati peggio.
+    var onGenerateWeak: ((StudyFolder, [String]) -> Void)?
 
     @Query(sort: \ExerciseAttempt.date) private var allAttempts: [ExerciseAttempt]
 
@@ -58,6 +61,7 @@ struct StudioProgressView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: DesignSpace.s6) {
                         kpiRow
+                        weakTopicsCard
                         dailyChart
                         AdaptiveHVStack {
                             accuracyByDifficulty
@@ -89,7 +93,7 @@ struct StudioProgressView: View {
             kpiCard(value: "\(attempts.count)", label: "Esercizi svolti", icon: "pencil.and.list.clipboard", color: DesignColor.brandPrimary)
             kpiCard(value: "\(Int(accuracy * 100))%", label: "Accuratezza", icon: "target", color: accuracy >= 0.6 ? DesignColor.success : DesignColor.danger)
             kpiCard(value: totalMinutes < 60 ? "\(totalMinutes) min" : String(format: "%.1f h", Double(totalMinutes) / 60), label: "Tempo sugli esercizi", icon: "clock", color: DesignColor.toolSearch)
-            kpiCard(value: "\(Set(attempts.map(\.topic)).count)", label: "Argomenti toccati", icon: "books.vertical", color: DesignColor.toolLatex)
+            kpiCard(value: "\(Set(attempts.map(\.topic)).count)", label: "Argomenti toccati", icon: "books.vertical", color: DesignColor.insight)
         }
     }
 
@@ -247,6 +251,103 @@ struct StudioProgressView: View {
             .sorted { $0.total > $1.total }
             .prefix(6)
             .map { $0 }
+    }
+
+    // MARK: - Argomenti deboli → nuovo studio mirato
+    //
+    // Questa card esiste perché gli argomenti sono diventati un
+    // vocabolario stabile: prima il modello se li inventava a ogni
+    // generazione ("dualità in PL" / "problema duale") e raggrupparli su
+    // una stringa libera dava statistiche frantumate, inutili per
+    // decidere su cosa insistere. Con l'indice del Vault le percentuali
+    // per argomento sono confrontabili, e quindi azionabili.
+    //
+    // Due soglie, entrambe prudenti: sotto il 60% di risposte corrette,
+    // e almeno 3 tentativi — un argomento sbagliato una volta sola non è
+    // una debolezza, è un caso.
+    private struct WeakTopic {
+        let topic: String
+        let correct: Int
+        let total: Int
+        let folder: StudyFolder
+        var accuracy: Double { Double(correct) / Double(max(total, 1)) }
+    }
+
+    private var weakTopics: [WeakTopic] {
+        // Un argomento appartiene al Vault dello studio in cui è stato
+        // esercitato: senza cartella non si saprebbe da dove rigenerare.
+        let grouped = Dictionary(grouping: attempts.filter { $0.study?.folder != nil }) { $0.topic }
+        return grouped.compactMap { topic, items -> WeakTopic? in
+            guard !topic.isEmpty, items.count >= 3,
+                  let folder = items.compactMap({ $0.study?.folder }).last else { return nil }
+            let correct = items.filter(\.isCorrect).count
+            let stat = WeakTopic(topic: topic, correct: correct, total: items.count, folder: folder)
+            return stat.accuracy < 0.6 ? stat : nil
+        }
+        .sorted { $0.accuracy < $1.accuracy }
+    }
+
+    @ViewBuilder
+    private var weakTopicsCard: some View {
+        let weak = weakTopics
+        if !weak.isEmpty, let folder = weak.first?.folder {
+            // Un solo Vault per volta: mescolare argomenti di corsi
+            // diversi in uno studio non avrebbe senso. Si prende quello
+            // dell'argomento più debole e si tengono i suoi.
+            let sameVault = weak.filter { $0.folder.id == folder.id }.prefix(5)
+            VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                HStack(spacing: DesignSpace.s2) {
+                    Image(systemName: "target")
+                        .font(.system(size: 13))
+                        .foregroundStyle(DesignColor.danger)
+                    Text("DOVE SEI PIÙ IN DIFFICOLTÀ")
+                        .font(.system(size: 11, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(DesignColor.textTertiary)
+                    Spacer()
+                    Text(folder.name)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+                VStack(spacing: DesignSpace.s2) {
+                    ForEach(Array(sameVault), id: \.topic) { stat in
+                        HStack(spacing: DesignSpace.s3) {
+                            Text(stat.topic)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(DesignColor.textPrimary)
+                                .lineLimit(1)
+                            Spacer(minLength: DesignSpace.s3)
+                            Text("\(Int(stat.accuracy * 100))%")
+                                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(DesignColor.danger)
+                            Text("\(stat.correct)/\(stat.total)")
+                                .font(.system(size: 11).monospacedDigit())
+                                .foregroundStyle(DesignColor.textTertiary)
+                        }
+                    }
+                }
+                if let onGenerateWeak {
+                    Button {
+                        onGenerateWeak(folder, sameVault.map(\.topic))
+                    } label: {
+                        Label("Genera esercizi su questi argomenti", systemImage: "sparkles")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(DesignColor.textOnBrand)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, DesignSpace.s3)
+                            .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    Text("Nuovo studio dal Vault “\(folder.name)”, con questi argomenti già selezionati e solo il modulo esercizi.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(DesignColor.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(DesignSpace.s5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DesignColor.dangerBg.opacity(0.5), in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        }
     }
 
     private var topicCoverage: some View {

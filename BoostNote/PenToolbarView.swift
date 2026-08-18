@@ -78,8 +78,6 @@ struct PenToolbarView: View {
     var onInsertImage: () -> Void
     var onInsertPDF: () -> Void
     var onInsertPDFFromWebeep: () -> Void
-    var onClearPage: () -> Void
-    var onClearHighlighter: () -> Void
 
     private let colors: [Color] = [.black, .red, .blue, .green, .orange, .purple]
 
@@ -522,42 +520,13 @@ struct PenToolbarView: View {
                 }
                 .frame(height: 84)
             }
-
-            Divider()
-
-            // Cancellazioni in blocco: passare la gomma a mano su una
-            // pagina intera è lungo e porta via anche ciò che si voleva
-            // tenere. Queste lavorano sui tratti, quindi sono esatte.
-            // Lo scopo ("la pagina") sta nelle etichette dei pulsanti: un
-            // titolo che lo ripeteva era una riga in più che diceva la
-            // stessa cosa.
-            Button {
-                onClearHighlighter()
-                showingEraserOptions = false
-            } label: {
-                Label("Togli le evidenziature della pagina", systemImage: "highlighter")
-                    .font(.system(size: 14))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(DesignColor.textPrimary)
-
-            Button(role: .destructive) {
-                onClearPage()
-                showingEraserOptions = false
-            } label: {
-                Label("Cancella tutta la pagina", systemImage: "trash")
-                    .font(.system(size: 14))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(DesignColor.danger)
-
-            Text("Entrambe si annullano con la freccia indietro.")
-                .font(.system(size: 11))
-                .foregroundStyle(DesignColor.textTertiary)
+            // Le cancellazioni in blocco ("togli evidenziature",
+            // "cancella tutta la pagina") sono state tolte su richiesta
+            // dell'utente (2026-08-16): il popover della gomma torna a
+            // fare una cosa sola, la dimensione. Il codice sotto
+            // (clearHighlighter/clearPage in DrawingCanvasView) resta —
+            // se un giorno serviranno, il posto giusto sarà un menu della
+            // pagina, non lo strumento.
         }
     }
 

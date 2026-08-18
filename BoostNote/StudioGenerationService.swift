@@ -274,10 +274,21 @@ enum StudioGenerationService {
     // Tetto complessivo per modulo. Senza, il caso peggiore era il
     // prodotto di tutti i moltiplicatori della catena: ~40 minuti di
     // "Generazione in corso…" che nessuno poteva fermare.
-    private static let moduleDeadline: TimeInterval = 180
+    //
+    // Gli esercizi hanno un tetto più alto, e NON è una preferenza: con
+    // `qualityFirst` la loro catena mette il Flash lento in terza
+    // posizione, quindi il caso peggiore diventa due 503 da ~20s + fino a
+    // 120s di timeout su quel modello + i Lite in coda. Con 180s si
+    // sfonderebbe proprio mentre restano modelli liberi da provare, e il
+    // risultato non sarebbe "esercizi più semplici" ma "nessun esercizio"
+    // — cioè peggio di prima. Il tetto serve a fermare le derive, non a
+    // impedire l'attesa che abbiamo scelto di accettare.
+    private static func moduleDeadline(for kind: StudyModuleKind) -> TimeInterval {
+        kind == .exercises ? 300 : 180
+    }
 
     private static func generateWithAI(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, indexTopics: [String] = [], progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
-        await withDeadline(seconds: moduleDeadline) {
+        await withDeadline(seconds: moduleDeadline(for: kind)) {
             // Il retry sul JSON malformato resta SOLO per i provider
             // senza structured output (Apple locale, Claude): su Gemini
             // il responseSchema garantisce la sintassi, e il retry era
@@ -342,6 +353,11 @@ enum StudioGenerationService {
             tier: kind == .exercises ? .full : .lite,
             schema: responseSchema(for: kind),
             thinkingBudget: kind == .exercises ? exercisesThinkingBudget : 0,
+            // Sugli esercizi si spendono TUTTI i Flash prima di scendere
+            // sui Lite, anche il lento da ~58s (scelta dell'utente,
+            // 2026-08-17): il declassamento qui non è un rallentamento,
+            // è un esercizio peggiore.
+            qualityFirst: kind == .exercises,
             onAttempt: { modelID, position, total in
                 progress("Provo \(modelID) (\(position)/\(total))…")
             }
@@ -352,7 +368,7 @@ enum StudioGenerationService {
             raw = reply.text
             usedModel = reply.modelID
         }
-        switch await parse(raw, for: kind, from: sources, options: options, modelID: usedModel) {
+        switch await parse(raw, for: kind, from: sources, options: options, modelID: usedModel, vocabulary: indexTopics) {
         case .success(let outcome):
             return .final(outcome)
         case .failure(let message):
@@ -365,7 +381,7 @@ enum StudioGenerationService {
         case failure(String)
     }
 
-    private static func parse(_ raw: String, for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, modelID: String?) async -> ParseResult {
+    private static func parse(_ raw: String, for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, modelID: String?, vocabulary: [String] = []) async -> ParseResult {
         guard let json = AIService.extractJSON(from: raw) else {
             return .failure("Il modello non ha restituito JSON.")
         }
@@ -394,7 +410,7 @@ enum StudioGenerationService {
                 StudyExercise(
                     categoryRaw: (ExerciseCategory(rawValue: item.category ?? "") ?? .theoretical).rawValue,
                     difficultyRaw: (ExerciseDifficulty(rawValue: item.difficulty ?? "") ?? .base).rawValue,
-                    topic: item.topic ?? "Senza argomento",
+                    topic: snap(item.topic ?? "Senza argomento", to: vocabulary),
                     prompt: item.prompt,
                     steps: item.steps,
                     answer: item.answer,
@@ -402,7 +418,8 @@ enum StudioGenerationService {
                     quote: makeCitation(quote: item.quote, source: item.source, in: sources),
                     checkExpression: item.checkExpression,
                     verificationRaw: ExerciseVerification.notChecked.rawValue,
-                    originRaw: (ExerciseOrigin(rawValue: item.origin ?? "") ?? .invented).rawValue
+                    originRaw: (ExerciseOrigin(rawValue: item.origin ?? "") ?? .invented).rawValue,
+                    figureTikZ: item.figureTikZ
                 )
             }
             // Doppio passaggio: gli esercizi che non reggono una seconda
@@ -477,6 +494,10 @@ enum StudioGenerationService {
         let topics: [String]
         let nature: String
         let isExamPaper: Bool
+        // Quante pagine copre: serve alla nota in UI, che parla allo
+        // studente in pagine, non in "blocchi" (termine interno).
+        // 0 = non lo sappiamo (pseudo-chunk di materiali non-Vault).
+        let pageCount: Int
     }
 
     @MainActor
@@ -493,7 +514,7 @@ enum StudioGenerationService {
                 // intero come un blocco unico, senza etichette.
                 let text = document.fullText
                 guard !text.isEmpty else { continue }
-                infos.append(VaultChunkInfo(order: infos.count, title: document.title, text: text, topics: [], nature: "mixed", isExamPaper: document.isExamPaper))
+                infos.append(VaultChunkInfo(order: infos.count, title: document.title, text: text, topics: [], nature: "mixed", isExamPaper: document.isExamPaper, pageCount: document.readCount))
             } else {
                 for chunk in chunks {
                     let text = chunk.text
@@ -504,7 +525,8 @@ enum StudioGenerationService {
                         text: text,
                         topics: chunk.topics,
                         nature: chunk.natureRaw,
-                        isExamPaper: document.isExamPaper
+                        isExamPaper: document.isExamPaper,
+                        pageCount: chunk.pageEnd - chunk.pageStart + 1
                     ))
                 }
             }
@@ -513,13 +535,18 @@ enum StudioGenerationService {
         // così niente si perde per aver mescolato le sorgenti.
         if !infos.isEmpty {
             for material in study.materials where material.kind != .vault && !material.extractedText.isEmpty {
-                infos.append(VaultChunkInfo(order: infos.count, title: material.title, text: material.extractedText, topics: [], nature: "mixed", isExamPaper: material.isExamPaper))
+                infos.append(VaultChunkInfo(order: infos.count, title: material.title, text: material.extractedText, topics: [], nature: "mixed", isExamPaper: material.isExamPaper, pageCount: 0))
             }
         }
         return infos
     }
 
-    private static func generateFromVault(kind: StudyModuleKind, chunks: [VaultChunkInfo], options: StudyModuleOptions, progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
+    private static func generateFromVault(kind: StudyModuleKind, chunks allChunks: [VaultChunkInfo], options: StudyModuleOptions, progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
+        // Argomenti scelti in creazione: si tengono solo i chunk che ne
+        // trattano almeno uno. I chunk senza etichette (documenti non
+        // ancora indicizzati) restano: escluderli significherebbe
+        // buttare materiale per un indice mancante, non per una scelta.
+        let chunks = filtered(allChunks, by: options.selectedTopics)
         switch kind {
         case .summary:
             // Il riassunto è di teoria: i chunk di soli esercizi/temi
@@ -529,9 +556,52 @@ enum StudioGenerationService {
         default:
             let (selected, note) = selectChunks(chunks, for: kind, budget: materialsBudget)
             let sources = selected.map { ResolvedSource(title: $0.title, text: $0.text, isExamPaper: $0.isExamPaper) }
-            let outcome = await generateWithAI(for: kind, from: sources, options: options, indexTopics: orderedTopics(of: chunks), progress: progress)
+            // Il vocabolario che il modello deve usare per "topic": se
+            // l'utente ha scelto, sono le SUE etichette; altrimenti
+            // quelle dell'indice. In entrambi i casi sono stabili tra
+            // generazioni, ed è ciò che tiene insieme i progressi.
+            let vocabulary = options.selectedTopics.isEmpty ? orderedTopics(of: chunks) : options.selectedTopics
+            let outcome = await generateWithAI(for: kind, from: sources, options: options, indexTopics: vocabulary, progress: progress)
             return outcome.addingWarning(note)
         }
+    }
+
+    // Riporta il "topic" scritto dal modello all'etichetta esatta del
+    // vocabolario. Il prompt lo vieta già, ma il prompt è una preghiera:
+    // questa è la garanzia. Senza, "Dualità in PL" e "dualità in PL"
+    // restano due argomenti diversi per l'analisi dei progressi, che
+    // raggruppa sulla stringa nuda.
+    //
+    // Due criteri, entrambi conservativi: uguaglianza a meno di
+    // maiuscole/spazi, oppure contenimento (il modello tende ad allungare
+    // — "dualità in PL (problema duale)"). Se non riconosce nulla, si
+    // tiene ciò che ha scritto il modello: inventare un aggancio sarebbe
+    // peggio di un argomento in più.
+    private static func snap(_ topic: String, to vocabulary: [String]) -> String {
+        guard !vocabulary.isEmpty else { return topic }
+        let needle = topic.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return topic }
+        if let exact = vocabulary.first(where: { $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == needle }) {
+            return exact
+        }
+        // Il più lungo tra quelli compatibili: evita che "dualità" catturi
+        // un esercizio che parlava di "dualità in programmazione lineare".
+        let contained = vocabulary.filter { candidate in
+            let other = candidate.lowercased()
+            return needle.contains(other) || other.contains(needle)
+        }
+        return contained.max(by: { $0.count < $1.count }) ?? topic
+    }
+
+    private static func filtered(_ chunks: [VaultChunkInfo], by topics: [String]) -> [VaultChunkInfo] {
+        guard !topics.isEmpty else { return chunks }
+        let wanted = Set(topics.map { $0.lowercased() })
+        let kept = chunks.filter { chunk in
+            chunk.topics.isEmpty || chunk.topics.contains { wanted.contains($0.lowercased()) }
+        }
+        // Se il filtro non lascia niente (etichette disallineate), meglio
+        // generare su tutto che fallire il modulo.
+        return kept.isEmpty ? chunks : kept
     }
 
     // Selezione nel budget: per gli esercizi prima i temi d'esame e i
@@ -558,10 +628,35 @@ enum StudioGenerationService {
             selected = [first]
         }
         selected.sort { $0.order < $1.order }
-        let note = selected.count < chunks.count
-            ? "Materiali scelti con l'indice del Vault: \(selected.count) blocchi su \(chunks.count), copertura di tutti gli argomenti."
-            : nil
-        return (selected, note)
+        return (selected, selectionNote(selected: selected, of: chunks))
+    }
+
+    // La nota per la card, quando è entrata una selezione e non tutto.
+    // Due regole nate da una domanda dell'utente ("cosa sono i blocchi?"):
+    // si parla in PAGINE, non in "blocchi" (termine interno), e la
+    // copertura si CALCOLA invece di dichiararla — se il pezzo rimasto
+    // fuori conteneva un argomento unico, va detto quale, non nascosto
+    // dietro un "tutti coperti" di default.
+    private static func selectionNote(selected: [VaultChunkInfo], of chunks: [VaultChunkInfo]) -> String? {
+        guard selected.count < chunks.count else { return nil }
+
+        let selectedPages = selected.reduce(0) { $0 + $1.pageCount }
+        let totalPages = chunks.reduce(0) { $0 + $1.pageCount }
+        // Con gli pseudo-chunk (pageCount 0) il conto in pagine mentirebbe:
+        // si ripiega sulle parti.
+        let extent = (selectedPages > 0 && totalPages > 0 && chunks.allSatisfy { $0.pageCount > 0 })
+            ? "\(selectedPages) pagine su \(totalPages)"
+            : "\(selected.count) parti su \(chunks.count)"
+
+        let covered = Set(selected.flatMap(\.topics).map { $0.lowercased() })
+        let missing = orderedTopics(of: chunks).filter { !covered.contains($0.lowercased()) }
+
+        if missing.isEmpty {
+            return "Il materiale supera lo spazio di una generazione: l'indice del Vault ha scelto le parti più utili (\(extent)). Tutti gli argomenti sono coperti."
+        }
+        let listed = missing.prefix(3).joined(separator: ", ")
+        let more = missing.count > 3 ? " e altri \(missing.count - 3)" : ""
+        return "Il materiale supera lo spazio di una generazione: usate \(extent). Argomenti rimasti fuori: \(listed)\(more). Per coprirli, crea uno studio selezionando solo quelli."
     }
 
     // Prima i chunk che aggiungono argomenti nuovi (in ordine di corso),
@@ -616,7 +711,9 @@ enum StudioGenerationService {
                 }
                 while let (index, sections) = await group.next() {
                     done += 1
-                    progress("Riassumo il blocco \(done) di \(total)…")
+                    // In pagine, mai in "blocchi": termine interno
+                    // (stessa regola della nota di selezione).
+                    progress("Riassumo: parte \(done) di \(total) del materiale…")
                     if let sections { out[index] = sections }
                     if next < chunks.count { add(next); next += 1 }
                 }
@@ -624,12 +721,15 @@ enum StudioGenerationService {
             }
             let ordered = (0..<chunks.count).compactMap { results[$0] }.flatMap { $0 }
             guard !ordered.isEmpty else {
-                return .failure("Il riassunto non è riuscito su nessun blocco del Vault. Riprova tra qualche minuto.")
+                return .failure("Il riassunto non è riuscito su nessuna parte del materiale. Riprova tra qualche minuto.")
             }
-            let failed = chunks.count - results.count
-            let warning = failed > 0
-                ? "Riassunto parziale: \(failed) blocchi su \(chunks.count) non sono riusciti — rigenera il modulo per completarlo."
-                : nil
+            let failedChunks = chunks.indices.filter { results[$0] == nil }
+            var warning: String?
+            if !failedChunks.isEmpty {
+                let failedPages = failedChunks.reduce(0) { $0 + chunks[$1].pageCount }
+                let extent = failedPages > 0 ? "circa \(failedPages) pagine" : "\(failedChunks.count) parti su \(chunks.count)"
+                warning = "Riassunto incompleto: mancano \(extent) del materiale. Rigenera il modulo per completarlo."
+            }
             return encodePayload(SummaryContent(sections: ordered), warning: warning)
         }
     }
@@ -695,7 +795,7 @@ enum StudioGenerationService {
         Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials"}]}
         """
 
-        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: exercisesSchema, thinkingBudget: exercisesThinkingBudget),
+        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: exercisesSchema, thinkingBudget: exercisesThinkingBudget, qualityFirst: true),
               let json = AIService.extractJSON(from: reply.text),
               case .success(let dto) = decodeDTO(AIExercisesDTO.self, from: json),
               let item = dto.exercises.first else {
@@ -746,8 +846,11 @@ enum StudioGenerationService {
         \(list)
         """
         // Stesso budget di thinking degli esercizi: risolvere i problemi
-        // per conto proprio è ragionamento quanto scriverli.
-        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: verdictsSchema, thinkingBudget: exercisesThinkingBudget),
+        // per conto proprio è ragionamento quanto scriverli. E stesso
+        // `qualityFirst`, per lo stesso motivo: un Lite che fa il
+        // "correttore severo" di esercizi è un giudice debole, e il
+        // secondo passaggio vale esattamente per la sua severità.
+        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: verdictsSchema, thinkingBudget: exercisesThinkingBudget, qualityFirst: true),
               let json = AIService.extractJSON(from: reply.text),
               let data = json.data(using: .utf8),
               let dto = try? JSONDecoder().decode(AIVerdictsDTO.self, from: data) else {
@@ -876,10 +979,13 @@ enum StudioGenerationService {
 
         FORMATTAZIONE — regole obbligatorie (valgono per il testo che SCRIVI TU, mai per il campo "quote"):
         - Il testo viene reso in Markdown: usa **grassetto** per i dati che contano ed elenchi con "- " dove aiutano.
-        - OGNI espressione matematica che contenga esponenti, frazioni, radici, integrali, sommatorie, limiti, derivate o simboli greci va scritta in LaTeX su una RIGA A SÉ, delimitata da $$ sopra e sotto. Vengono rese in vera notazione matematica.
-        - NON scrivere MAI notazione a caratteri tipo "x^3 - 3x^2 + 2x", "sqrt(2)", "integrale da 1 a 2": è illeggibile. Scrivi invece, su riga propria:
+        - La matematica va SEMPRE in LaTeX, in due registri:
+          · IN LINEA, tra $ … $, per simboli ed espressioni corte che vivono dentro una frase: "Sia $X$ una variabile aleatoria con $\\lambda > 0$ e $k \\in \\mathbb{N}$". La frase resta UNA frase scorrevole.
+          · A DISPLAY, tra $$ … $$ su riga propria, SOLO per le equazioni che meritano una riga: definizioni, formule risolutive, matrici, sistemi, passaggi lunghi.
+        - NON usare MAI $$ per un simbolo solo o un'espressione corta in mezzo a una frase: spezzerebbe il testo in righe centrate, rendendolo illeggibile.
+        - Ogni $$ aperto va CHIUSO nella stessa formula: un $$ senza chiusura rompe la resa di tutto il testo che segue.
+        - NON scrivere MAI notazione a caratteri tipo "x^3 - 3x^2 + 2x", "sqrt(2)", "integrale da 1 a 2": è illeggibile. Scrivi invece $x^3 - 3x^2 + 2x$ in linea, oppure su riga propria:
         $$f(x) = x^3 - 3x^2 + 2x + 1$$
-        - Restano testo semplice solo i simboli isolati senza struttura (per esempio "la funzione f", "il punto c", "l'intervallo [1, 2]").
         - ATTENZIONE AGLI ESCAPE: stai scrivendo LaTeX dentro JSON, dove ogni backslash va RADDOPPIATO. Scrivi "\\\\frac", "\\\\theta", "\\\\begin"; e l'a-capo di una matrice, che in LaTeX è "\\\\", dentro il JSON diventa quattro backslash.
         - Matrici, vettori e sistemi vanno SEMPRE dentro $$ con l'ambiente giusto (pmatrix, bmatrix, cases), mai come elenchi di numeri o tabelle di testo. Esempio:
         $$A = \\begin{pmatrix} 8 & 1 \\\\ 1 & 4 \\end{pmatrix}$$
@@ -897,12 +1003,14 @@ enum StudioGenerationService {
 
     // MARK: - responseSchema
     //
-    // Lo schema che Gemini rispetta in decoding vincolato: il JSON esce
-    // sintatticamente valido per costruzione, escape LaTeX compresi.
+    // Lo schema che il modello rispetta in decoding vincolato: il JSON
+    // esce sintatticamente valido per costruzione, escape LaTeX compresi.
     // Prima la sintassi era solo "sperata" e a valle serviva una torre
     // di riparazioni (protect/sanitize/repair/rewrap), che resta come
-    // rete di sicurezza — e come unico paracadute per Apple locale e
-    // Claude, che uno schema non ce l'hanno.
+    // rete di sicurezza — e come unico paracadute per Apple locale, che
+    // uno schema non ce l'ha. Claude invece lo rispetta: `AIService` lo
+    // traduce in JSON Schema e lo passa in `output_config.format` (era
+    // ignorato in silenzio fino al 2026-08-17).
     //
     // `required` tiene il minimo indispensabile, in coerenza con i DTO:
     // meglio un esercizio senza "quote" che un modulo fallito perché il
@@ -953,7 +1061,8 @@ enum StudioGenerationService {
                 "category": stringField(), "difficulty": stringField(), "topic": stringField(),
                 "prompt": stringField(), "steps": arrayField(of: stringField()),
                 "answer": stringField(), "source": stringField(), "quote": stringField(),
-                "checkExpression": stringField(), "origin": stringField()
+                "checkExpression": stringField(), "origin": stringField(),
+                "figureTikZ": stringField()
             ], required: ["prompt", "answer"]))
         ], required: ["exercises"])
     }
@@ -1004,7 +1113,10 @@ enum StudioGenerationService {
                 FASE 1 — Individua da solo TUTTI gli argomenti distinti trattati nei materiali (es. "dualità in PL", "analisi di sensitività", "problema di trasporto"). Argomenti diversi tra loro, non sfumature dello stesso. Non scegliere tu quanti: elencali tutti.
                 """
                 : """
-                FASE 1 — L'indice del corso ha già individuato questi argomenti: \(indexTopics.joined(separator: "; ")). Usali come elenco di partenza; aggiungi solo argomenti che vedi nei materiali e che mancano dall'elenco.
+                FASE 1 — Gli argomenti da coprire sono GIÀ DECISI, questi e soltanto questi:
+                \(indexTopics.map { "- \($0)" }.joined(separator: "\n"))
+                Non aggiungerne altri e non generare esercizi su argomenti fuori da questo elenco, anche se li vedi nei materiali.
+                VINCOLO SUL CAMPO "topic": deve essere COPIATO ALLA LETTERA da questo elenco, identico carattere per carattere. Non riformularlo, non abbreviarlo, non tradurlo, non cambiare maiuscole: le statistiche dei progressi raggruppano su quella stringa esatta e una variante la spezza in due.
                 """
             return common + """
             Compito, in due fasi.
@@ -1032,6 +1144,7 @@ enum StudioGenerationService {
 
             Ogni esercizio ha una soluzione guidata in 3-5 passi concreti e una risposta finale; "topic" è l'argomento in 2-4 parole; "source" è il titolo del materiale a cui ti sei ispirato e "quote" il passaggio originale (servono solo alla tracciabilità, NON vanno citati nella traccia).
             Indica "origin": "invented" se hai scritto tu la traccia ispirandoti ai materiali (è il caso normale), "fromMaterials" solo se la traccia è già presente come tale nei materiali e l'hai riportata.
+            FIGURA (facoltativa ma preziosa): se la traccia beneficia di un disegno — un grafo con nodi e pesi, il grafico di una funzione, una catena di Markov, una figura geometrica — includi "figureTikZ" con SOLO il codice dell'ambiente, da \\begin{tikzpicture} a \\end{tikzpicture} (eventuali \\usetikzlibrary su righe precedenti). Librerie disponibili: pgfplots (\\begin{axis} per le funzioni), automata, positioning, arrows.meta, matrix, calc, shapes. NON usare circuitikz né tikz-cd: non sono disponibili e la figura verrebbe scartata. I dati della figura devono coincidere ESATTAMENTE con quelli della traccia (stessi pesi, stessi nodi, stessa funzione). Se la figura non serve, ometti il campo.
             Includi "checkExpression" SOLO quando la risposta è un valore matematico verificabile in modo indipendente: mettici l'espressione da calcolare in sintassi Wolfram Alpha, il cui risultato deve coincidere con "answer". Omettilo per gli esercizi discorsivi.
             IMPORTANTE su checkExpression: dev'essere una FORMULA o una grandezza, non la descrizione di un compito. Wolfram accetta "integrate x^2 from 0 to 1", "eigenvalues {{2,1},{1,2}}", "roots of s^2+3s+2", "10*2000/(1000+2000)", "bode plot 1/(s+1)"; RIFIUTA fraseggi come "step response 1/(s^2+2s+1)", "voltage divider 10V 1kohm 2kohm", "beam deflection cantilever", "is G(s) stable". Se il calcolo è ingegneristico, scrivilo come espressione numerica esplicita con i valori già sostituiti.
             Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["...","..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials"}]}
@@ -1087,9 +1200,10 @@ enum StudioGenerationService {
             var quote: String?
             var checkExpression: String?
             var origin: String?
+            var figureTikZ: String?
 
             enum CodingKeys: String, CodingKey {
-                case category, difficulty, topic, prompt, answer, source, quote, checkExpression, origin
+                case category, difficulty, topic, prompt, answer, source, quote, checkExpression, origin, figureTikZ
                 case stepList = "steps"
             }
         }

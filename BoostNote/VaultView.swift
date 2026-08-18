@@ -131,18 +131,18 @@ struct VaultView: View {
                     if document.kind == .note {
                         Text("Nota collegata")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(DesignColor.toolExplain)
+                            .foregroundStyle(DesignColor.insight)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(DesignColor.toolExplainBg, in: Capsule())
+                            .background(DesignColor.insightBg, in: Capsule())
                     }
                     if document.isExamPaper {
                         Text("Tema d'esame")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(DesignColor.toolWolfram)
+                            .foregroundStyle(DesignColor.attention)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(DesignColor.toolWolframBg, in: Capsule())
+                            .background(DesignColor.attentionBg, in: Capsule())
                     }
                 }
                 statusLine(document)
@@ -207,7 +207,7 @@ struct VaultView: View {
                 if failed > 0 {
                     Text("\(failed) pagine non lette: si ritenteranno al prossimo aggiornamento.")
                         .font(.system(size: 11))
-                        .foregroundStyle(DesignColor.toolWolfram)
+                        .foregroundStyle(DesignColor.attention)
                 }
             }
         }
@@ -379,7 +379,7 @@ struct VaultSourcePicker: View {
                 if document.isExamPaper {
                     Text("Tema d'esame")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(DesignColor.toolWolfram)
+                        .foregroundStyle(DesignColor.attention)
                 }
             }
         }
@@ -397,7 +397,7 @@ struct VaultSourcePicker: View {
         } else {
             Text(total == 0 ? "Non ancora letto" : "Letto in parte (\(read) di \(total)): verrà aggiornato alla creazione")
                 .font(.system(size: 11))
-                .foregroundStyle(DesignColor.toolWolfram)
+                .foregroundStyle(DesignColor.attention)
         }
     }
 
@@ -441,7 +441,7 @@ private struct VaultNotePicker: View {
                     dismiss()
                 } label: {
                     HStack(spacing: DesignSpace.s3) {
-                        Image(systemName: note.isWhiteboard ? "rectangle.dashed" : "note.text")
+                        Image(systemName: "note.text")
                             .foregroundStyle(DesignColor.brandPrimary)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(note.title.isEmpty ? "Senza titolo" : note.title)

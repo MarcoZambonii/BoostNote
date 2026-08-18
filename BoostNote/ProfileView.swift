@@ -39,6 +39,18 @@ struct ProfileView: View {
 
     @State private var photosPickerItem: PhotosPickerItem?
 
+    @Environment(\.modelContext) private var modelContext
+    @State private var archiveConfigured = NoteArchiveService.isConfigured
+    // UN SOLO fileImporter con destinazione esplicita: due .fileImporter
+    // in catena sulla stessa vista sono un bug noto di SwiftUI — si
+    // presenta solo l'ultimo, e il primo non apre MAI (stessa trappola
+    // già pagata sull'import PDF in NoteEditorView: "Scegli cartella"
+    // non faceva niente per questo).
+    enum ArchivePickerTarget { case folder, restore }
+    @State private var archivePickerTarget: ArchivePickerTarget = .folder
+    @State private var showingArchivePicker = false
+    @State private var archiveMessage: String?
+
     @State private var webeepToken: String? = WebeepService.savedToken
     @State private var webeepSiteInfo: WebeepSiteInfo?
     @State private var showingWebeepAuth = false
@@ -48,6 +60,7 @@ struct ProfileView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignSpace.s8) {
                 profileSection
+                archiveSection
                 syncSection
                 webeepSection
                 aiSection
@@ -202,6 +215,112 @@ struct ProfileView: View {
                 .foregroundStyle(DesignColor.textTertiary)
         }
         .contentShape(Rectangle())
+    }
+
+    // L'assicurazione sulla vita delle note: cartella OneDrive (o
+    // qualunque provider di File) dove ogni nota chiusa lascia il suo
+    // pacchetto ripristinabile. Vedi NoteArchiveService per le regole.
+    private var archiveSection: some View {
+        sectionCard(title: "Archivio delle note") {
+            VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                if archiveConfigured {
+                    HStack(spacing: DesignSpace.s2) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(DesignColor.success)
+                        Text("Attivo su \"\(NoteArchiveService.folderDisplayName ?? "cartella scelta")\"")
+                            .font(.system(size: 13, weight: .medium))
+                        Spacer()
+                        Button("Disattiva") {
+                            NoteArchiveService.removeFolder()
+                            archiveConfigured = false
+                        }
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.danger)
+                    }
+                    Text("Ogni nota, quando la chiudi, lascia nella cartella il suo pacchetto .boostnote: se perdi l'iPad, reimporti i pacchetti e le note tornano modificabili identiche. La scrittura avviene in background e non tocca mai la penna.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textTertiary)
+                    HStack(spacing: DesignSpace.s3) {
+                        Button {
+                            let count = NoteArchiveService.archiveAll(in: modelContext)
+                            archiveMessage = "In archiviazione: \(count) note."
+                        } label: {
+                            Label("Archivia tutte adesso", systemImage: "arrow.up.doc")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                        Button {
+                            archivePickerTarget = .restore
+                            showingArchivePicker = true
+                        } label: {
+                            Label("Ripristina da pacchetto", systemImage: "arrow.down.doc")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    if let archiveMessage {
+                        Text(archiveMessage)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesignColor.textSecondary)
+                    }
+                } else {
+                    Text("Scegli una cartella su OneDrive (1TB gratuito con l'account Polimi, dall'app File) o su qualunque altro provider: ogni nota chiusa ci lascerà una copia ripristinabile. Il database dell'app resta sul dispositivo — nella cartella vanno solo copie.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textTertiary)
+                    HStack(spacing: DesignSpace.s3) {
+                        Button {
+                            archivePickerTarget = .folder
+                            showingArchivePicker = true
+                        } label: {
+                            Label("Scegli cartella", systemImage: "folder.badge.plus")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button {
+                            archivePickerTarget = .restore
+                            showingArchivePicker = true
+                        } label: {
+                            Label("Ripristina da pacchetto", systemImage: "arrow.down.doc")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+        }
+        .fileImporter(
+            isPresented: $showingArchivePicker,
+            allowedContentTypes: archivePickerTarget == .folder ? [.folder] : [NoteArchiveService.packageType],
+            allowsMultipleSelection: archivePickerTarget == .restore
+        ) { result in
+            guard case .success(let urls) = result, let first = urls.first else { return }
+            switch archivePickerTarget {
+            case .folder:
+                if NoteArchiveService.setFolder(first) {
+                    archiveConfigured = true
+                    let count = NoteArchiveService.archiveAll(in: modelContext)
+                    archiveMessage = "Prima archiviazione: \(count) note in coda."
+                } else {
+                    archiveMessage = "Non riesco a memorizzare l'accesso alla cartella."
+                }
+            case .restore:
+                var restored = 0
+                var failed = 0
+                for url in urls where url.pathExtension == "boostnote" {
+                    do {
+                        _ = try NoteArchiveService.restore(from: url, in: modelContext)
+                        restored += 1
+                    } catch {
+                        failed += 1
+                    }
+                }
+                let skipped = urls.count - restored - failed
+                var parts = ["Ripristinate \(restored) note."]
+                if failed > 0 { parts.append("\(failed) pacchetti illeggibili.") }
+                if skipped > 0 { parts.append("\(skipped) file ignorati (non .boostnote).") }
+                archiveMessage = parts.joined(separator: " ")
+            }
+        }
     }
 
     private var syncSection: some View {

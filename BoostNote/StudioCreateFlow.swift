@@ -17,11 +17,25 @@ struct StudioCreateFlowView: View {
     // "Crea da questo Vault": materia e materiali arrivano già pronti
     // dalla card del corso. State(initialValue:) nell'init, non
     // onAppear: il prefill non deve mai sovrascrivere modifiche.
-    init(prefillFolder: StudyFolder? = nil, onCancel: @escaping () -> Void, onCreated: @escaping (Study) -> Void) {
+    // `prefillTopics`: arriva dall'analisi dei progressi ("genera sugli
+    // argomenti deboli"). Non si può applicare qui — gli argomenti
+    // disponibili si conoscono solo dopo la @Query sui documenti — quindi
+    // resta in attesa e viene consumato UNA volta sola quando l'elenco
+    // esiste, senza poter più toccare scelte fatte a mano.
+    init(prefillFolder: StudyFolder? = nil, prefillTopics: [String] = [], prefillKinds: Set<StudyModuleKind>? = nil, onCancel: @escaping () -> Void, onCreated: @escaping (Study) -> Void) {
         self.onCancel = onCancel
         self.onCreated = onCreated
+        if !prefillTopics.isEmpty {
+            _pendingFocusTopics = State(initialValue: prefillTopics)
+        }
+        if let prefillKinds {
+            _selectedKinds = State(initialValue: prefillKinds)
+        }
         guard let folder = prefillFolder else { return }
         _subject = State(initialValue: folder.name)
+        if !prefillTopics.isEmpty {
+            _name = State(initialValue: "Recupero \(folder.name)")
+        }
         _sources = State(initialValue: folder.vaultDocuments.sorted { $0.addedAt < $1.addedAt }.map { document in
             StudySourceMaterial(
                 kind: .vault,
@@ -41,6 +55,15 @@ struct StudioCreateFlowView: View {
     @State private var verifyExercises = true
     @State private var theoreticalCount = 1
     @State private var practicalCount = 1
+
+    // Si memorizzano gli argomenti ESCLUSI, non quelli scelti: così
+    // aggiungere un documento include automaticamente i suoi argomenti,
+    // invece di lasciarli fuori perché la selezione era stata fatta
+    // prima che esistessero.
+    @State private var excludedTopics: Set<String> = []
+    @State private var pendingFocusTopics: [String]?
+
+    @Query private var vaultDocuments: [VaultDocument]
 
     @State private var showingNotePicker = false
     @State private var showingWebeepPicker = false
@@ -171,20 +194,67 @@ struct StudioCreateFlowView: View {
             .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
     }
 
+    // Gerarchia dichiarata: il Vault è LA fonte (pieno, grande), tutto il
+    // resto sta dietro un "Aggiungi file" secondario. Non è solo estetica
+    // — un file preso qui viene letto adesso e pagato in quota ogni volta,
+    // mentre dal Vault il testo è già lì: la via giusta deve anche
+    // sembrare la via principale.
     @ViewBuilder
     private var materialButtons: some View {
-        // Il Vault per primo: è il percorso a costo zero — il testo è
-        // già stato letto, la creazione non paga nessuna estrazione.
-        materialButton(title: "Dal Vault", icon: "archivebox.fill") { showingVaultPicker = true }
-        materialButton(title: "Dalle note", icon: "note.text") { showingNotePicker = true }
-        materialButton(title: "Da WeBeep", icon: "building.columns.fill") { showingWebeepPicker = true }
-        materialButton(title: "Carica PDF", icon: "doc.badge.plus") { showingPDFImporter = true }
+        Button {
+            showingVaultPicker = true
+        } label: {
+            HStack(spacing: DesignSpace.s2) {
+                Image(systemName: "archivebox.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Scegli dal Vault")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundStyle(DesignColor.textOnBrand)
+            .padding(.horizontal, DesignSpace.s5)
+            .padding(.vertical, DesignSpace.s3)
+            .background(DesignColor.brandPrimary, in: Capsule())
+        }
+        .buttonStyle(.plain)
+
+        Menu {
+            Button {
+                showingNotePicker = true
+            } label: {
+                Label("Dalle note", systemImage: "note.text")
+            }
+            Button {
+                showingWebeepPicker = true
+            } label: {
+                Label("Da WeBeep", systemImage: "building.columns.fill")
+            }
+            Button {
+                showingPDFImporter = true
+            } label: {
+                Label("Carica PDF", systemImage: "doc.badge.plus")
+            }
+            Text("Questi file vengono letti ora e consumano quota. Mettendoli invece nel Vault, la lettura si paga una volta sola.")
+        } label: {
+            HStack(spacing: DesignSpace.s2) {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Aggiungi file")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundStyle(DesignColor.textSecondary)
+            .padding(.horizontal, DesignSpace.s4)
+            .padding(.vertical, DesignSpace.s2 + 2)
+            .background(
+                Capsule().strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var materialsSection: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             sectionHeader(number: 2, title: "Scegli i materiali di partenza")
-            Text("Note, slide e dispense generano teoria (riassunti, domande, flashcard); i temi d'esame alimentano gli esercizi pratici.")
+            Text("Il Vault del corso è già letto: sceglierne i documenti non costa nessuna rilettura. Puoi comunque aggiungere un file al volo, ma verrà letto adesso.")
                 .font(.system(size: 13))
                 .foregroundStyle(DesignColor.textTertiary)
 
@@ -205,7 +275,119 @@ struct StudioCreateFlowView: View {
                 }
                 .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
             }
+
+            topicsSection
         }
+    }
+
+    // Gli argomenti che il Vault ha già riconosciuto nei documenti
+    // scelti, in ordine di corso e senza duplicati.
+    private var availableTopics: [String] {
+        let ids = Set(sources.compactMap(\.vaultDocumentID))
+        guard !ids.isEmpty else { return [] }
+        var seen: Set<String> = []
+        var result: [String] = []
+        for document in vaultDocuments where ids.contains(document.id) {
+            for topic in document.allTopics where seen.insert(topic.lowercased()).inserted {
+                result.append(topic)
+            }
+        }
+        return result
+    }
+
+    private var selectedTopics: [String] {
+        availableTopics.filter { !excludedTopics.contains($0.lowercased()) }
+    }
+
+    // Restringere il campo serve alla PROFONDITÀ: con trenta argomenti e
+    // il tetto di 15 esercizi tocca mezzo esercizio a testa, mentre su
+    // due argomenti se ne fanno otto seri. In più gli argomenti scelti
+    // diventano il vocabolario del campo "topic", che è ciò su cui
+    // l'analisi dei progressi raggruppa: senza, ogni generazione se lo
+    // inventa con parole sue e le statistiche si frantumano.
+    @ViewBuilder
+    private var topicsSection: some View {
+        let topics = availableTopics
+        if !topics.isEmpty {
+            VStack(alignment: .leading, spacing: DesignSpace.s2) {
+                if let focus = pendingFocusTopics, !focus.isEmpty {
+                    Label("Argomenti preselezionati dai tuoi risultati: sono quelli dove sbagli di più. Puoi cambiarli.", systemImage: "target")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.insight)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: DesignSpace.s2) {
+                    Text("ARGOMENTI DAL VAULT")
+                        .font(.system(size: 11, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(DesignColor.textTertiary)
+                    Text("\(selectedTopics.count)/\(topics.count)")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(DesignColor.brandPrimary)
+                    Spacer()
+                    if !excludedTopics.isEmpty {
+                        Button("Tutti") { excludedTopics.removeAll() }
+                            .font(.system(size: 12, weight: .medium))
+                            .buttonStyle(.plain)
+                            .foregroundStyle(DesignColor.brandPrimary)
+                    }
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: DesignSpace.s2)], alignment: .leading, spacing: DesignSpace.s2) {
+                    ForEach(topics, id: \.self) { topic in
+                        topicChip(topic)
+                    }
+                }
+                Text(selectedTopics.count == topics.count
+                     ? "Tutti gli argomenti del materiale scelto. Toglierne qualcuno concentra la generazione sui rimanenti: meno argomenti, più esercizi per ciascuno."
+                     : "La generazione userà solo questi argomenti — e solo le parti di materiale che li trattano.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignColor.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(DesignSpace.s4)
+            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+            .task(id: topics) {
+                // Consumo una tantum: l'indice arriva dopo il primo
+                // disegno, e da qui in poi la selezione è dell'utente.
+                guard let focus = pendingFocusTopics, !focus.isEmpty else { return }
+                let wanted = Set(focus.map { $0.lowercased() })
+                let matching = topics.filter { wanted.contains($0.lowercased()) }
+                guard !matching.isEmpty else { return }
+                excludedTopics = Set(topics.map { $0.lowercased() }).subtracting(wanted)
+                pendingFocusTopics = nil
+            }
+        }
+    }
+
+    private func topicChip(_ topic: String) -> some View {
+        let isOn = !excludedTopics.contains(topic.lowercased())
+        return Button {
+            if isOn {
+                // L'ultimo argomento non si può togliere: senza nessun
+                // argomento non resterebbe niente da generare.
+                if selectedTopics.count > 1 { excludedTopics.insert(topic.lowercased()) }
+            } else {
+                excludedTopics.remove(topic.lowercased())
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 11))
+                Text(topic)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .foregroundStyle(isOn ? DesignColor.brandPrimary : DesignColor.textTertiary)
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isOn ? DesignColor.brandPrimarySubtle : DesignColor.surfacePage,
+                in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func sourceRow(_ source: StudySourceMaterial) -> some View {
@@ -235,15 +417,15 @@ struct StudioCreateFlowView: View {
                 Text("Tema d'esame")
                     .fixedSize()
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(source.isExamPaper ? DesignColor.toolWolfram : DesignColor.textTertiary)
+                    .foregroundStyle(source.isExamPaper ? DesignColor.attention : DesignColor.textTertiary)
                     .padding(.horizontal, DesignSpace.s2 + 2)
                     .padding(.vertical, 5)
                     .background(
-                        source.isExamPaper ? DesignColor.toolWolframBg : DesignColor.surfacePage,
+                        source.isExamPaper ? DesignColor.attentionBg : DesignColor.surfacePage,
                         in: Capsule()
                     )
                     .overlay(
-                        Capsule().stroke(source.isExamPaper ? DesignColor.toolWolfram.opacity(0.4) : DesignColor.borderDefault, lineWidth: 1)
+                        Capsule().stroke(source.isExamPaper ? DesignColor.attention.opacity(0.4) : DesignColor.borderDefault, lineWidth: 1)
                     )
             }
             .buttonStyle(.plain)
@@ -355,7 +537,7 @@ struct StudioCreateFlowView: View {
                 if theoreticalCount + practicalCount > 3 {
                     Label("Con molti argomenti nei materiali il totale cresce in fretta: oltre 15 esercizi la generazione riduce da sola il numero per argomento, per coprirli comunque tutti.", systemImage: "info.circle")
                         .font(.system(size: 11))
-                        .foregroundStyle(DesignColor.toolWolfram)
+                        .foregroundStyle(DesignColor.attention)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -486,8 +668,11 @@ struct StudioCreateFlowView: View {
                     .popover(isPresented: $showingQuotaInfo, arrowEdge: .bottom) {
                         GeminiQuotaPanel()
                             .padding(DesignSpace.s4)
-                            .frame(width: 420)
-                            .presentationCompactAdaptation(.popover)
+                            // 420pt non stanno in un popover su iPhone:
+                            // lì diventa uno sheet a larghezza piena.
+                            .frame(width: DeviceLayout.isPhone ? nil : 420)
+                            .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
+                            .presentationDetents([.medium, .large])
                     }
                 }
                 VStack(alignment: .trailing, spacing: 4) {
@@ -546,7 +731,7 @@ struct StudioCreateFlowView: View {
                 if summaryBlocks > 1 { calls += summaryBlocks - 1 }
             }
         }
-        let suffix = summaryBlocks > 1 ? " (riassunto su \(summaryBlocks) blocchi)" : ""
+        let suffix = summaryBlocks > 1 ? " (il riassunto copre il materiale in \(summaryBlocks) parti)" : ""
         return "\(calls) chiamat\(calls == 1 ? "a" : "e") per questa generazione\(suffix)"
     }
 
@@ -582,6 +767,11 @@ struct StudioCreateFlowView: View {
         options.verifyExercises = verifyExercises
         options.theoreticalCount = includeTheoretical ? theoreticalCount : 0
         options.practicalCount = includePractical ? practicalCount : 0
+        // Si registrano solo se sono un sottoinsieme vero: "tutti" resta
+        // vuoto, così il significato non cambia se domani si aggiunge
+        // materiale al Vault.
+        let topics = availableTopics
+        options.selectedTopics = selectedTopics.count == topics.count ? [] : selectedTopics
 
         // L'ordine dei moduli segue l'ordine di dichiarazione dei tipi.
         for (index, kind) in StudyModuleKind.allCases.filter({ selectedKinds.contains($0) }).enumerated() {
@@ -875,10 +1065,10 @@ private struct StudioWebeepPickerSheet: View {
                 if StudioCreateFlowView.looksLikeExamPaper(cleanName) {
                     Text("Tema d'esame")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(DesignColor.toolWolfram)
+                        .foregroundStyle(DesignColor.attention)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(DesignColor.toolWolframBg, in: Capsule())
+                        .background(DesignColor.attentionBg, in: Capsule())
                 }
             }
         }

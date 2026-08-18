@@ -14,6 +14,8 @@ struct StudyDetailView: View {
     var onDelete: () -> Void
 
     @State private var showingTrustSheet = false
+    // Avvisi dei moduli aperti nel dettaglio (vedi infoDisclosure).
+    @State private var expandedInfo: Set<UUID> = []
 
     var body: some View {
         Group {
@@ -106,12 +108,18 @@ struct StudyDetailView: View {
                                 .tracking(0.6)
                                 .foregroundStyle(DesignColor.textTertiary)
                             FlowChips(items: study.sources.map { source in
-                                (source.title, source.isExamPaper ? DesignColor.toolWolfram : DesignColor.textSecondary)
+                                (source.title, source.isExamPaper ? DesignColor.attention : DesignColor.textSecondary)
                             })
                         }
                     }
 
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: DesignSpace.s4)], spacing: DesignSpace.s4) {
+                    // Righe a TUTTA larghezza, non griglia: i moduli sono
+                    // 2-4 e le loro righe di stato sono diventate ricche
+                    // (provider, scarti, avvisi col dettaglio a scomparsa).
+                    // In colonne da ~300pt il testo andava a capo parola
+                    // per parola e le card diventavano strisce — con
+                    // altezze diverse che sfalsavano l'intera griglia.
+                    VStack(spacing: DesignSpace.s4) {
                         ForEach(study.sortedModules) { module in
                             moduleCard(module)
                         }
@@ -141,7 +149,7 @@ struct StudyDetailView: View {
                 if let error = material.extractionError {
                     Text(error)
                         .font(.system(size: 11))
-                        .foregroundStyle(DesignColor.toolWolfram)
+                        .foregroundStyle(DesignColor.attention)
                 } else {
                     Text("\(material.extractedText.count) caratteri letti")
                         .font(.system(size: 11))
@@ -153,10 +161,10 @@ struct StudyDetailView: View {
                 Text("Tema d'esame")
                     .fixedSize()
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DesignColor.toolWolfram)
+                    .foregroundStyle(DesignColor.attention)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(DesignColor.toolWolframBg, in: Capsule())
+                    .background(DesignColor.attentionBg, in: Capsule())
             }
         }
         .padding(.horizontal, DesignSpace.s3 + 2)
@@ -198,6 +206,25 @@ struct StudyDetailView: View {
 
     private func innerCard(_ module: StudyModule, kind: StudyModuleKind?) -> some View {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                // Il dettaglio espanso dell'avviso sta QUI SOTTO, a tutta
+                // larghezza — non nella colonna del titolo, che dentro la
+                // griglia è larga ~110pt: lì il testo andava a capo una
+                // parola per riga e gonfiava la card in una striscia.
+                headerRow(module, kind: kind)
+                if expandedInfo.contains(module.id), module.status == .ready, let info = module.generationError {
+                    Text(info)
+                        .font(.system(size: 11))
+                        .foregroundStyle(DesignColor.attention)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(DesignSpace.s4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+    }
+
+    private func headerRow(_ module: StudyModule, kind: StudyModuleKind?) -> some View {
                 HStack(spacing: DesignSpace.s3) {
                     RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
                         .fill((kind?.color ?? DesignColor.textSecondary).opacity(0.12))
@@ -239,10 +266,6 @@ struct StudyDetailView: View {
                         }
                     }
                 }
-            }
-            .padding(DesignSpace.s4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
     }
 
     @ViewBuilder
@@ -321,25 +344,56 @@ struct StudyDetailView: View {
                     // Copertura parziale: la generazione è riuscita ma non
                     // ha visto tutto il materiale.
                     if let notice = module.generationError {
-                        // lineLimit + truncation: un avviso lungo non deve
-                        // poter allungare la card fino a spezzare la griglia
-                        // (succedeva con l'elenco dei nomi dei PDF: una
-                        // parola per riga e le card ridotte a strisce).
-                        Label(notice, systemImage: "scissors")
-                            .font(.system(size: 11))
-                            .foregroundStyle(DesignColor.toolWolfram)
-                            .lineLimit(3)
-                            .truncationMode(.tail)
+                        infoDisclosure(notice, icon: "scissors", moduleID: module.id)
                     }
                 } else if let error = module.generationError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DesignColor.toolWolfram)
-                        .lineLimit(4)
-                        .truncationMode(.tail)
+                    infoDisclosure(error, icon: "exclamationmark.triangle", moduleID: module.id)
                 }
             }
         }
+    }
+
+    // Avviso in due tempi (richiesta utente): chiuso mostra solo il succo
+    // — la prima proposizione, tagliata al primo ":" o "." — e un tocco
+    // apre tutto. Le note sono diventate dettagliate (pagine usate,
+    // argomenti rimasti fuori, cosa fare) e per intero schiacciavano la
+    // card; ma erano nate per essere lette, non per essere troncate coi
+    // puntini. Così la card resta leggera e l'informazione resta intera.
+    private func infoDisclosure(_ text: String, icon: String, moduleID: UUID) -> some View {
+        let isExpanded = expandedInfo.contains(moduleID)
+        return Button {
+            withAnimation(.snappy(duration: 0.18)) {
+                if isExpanded { expandedInfo.remove(moduleID) } else { expandedInfo.insert(moduleID) }
+            }
+        } label: {
+            // Qui SEMPRE e solo il succo su una riga: il testo completo
+            // compare sotto la riga della card, a tutta larghezza —
+            // dentro questa colonna stretta andrebbe a capo una parola
+            // per riga (visto succedere in orizzontale).
+            HStack(alignment: .center, spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+                Text(briefInfo(text))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(DesignColor.attention)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(text)
+        .accessibilityHint(isExpanded ? "Comprimi" : "Mostra tutti i dettagli")
+    }
+
+    // La prima proposizione dell'avviso: fino al primo ":" o "." — le
+    // note sono scritte apposta col succo davanti ("Il materiale supera
+    // lo spazio di una generazione: …").
+    private func briefInfo(_ text: String) -> String {
+        guard let cut = text.firstIndex(where: { $0 == ":" || $0 == "." }) else { return text }
+        let head = String(text[..<cut])
+        return head.count < text.count ? head + "…" : head
     }
 
     private func readySummary(_ module: StudyModule) -> String {
@@ -479,12 +533,12 @@ struct CitationDisclosure: View {
 
     private var tint: Color {
         if citation?.verified == true { return DesignColor.success }
-        return meaning == .inspiration ? DesignColor.textSecondary : DesignColor.toolWolfram
+        return meaning == .inspiration ? DesignColor.textSecondary : DesignColor.attention
     }
 
     private var tintBackground: Color {
         if citation?.verified == true { return DesignColor.successBg }
-        return meaning == .inspiration ? DesignColor.surfaceSunken : DesignColor.toolWolframBg
+        return meaning == .inspiration ? DesignColor.surfaceSunken : DesignColor.attentionBg
     }
 
     var body: some View {
@@ -635,6 +689,16 @@ private struct ExercisesModuleView: View {
     let content: ExerciseSetContent
     let study: Study
     let module: StudyModule
+
+    // Scrive nel payload l'esito della compilazione della figura ("" =
+    // fallita, non ritentare): la prossima apertura non ricompila.
+    private func persistFigure(_ svg: String, for exerciseID: UUID) {
+        guard var updated = module.decodeContent(ExerciseSetContent.self),
+              let index = updated.exercises.firstIndex(where: { $0.id == exerciseID }) else { return }
+        guard updated.exercises[index].figureSVG != svg else { return }
+        updated.exercises[index].figureSVG = svg
+        module.encodeContent(updated)
+    }
 
     // Verifica Wolfram, eseguita su richiesta alla rivelazione della
     // risposta: è un oracolo ESTERNO al modello, quindi vale molto più di
@@ -857,7 +921,7 @@ private struct ExercisesModuleView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 HStack(spacing: DesignSpace.s2) {
-                    chip(exercise.category.label, color: exercise.category == .practical ? DesignColor.toolWolfram : DesignColor.brandPrimary)
+                    chip(exercise.category.label, color: exercise.category == .practical ? DesignColor.attention : DesignColor.brandPrimary)
                     chip(exercise.difficulty.label, color: exercise.difficulty.color)
                     // Provenienza: "Nuovo" se la traccia è stata scritta
                     // ispirandosi ai materiali, "Nei materiali: X" se era
@@ -872,10 +936,24 @@ private struct ExercisesModuleView: View {
                     Spacer()
                 }
 
-                StudioRichText(text: exercise.prompt, size: 17, color: DesignColor.textPrimary)
-                    .padding(DesignSpace.s5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+                VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                    StudioRichText(text: exercise.prompt, size: 17, color: DesignColor.textPrimary)
+                    // La figura della traccia, se il modello l'ha scritta:
+                    // compilata con TikZJax alla prima apertura, poi
+                    // l'SVG vive nel payload. Se il TeX non compila, la
+                    // figura non appare e il fallimento viene ricordato.
+                    if let tikz = exercise.figureTikZ, !tikz.isEmpty {
+                        TikZFigureView(
+                            tikz: tikz,
+                            cachedSVG: exercise.figureSVG,
+                            onCompiled: { svg in persistFigure(svg, for: exercise.id) },
+                            onFailed: { persistFigure("", for: exercise.id) }
+                        )
+                    }
+                }
+                .padding(DesignSpace.s5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
 
                 if revealedSteps > 0 {
                     VStack(alignment: .leading, spacing: DesignSpace.s3) {

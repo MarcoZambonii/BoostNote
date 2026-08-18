@@ -49,11 +49,20 @@ final class VaultDocument {
 
     var folder: StudyFolder?
 
-    @Relationship(deleteRule: .cascade, inverse: \VaultPage.document)
-    var pages: [VaultPage] = []
+    // To-many opzionali con wrapper: requisito CloudKit, vedi Folder.
+    @Relationship(deleteRule: .cascade, originalName: "pages", inverse: \VaultPage.document)
+    private var pagesStorage: [VaultPage]? = []
+    var pages: [VaultPage] {
+        get { pagesStorage ?? [] }
+        set { pagesStorage = newValue }
+    }
 
-    @Relationship(deleteRule: .cascade, inverse: \VaultChunk.document)
-    var chunks: [VaultChunk] = []
+    @Relationship(deleteRule: .cascade, originalName: "chunks", inverse: \VaultChunk.document)
+    private var chunksStorage: [VaultChunk]? = []
+    var chunks: [VaultChunk] {
+        get { chunksStorage ?? [] }
+        set { chunksStorage = newValue }
+    }
 
     init(title: String, kind: VaultDocumentKind, folder: StudyFolder?, noteID: UUID? = nil, pdfData: Data? = nil) {
         self.id = UUID()

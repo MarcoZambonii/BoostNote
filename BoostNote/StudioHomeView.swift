@@ -12,6 +12,7 @@ import SwiftData
 // contenuti stanno dove si guarda dopo aver cliccato.
 struct StudioHomeView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Binding var selectedStudy: Study?
     @Binding var showingProgress: Bool
@@ -23,7 +24,6 @@ struct StudioHomeView: View {
 
     @State private var folderSheet: StudyFolderSheetMode?
     @State private var vaultFolder: StudyFolder?
-    @State private var infoFolderID: UUID?
     @State private var renamingStudy: Study?
     @State private var renameText = ""
 
@@ -33,7 +33,6 @@ struct StudioHomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignSpace.s8) {
                 header
-                actions
 
                 // Le cartelle si mostrano anche SENZA studi: da quando
                 // ospitano il vault dei materiali, una cartella vuota di
@@ -79,7 +78,30 @@ struct StudioHomeView: View {
         }
     }
 
+    // Titolo a sinistra, azioni di CORNICE a destra: creare un Vault e
+    // guardare i progressi non sono l'azione principale della pagina —
+    // lo sono i Vault che già esistono, con i loro studi. Prima una card
+    // blu a tutta larghezza gridava "Crea nuovo studio" sopra ogni cosa,
+    // e portava a un flusso che poteva anche non passare dal Vault.
+    @ViewBuilder
     private var header: some View {
+        // Su iPhone titolo e azioni si impilano: sulla stessa riga i
+        // pulsanti andavano a capo lettera per lettera.
+        if horizontalSizeClass == .compact {
+            VStack(alignment: .leading, spacing: DesignSpace.s4) {
+                headerTitle
+                headerButtons
+            }
+        } else {
+            HStack(alignment: .top, spacing: DesignSpace.s4) {
+                headerTitle
+                Spacer(minLength: 0)
+                headerButtons
+            }
+        }
+    }
+
+    private var headerTitle: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text("Studio")
@@ -88,12 +110,48 @@ struct StudioHomeView: View {
                 Image(systemName: "graduationcap.fill")
                     .foregroundStyle(DesignColor.brandPrimary)
             }
-            Text(studies.isEmpty
-                 ? "Genera ripassi, esercizi e flashcard dai tuoi materiali."
-                 : "\(studies.count) stud\(studies.count == 1 ? "io" : "i") · \(totalExercises) esercizi generati")
+            Text(subtitleText)
                 .font(.system(size: 14))
                 .foregroundStyle(DesignColor.textTertiary)
         }
+    }
+
+    private var headerButtons: some View {
+        HStack(spacing: DesignSpace.s2) {
+            headerButton(title: "Analisi progressi", icon: "chart.bar.xaxis", tint: DesignColor.insight) {
+                showingProgress = true
+            }
+            headerButton(title: "Nuovo Vault", icon: "plus", tint: DesignColor.brandPrimary) {
+                folderSheet = .new(parent: nil)
+            }
+        }
+    }
+
+    private var subtitleText: String {
+        if folders.isEmpty {
+            return "Crea un Vault per corso: il materiale viene letto una volta e diventa la base di studi, esercizi e ripassi."
+        }
+        let documents = folders.reduce(0) { $0 + $1.vaultDocuments.count }
+        var parts = ["\(folders.count) Vault", "\(documents) document\(documents == 1 ? "o" : "i")"]
+        if !studies.isEmpty {
+            parts.append("\(studies.count) stud\(studies.count == 1 ? "io" : "i")")
+            parts.append("\(totalExercises) esercizi generati")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func headerButton(title: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
+                .foregroundStyle(tint)
+                .padding(.horizontal, DesignSpace.s3)
+                .padding(.vertical, DesignSpace.s2)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private var totalExercises: Int {
@@ -104,92 +162,33 @@ struct StudioHomeView: View {
         }
     }
 
-    // Gerarchia esplicita: l'azione principale prende tutta la larghezza,
-    // le due secondarie stanno affiancate sotto. Tre card uguali in fila
-    // non dicono quale sia la cosa da fare.
-    private var actions: some View {
-        VStack(spacing: DesignSpace.s3) {
-            actionCard(
-                title: "Crea nuovo studio",
-                subtitle: "Da note, dispense o temi d'esame",
-                icon: "plus",
-                tint: DesignColor.brandPrimary,
-                prominent: true,
-                action: { onCreateStudy(nil) }
-            )
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: DesignSpace.s3) { secondaryActions }
-                VStack(spacing: DesignSpace.s3) { secondaryActions }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var secondaryActions: some View {
-        actionCard(
-            title: "Analisi dei progressi",
-            subtitle: "Come stai andando",
-            icon: "chart.bar.xaxis",
-            tint: DesignColor.toolExplain,
-            prominent: false
-        ) {
-            showingProgress = true
-        }
-        actionCard(
-            title: "Nuova cartella",
-            subtitle: "Organizza per materia",
-            icon: "folder.badge.plus",
-            tint: DesignColor.toolLatex,
-            prominent: false
-        ) {
-            folderSheet = .new(parent: nil)
-        }
-    }
-
-    private func actionCard(title: String, subtitle: String, icon: String, tint: Color, prominent: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: DesignSpace.s3) {
-                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                    .fill(prominent ? Color.white.opacity(0.2) : tint.opacity(0.12))
-                    .frame(width: 40, height: 40)
-                    .overlay(
-                        Image(systemName: icon)
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(prominent ? Color.white : tint)
-                    )
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(prominent ? Color.white : DesignColor.textPrimary)
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(prominent ? Color.white.opacity(0.85) : DesignColor.textTertiary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(DesignSpace.s4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                prominent ? DesignColor.brandPrimary : DesignColor.surfaceSunken,
-                in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
+    // Senza Vault non c'è niente da generare: lo stato vuoto porta a
+    // creare il primo, non a un flusso di studio che non avrebbe fonti.
     private var emptyState: some View {
         VStack(spacing: DesignSpace.s3) {
-            Image(systemName: "books.vertical")
+            Image(systemName: "archivebox")
                 .font(.system(size: 36))
                 .foregroundStyle(DesignColor.textTertiary)
-            Text("Nessuno studio, per ora")
+            Text("Nessun Vault, per ora")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(DesignColor.textPrimary)
-            Text("Scegli note, dispense o temi d'esame e lascia che l'app ne ricavi riassunti, esercizi e flashcard.")
+            Text("Un Vault per corso: ci metti dentro note, dispense, temi d'esame e file WeBeep. Vengono letti una volta e restano pronti per generare riassunti, esercizi e flashcard senza rileggere niente.")
                 .font(.system(size: 13))
                 .foregroundStyle(DesignColor.textTertiary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
+                .frame(maxWidth: 420)
+            Button {
+                folderSheet = .new(parent: nil)
+            } label: {
+                Label("Crea il primo Vault", systemImage: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DesignColor.textOnBrand)
+                    .padding(.horizontal, DesignSpace.s5)
+                    .padding(.vertical, DesignSpace.s3)
+                    .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, DesignSpace.s2)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, DesignSpace.s8)
@@ -242,7 +241,7 @@ struct StudioHomeView: View {
                         Button(role: .destructive) {
                             context.delete(folder)
                         } label: {
-                            Label("Elimina cartella", systemImage: "trash")
+                            Label("Elimina Vault e cartella", systemImage: "trash")
                         }
                         Text("Gli studi dentro non vengono eliminati.")
                     } label: {
@@ -290,28 +289,9 @@ struct StudioHomeView: View {
                     Text(folder.name)
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(DesignColor.textPrimary)
-                    HStack(spacing: 5) {
-                        Text(vaultSubtitle(for: documents))
-                            .font(.system(size: 12))
-                            .foregroundStyle(DesignColor.textTertiary)
-                        if !documents.isEmpty {
-                            Button {
-                                infoFolderID = folder.id
-                            } label: {
-                                Image(systemName: "info.circle")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(DesignColor.textSecondary)
-                            }
-                            .buttonStyle(.plain)
-                            .popover(isPresented: Binding(
-                                get: { infoFolderID == folder.id },
-                                set: { if !$0 { infoFolderID = nil } }
-                            ), arrowEdge: .bottom) {
-                                vaultContentsPopover(documents, folder: folder)
-                                    .presentationCompactAdaptation(.popover)
-                            }
-                        }
-                    }
+                    Text(vaultSubtitle(for: documents))
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textTertiary)
                 }
                 Spacer()
                 if isIngesting {
@@ -322,21 +302,20 @@ struct StudioHomeView: View {
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                 } else if !documents.isEmpty {
+                    // Una porta sola per il materiale: "Gestisci" apre il
+                    // Vault, dove si vede l'elenco e si aggiorna. Prima
+                    // c'erano una ⓘ per sbirciare e un "Aggiorna" a
+                    // parte: due mezze porte invece di una intera.
                     Button {
-                        Task { await VaultIngestionService.ensureFresh(for: folder, in: context) }
+                        vaultFolder = folder
                     } label: {
-                        Label("Aggiorna", systemImage: "arrow.clockwise")
+                        Label("Gestisci Vault", systemImage: "archivebox")
                             .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
                 Menu {
-                    Button {
-                        vaultFolder = folder
-                    } label: {
-                        Label("Vault del corso", systemImage: "archivebox")
-                    }
                     Button {
                         folderSheet = .edit(folder)
                     } label: {
@@ -345,7 +324,7 @@ struct StudioHomeView: View {
                     Button(role: .destructive) {
                         context.delete(folder)
                     } label: {
-                        Label("Elimina cartella", systemImage: "trash")
+                        Label("Elimina Vault e cartella", systemImage: "trash")
                     }
                     Text("Gli studi dentro non vengono eliminati.")
                 } label: {
@@ -388,15 +367,19 @@ struct StudioHomeView: View {
                         .foregroundStyle(DesignColor.textTertiary)
                     Spacer()
                     if !folderStudies.isEmpty, !documents.isEmpty {
+                        // È L'azione del corso: pieno, non sottotono —
+                        // ora che dalla testata della pagina è sparito il
+                        // "Crea nuovo studio", la generazione parte da
+                        // qui, cioè da un Vault preciso.
                         Button {
                             onCreateStudy(folder)
                         } label: {
-                            Label("Nuovo studio dal Vault", systemImage: "plus")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(DesignColor.brandPrimary)
-                                .padding(.horizontal, DesignSpace.s3)
-                                .padding(.vertical, 5)
-                                .background(DesignColor.brandPrimarySubtle, in: Capsule())
+                            Label("Nuovo studio dal Vault", systemImage: "sparkles")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(DesignColor.textOnBrand)
+                                .padding(.horizontal, DesignSpace.s4)
+                                .padding(.vertical, DesignSpace.s2)
+                                .background(DesignColor.brandPrimary, in: Capsule())
                         }
                         .buttonStyle(.plain)
                     }
@@ -430,68 +413,6 @@ struct StudioHomeView: View {
         return parts.joined(separator: " · ")
     }
 
-    // Il contenuto del Vault, a richiesta: righe compatte con lo stato,
-    // e la porta per gestirlo.
-    private func vaultContentsPopover(_ documents: [VaultDocument], folder: StudyFolder) -> some View {
-        VStack(alignment: .leading, spacing: DesignSpace.s3) {
-            Text("NEL VAULT")
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(DesignColor.textTertiary)
-            VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                ForEach(documents) { document in
-                    HStack(alignment: .top, spacing: DesignSpace.s2) {
-                        Image(systemName: document.kind == .note ? "note.text" : "doc.richtext")
-                            .font(.system(size: 11))
-                            .foregroundStyle(DesignColor.brandPrimary)
-                            .frame(width: 16)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 5) {
-                                Text(document.title.isEmpty ? "Senza titolo" : document.title)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(DesignColor.textPrimary)
-                                    .lineLimit(1)
-                                if document.kind == .note {
-                                    Text("Nota collegata")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundStyle(DesignColor.toolExplain)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2)
-                                        .background(DesignColor.toolExplainBg, in: Capsule())
-                                }
-                                if document.isExamPaper {
-                                    Text("Tema d'esame")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundStyle(DesignColor.toolWolfram)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2)
-                                        .background(DesignColor.toolWolframBg, in: Capsule())
-                                }
-                            }
-                            vaultDocChipStatus(document)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                }
-            }
-            Text("Il materiale viene letto una volta sola, pagina per pagina; le note collegate si rileggono solo dove sono cambiate.")
-                .font(.system(size: 11))
-                .foregroundStyle(DesignColor.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
-                infoFolderID = nil
-                vaultFolder = folder
-            } label: {
-                Label("Gestisci il Vault", systemImage: "archivebox")
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(DesignColor.brandPrimary)
-        }
-        .padding(DesignSpace.s4)
-        .frame(width: 420)
-    }
-
     @ViewBuilder
     private func vaultDocChipStatus(_ document: VaultDocument) -> some View {
         let pending = document.pendingCount
@@ -504,11 +425,11 @@ struct StudioHomeView: View {
         } else if pending > 0 {
             Label("\(pending) pagine da leggere", systemImage: "clock")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(DesignColor.toolWolfram)
+                .foregroundStyle(DesignColor.attention)
         } else if failed > 0 {
             Label("\(read) lette · \(failed) non riuscite", systemImage: "exclamationmark.triangle")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(DesignColor.toolWolfram)
+                .foregroundStyle(DesignColor.attention)
         } else {
             Label("\(read) pagine lette", systemImage: "checkmark")
                 .font(.system(size: 11, weight: .medium))
@@ -637,10 +558,10 @@ struct StudioHomeView: View {
                         Text(newPages == 0 ? "Al passo con il Vault" : "\(newPages) pagine nuove nel Vault")
                     }
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(newPages == 0 ? DesignColor.success : DesignColor.toolWolfram)
+                    .foregroundStyle(newPages == 0 ? DesignColor.success : DesignColor.attention)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(newPages == 0 ? DesignColor.successBg : DesignColor.toolWolframBg, in: Capsule())
+                    .background(newPages == 0 ? DesignColor.successBg : DesignColor.attentionBg, in: Capsule())
                 }
             }
             .padding(DesignSpace.s4)
@@ -763,7 +684,7 @@ struct StudyFolderEditSheet: View {
                     Image(systemName: "folder.fill")
                         .font(.system(size: 22))
                         .foregroundStyle(color.color)
-                    TextField("Nome cartella", text: $name)
+                    TextField("Nome del corso (es. Analisi 2)", text: $name)
                         .textFieldStyle(.plain)
                         .font(.system(size: 16, weight: .medium))
                 }
@@ -794,7 +715,7 @@ struct StudyFolderEditSheet: View {
                 Spacer()
             }
             .padding(DesignSpace.s5)
-            .navigationTitle(isNew ? "Nuova cartella di studio" : "Modifica cartella")
+            .navigationTitle(isNew ? "Nuovo Vault" : "Modifica Vault")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

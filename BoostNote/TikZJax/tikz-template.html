@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<link rel="stylesheet" href="tikz-fonts.css">
+<script src="tikzjax.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  /* La figura si adatta alla larghezza disponibile senza sgranare:
+     è un SVG, il tratto resta vettoriale a ogni zoom. */
+  #host svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+</style>
+</head>
+<body>
+<div id="host"></div>
+<script>
+  // Compila UN sorgente TikZ e riferisce l'esito a Swift.
+  //
+  // Il contratto con tikzjax: si inserisce <script type="text/tikz">,
+  // il MutationObserver della libreria lo prende, il worker WASM compila
+  // e il nodo viene sostituito — da un <svg> se è andata (con l'evento
+  // 'tikzjax-load-finished'), da un <img> rotto se il TeX non compila.
+  // Qui si osservano entrambe le strade e si aggiunge il timeout, perché
+  // la prima compilazione carica il motore e può essere lenta ma non
+  // deve poter restare appesa per sempre.
+  function compileTikz(source, requestID) {
+    var host = document.getElementById('host');
+    host.innerHTML = '';
+    var settled = false;
+
+    function settle(ok, payload) {
+      if (settled) { return; }
+      settled = true;
+      watcher.disconnect();
+      window.webkit.messageHandlers.tikzHandler.postMessage({
+        id: requestID,
+        ok: ok,
+        svg: ok ? payload : '',
+        error: ok ? '' : payload
+      });
+    }
+
+    // Fallimento = la libreria ha sostituito il loader con un'immagine
+    // segnaposto: per noi è il segnale "il TeX non compila".
+    var watcher = new MutationObserver(function () {
+      if (host.querySelector('img')) { settle(false, 'compile-error'); }
+    });
+    watcher.observe(host, { childList: true, subtree: true });
+
+    // L'evento sale (bubbles) proprio dall'SVG finale: e.target È la
+    // figura — niente selettori fragili per distinguerla dallo spinner.
+    host.addEventListener('tikzjax-load-finished', function onDone(e) {
+      host.removeEventListener('tikzjax-load-finished', onDone);
+      if (e.target && e.target.outerHTML) { settle(true, e.target.outerHTML); }
+      else { settle(false, 'no-svg'); }
+    });
+
+    setTimeout(function () { settle(false, 'timeout'); }, 45000);
+
+    var script = document.createElement('script');
+    script.setAttribute('type', 'text/tikz');
+    // niente console del motore dentro la pagina
+    script.appendChild(document.createTextNode(source));
+    host.appendChild(script);
+  }
+</script>
+</body>
+</html>

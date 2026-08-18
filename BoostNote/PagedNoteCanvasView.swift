@@ -1779,7 +1779,46 @@ struct PagedNoteCanvasView: UIViewRepresentable {
             addTextBox(at: point, in: overlay)
         }
 
+        // L'overlay corrente, per i ripristini della cronologia: undo e
+        // redo arrivano quando il gesto è finito da un pezzo e nessuno
+        // passa più l'overlay come parametro.
+        private weak var overlayView: UIView?
+        // Le caselle com'erano quando è iniziata una sessione di editing
+        // del testo: la registrazione è per sessione, non per tasto.
+        private var editingBoxesSnapshot: [NoteTextBox]?
+        // Il frame del media all'inizio di un trascinamento: al rilascio
+        // serve il "prima" per registrare lo spostamento.
+        private var mediaDragStartFrame: [PersistentIdentifier: CGRect] = [:]
+
+        // MARK: - Cronologia (caselle di testo)
+        //
+        // Le caselle sono VALORI ([NoteTextBox]): la cronologia lavora su
+        // fotografie intere dell'array — semplice e senza riferimenti che
+        // possono morire. Il ripristino DEVE riscrivere anche frame e
+        // testo delle viste esistenti: syncTextBoxes aggiunge e rimuove
+        // per ID, e da solo lascerebbe la vista dov'era (trappola nota).
+        private func applyTextBoxes(_ boxes: [NoteTextBox]) {
+            parent.textBoxes = boxes
+            for box in boxes {
+                guard let view = textViewsByID[box.id] else { continue }
+                if view.text != box.text { view.text = box.text }
+                view.frame = CGRect(x: box.x, y: box.y, width: box.width, height: max(box.height ?? 40, 40))
+            }
+            if let overlay = overlayView {
+                syncTextBoxes(in: overlay)
+            }
+        }
+
+        private func recordTextBoxes(_ name: String, before: [NoteTextBox]) {
+            let after = parent.textBoxes
+            guard after != before else { return }
+            parent.controller.recordChange(name, from: before, to: after) { [weak self] boxes in
+                self?.applyTextBoxes(boxes)
+            }
+        }
+
         func syncTextBoxes(in overlay: UIView) {
+            overlayView = overlay
             let currentIDs = Set(parent.textBoxes.map(\.id))
             for (id, view) in textViewsByID where !currentIDs.contains(id) {
                 view.removeFromSuperview()
@@ -1793,8 +1832,10 @@ struct PagedNoteCanvasView: UIViewRepresentable {
         }
 
         private func addTextBox(at point: CGPoint, in overlay: UIView) {
+            let before = parent.textBoxes
             let box = NoteTextBox(x: Double(point.x), y: Double(point.y))
             parent.textBoxes.append(box)
+            recordTextBoxes("Casella di testo", before: before)
             let textView = makeTextView(for: box)
             overlay.addSubview(textView)
             textViewsByID[box.id] = textView
@@ -1839,8 +1880,10 @@ struct PagedNoteCanvasView: UIViewRepresentable {
             case .ended, .cancelled:
                 textView.isScrollEnabled = true
                 guard let index = parent.textBoxes.firstIndex(where: { $0.id == textView.boxID }) else { return }
+                let before = parent.textBoxes
                 parent.textBoxes[index].width = Double(textView.frame.width)
                 parent.textBoxes[index].height = Double(textView.frame.height)
+                recordTextBoxes("Ridimensionamento casella", before: before)
             default:
                 break
             }
@@ -1848,9 +1891,11 @@ struct PagedNoteCanvasView: UIViewRepresentable {
 
         @objc private func handleTextBoxDelete(_ sender: UIButton) {
             guard let textView = sender.superview as? BoxTextView else { return }
+            let before = parent.textBoxes
             parent.textBoxes.removeAll { $0.id == textView.boxID }
             textView.removeFromSuperview()
             textViewsByID.removeValue(forKey: textView.boxID)
+            recordTextBoxes("Eliminazione casella", before: before)
         }
 
         @objc private func handleTextBoxLongPress(_ gesture: UILongPressGestureRecognizer) {
@@ -1876,8 +1921,16 @@ struct PagedNoteCanvasView: UIViewRepresentable {
 
         private func updateBoxPosition(id: UUID, x: CGFloat, y: CGFloat) {
             guard let index = parent.textBoxes.firstIndex(where: { $0.id == id }) else { return }
+            let before = parent.textBoxes
             parent.textBoxes[index].x = Double(x)
             parent.textBoxes[index].y = Double(y)
+            recordTextBoxes("Spostamento casella", before: before)
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            // La cronologia registra la SESSIONE di scrittura, non ogni
+            // tasto: la fotografia si scatta qui e si confronta alla fine.
+            editingBoxesSnapshot = parent.textBoxes
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -1894,6 +1947,12 @@ struct PagedNoteCanvasView: UIViewRepresentable {
                 parent.textBoxes.removeAll { $0.id == textView.boxID }
                 textView.removeFromSuperview()
                 textViewsByID.removeValue(forKey: textView.boxID)
+            }
+            // Chiusura della sessione di scrittura: un solo record, che
+            // copre anche l'auto-eliminazione della casella svuotata.
+            if let snapshot = editingBoxesSnapshot {
+                editingBoxesSnapshot = nil
+                recordTextBoxes("Modifica testo", before: snapshot)
             }
         }
 
@@ -1990,6 +2049,31 @@ struct PagedNoteCanvasView: UIViewRepresentable {
 
         // MARK: - Immagini e PDF
 
+        // MARK: - Cronologia (media)
+        //
+        // I media sono oggetti SwiftData, non valori: il ripristino passa
+        // per l'ID persistente. Se l'oggetto non esiste più (eliminato e
+        // poi ricreato da un altro undo, quindi con identità nuova), il
+        // ripristino è un no-op: meglio un passo di cronologia a vuoto
+        // che scrivere su un oggetto morto.
+        private func applyMediaFrame(id: PersistentIdentifier, frame: CGRect) {
+            guard let item = parent.media.first(where: { $0.persistentModelID == id }) else { return }
+            item.x = frame.origin.x
+            item.y = frame.origin.y
+            item.width = frame.width
+            item.height = frame.height
+            mediaViewsByID[id]?.frame = frame
+        }
+
+        private func recordMediaFrame(_ name: String, id: PersistentIdentifier, from old: CGRect, to new: CGRect) {
+            guard old != new else { return }
+            parent.controller.record(name, undo: { [weak self] in
+                self?.applyMediaFrame(id: id, frame: old)
+            }, redo: { [weak self] in
+                self?.applyMediaFrame(id: id, frame: new)
+            })
+        }
+
         func syncMedia(in overlay: UIView) {
             let currentIDs = Set(parent.media.map(\.persistentModelID))
             for (id, view) in mediaViewsByID where !currentIDs.contains(id) {
@@ -2083,8 +2167,12 @@ struct PagedNoteCanvasView: UIViewRepresentable {
                 gesture.setTranslation(.zero, in: box)
             case .ended, .cancelled:
                 guard let item = parent.media.first(where: { $0.persistentModelID == mediaID }) else { return }
+                let old = CGRect(x: item.x, y: item.y, width: item.width, height: item.height)
                 item.width = Double(box.frame.width)
                 item.height = Double(box.frame.height)
+                recordMediaFrame("Ridimensionamento", id: mediaID,
+                                 from: old,
+                                 to: CGRect(x: item.x, y: item.y, width: item.width, height: item.height))
             default:
                 break
             }
@@ -2104,6 +2192,7 @@ struct PagedNoteCanvasView: UIViewRepresentable {
             case .began:
                 box.alpha = 0.85
                 mediaDragLocation[mediaID] = location
+                mediaDragStartFrame[mediaID] = box.frame
             case .changed:
                 guard let last = mediaDragLocation[mediaID] else { return }
                 box.center.x += location.x - last.x
@@ -2112,9 +2201,13 @@ struct PagedNoteCanvasView: UIViewRepresentable {
             case .ended, .cancelled:
                 box.alpha = 1
                 mediaDragLocation.removeValue(forKey: mediaID)
+                let startFrame = mediaDragStartFrame.removeValue(forKey: mediaID)
                 if let item = parent.media.first(where: { $0.persistentModelID == mediaID }) {
                     item.x = Double(box.frame.origin.x)
                     item.y = Double(box.frame.origin.y)
+                    if let startFrame {
+                        recordMediaFrame("Spostamento", id: mediaID, from: startFrame, to: box.frame)
+                    }
                 }
             default:
                 break

@@ -1,0 +1,120 @@
+import SwiftUI
+import WebKit
+
+// La figura TikZ di un esercizio: compila alla prima visualizzazione
+// (TikZJax, offline) e riferisce l'SVG al chiamante perché lo persista
+// nel payload — dalla volta dopo si mostra e basta, zero ricompilazioni.
+//
+// Contratto onesto: se il TeX non compila, la vista SPARISCE (onFailed
+// permette al chiamante di segnarlo e non ritentare) — mai una figura
+// rotta accanto a una traccia giusta.
+struct TikZFigureView: View {
+    let tikz: String
+    // SVG già compilato in passato, se c'è nel payload.
+    let cachedSVG: String?
+    var onCompiled: (String) -> Void = { _ in }
+    var onFailed: () -> Void = {}
+
+    @State private var svg: String?
+    @State private var failed = false
+    @State private var height: CGFloat = 120
+
+    var body: some View {
+        Group {
+            if let svg, !svg.isEmpty {
+                SVGWebView(svg: svg, height: $height)
+                    .frame(height: height)
+                    .frame(maxWidth: .infinity)
+            } else if !failed {
+                HStack(spacing: DesignSpace.s2) {
+                    ProgressView().controlSize(.small)
+                    Text("Preparo la figura…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DesignSpace.s4)
+            }
+        }
+        .task(id: tikz) {
+            if let cachedSVG {
+                // Vuoto = fallita in passato: niente spinner, niente retry.
+                if cachedSVG.isEmpty { failed = true } else { svg = cachedSVG }
+                return
+            }
+            if let compiled = await TikZCompiler.shared.compile(tikz) {
+                svg = compiled
+                onCompiled(compiled)
+            } else {
+                failed = true
+                onFailed()
+            }
+        }
+    }
+}
+
+// Mostra un SVG e riporta l'altezza giusta per la larghezza disponibile.
+// WebView e non Image: l'SVG di dvi2html usa font web (via CSS del
+// bundle TikZJax) e da vettoriale resta nitido a ogni zoom del foglio.
+private struct SVGWebView: UIViewRepresentable {
+    let svg: String
+    @Binding var height: CGFloat
+
+    func makeCoordinator() -> Coordinator { Coordinator(height: $height) }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let controller = WKUserContentController()
+        controller.add(context.coordinator, name: "sizeHandler")
+        let config = WKWebViewConfiguration()
+        config.userContentController = controller
+        let view = WKWebView(frame: .zero, configuration: config)
+        view.isOpaque = false
+        view.backgroundColor = .clear
+        view.scrollView.backgroundColor = .clear
+        view.scrollView.isScrollEnabled = false
+        context.coordinator.load(svg: svg, into: view)
+        return view
+    }
+
+    func updateUIView(_ view: WKWebView, context: Context) {
+        context.coordinator.load(svg: svg, into: view)
+    }
+
+    final class Coordinator: NSObject, WKScriptMessageHandler {
+        @Binding var height: CGFloat
+        private var lastSVG: String?
+
+        init(height: Binding<CGFloat>) { self._height = height }
+
+        func load(svg: String, into view: WKWebView) {
+            guard svg != lastSVG else { return }
+            lastSVG = svg
+            let fontsURL = Bundle.main.url(forResource: "tikz-fonts", withExtension: "css", subdirectory: "TikZJax")
+                ?? Bundle.main.url(forResource: "tikz-fonts", withExtension: "css")
+            let cssTag = fontsURL.map { "<link rel=\"stylesheet\" href=\"\($0.lastPathComponent)\">" } ?? ""
+            let html = """
+            <!DOCTYPE html><html><head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+            \(cssTag)
+            <style>html,body{margin:0;padding:0;background:transparent}svg{max-width:100%;height:auto;display:block;margin:0 auto}</style>
+            </head><body>\(svg)
+            <script>
+            function report(){window.webkit.messageHandlers.sizeHandler.postMessage(document.body.scrollHeight)}
+            window.addEventListener('load',report);setTimeout(report,80);setTimeout(report,300);
+            </script></body></html>
+            """
+            // baseURL sulla cartella del bundle: così il CSS dei font si
+            // carica come risorsa locale.
+            let base = fontsURL?.deletingLastPathComponent() ?? Bundle.main.bundleURL
+            view.loadHTMLString(html, baseURL: base)
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let number = message.body as? NSNumber else { return }
+            let value = max(CGFloat(number.doubleValue), 40)
+            if abs(value - height) > 0.5 {
+                DispatchQueue.main.async { self.height = value }
+            }
+        }
+    }
+}

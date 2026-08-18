@@ -17,7 +17,6 @@ struct NoteSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                if !note.isWhiteboard {
                     Section("Pagine") {
                         if showingAllPages {
                             LazyVGrid(columns: thumbColumns, spacing: DesignSpace.s3) {
@@ -55,7 +54,6 @@ struct NoteSettingsSheet: View {
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     }
-                }
 
                 Section("Esporta") {
                     Toggle("Includi Filigrana", isOn: $exportIncludesPattern)
