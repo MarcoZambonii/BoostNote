@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- PARCHEGGIATO: oggi nessuna configurazione punta a questo file.
+
+	     Richiede l'Apple Developer Program a pagamento: un team personale
+	     non può firmare iCloud né Push Notifications. Fino ad allora Debug e
+	     Release usano BoostNote-PersonalTeam.entitlements, vuoto.
+
+	     Preso l'account: rimettere questo file su entrambe le configurazioni
+	     (CODE_SIGN_ENTITLEMENTS) e cancellare quello personale. -->
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
 		<string>iCloud.BN.BoostNote</string>

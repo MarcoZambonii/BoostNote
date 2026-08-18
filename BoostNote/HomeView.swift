@@ -96,10 +96,29 @@ struct HomeView: View {
     // spingevano in basso il contenuto vero (le note e i ripassi).
     @ViewBuilder
     private var header: some View {
-        // Su iPhone saluto e azioni non stanno sulla stessa riga (il
-        // testo dei pulsanti andava a capo lettera per lettera): si
-        // impilano, saluto sopra e azioni sotto.
-        if horizontalSizeClass == .compact {
+        // Saluto e azioni sulla stessa riga solo se ci stanno DAVVERO.
+        //
+        // Prima la scelta era su `horizontalSizeClass`, ed è il segnale
+        // sbagliato: descrive il dispositivo, non la colonna in cui vive
+        // questa intestazione. Un iPad in verticale con la barra laterale
+        // aperta resta `.regular` pur lasciando al contenuto una larghezza
+        // da iPhone — si prendeva il ramo affiancato, i tre pulsanti non si
+        // comprimono, e l'unico elemento comprimibile (il testo del saluto)
+        // finiva a UN CARATTERE PER RIGA. Stesso sintomo che il commento
+        // qui sopra descriveva per i pulsanti su iPhone: la causa era la
+        // stessa, la diagnosi no.
+        //
+        // `ViewThatFits` misura lo spazio disponibile invece di dedurlo dal
+        // dispositivo: prova la riga singola e, se non entra, impila. Perché
+        // funzioni il saluto NON deve essere comprimibile (vedi il
+        // `fixedSize` in `greetingBlock`), altrimenti la prima variante
+        // "entra" sempre schiacciandolo.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: DesignSpace.s4) {
+                greetingBlock
+                Spacer(minLength: DesignSpace.s4)
+                headerActions
+            }
             VStack(alignment: .leading, spacing: DesignSpace.s4) {
                 greetingBlock
                 // Le tre azioni insieme superano i ~400pt di un iPhone:
@@ -109,12 +128,6 @@ struct HomeView: View {
                 }
                 .scrollClipDisabled()
             }
-        } else {
-            HStack(alignment: .top, spacing: DesignSpace.s4) {
-                greetingBlock
-                Spacer(minLength: 0)
-                headerActions
-            }
         }
     }
 
@@ -123,6 +136,11 @@ struct HomeView: View {
             Text(greeting)
                 .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(DesignColor.textPrimary)
+                // Non comprimibile: è ciò che permette a `ViewThatFits` di
+                // accorgersi che la riga singola non entra, invece di farla
+                // entrare a forza mandando a capo ogni lettera.
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
             Text(Date.now.formatted(date: .long, time: .omitted))
                 .font(.system(size: 14))
                 .foregroundStyle(DesignColor.textTertiary)
