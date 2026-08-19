@@ -42,12 +42,21 @@ struct TikZFigureView: View {
                 if cachedSVG.isEmpty { failed = true } else { svg = cachedSVG }
                 return
             }
-            if let compiled = await TikZCompiler.shared.compile(tikz) {
+            switch await TikZCompiler.shared.compile(tikz) {
+            case .compiled(let compiled):
                 svg = compiled
                 onCompiled(compiled)
-            } else {
+            case .texFailed:
+                // Il TeX non compila: esito del CONTENUTO, si ricorda nel
+                // payload e non si ritenta più.
                 failed = true
                 onFailed()
+            case .unavailable:
+                // Motore non pronto (webview caduta, processo web morto,
+                // richiesta appesa): la figura non si mostra adesso, ma
+                // NON viene marcata come rotta — alla prossima apertura
+                // della card si ritenta.
+                failed = true
             }
         }
     }

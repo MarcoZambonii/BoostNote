@@ -2,12 +2,25 @@ import Foundation
 import UIKit
 import WebKit
 
+// Esito di una compilazione. La distinzione NON è cosmetica: un TeX che
+// non compila è un fatto del CONTENUTO e va ricordato (non si ritenta a
+// ogni apparizione della card), mentre un motore non disponibile è un
+// fatto NOSTRO e non deve marcare la figura come rotta — altrimenti una
+// webview che non parte una volta condanna per sempre una figura sana.
+enum TikZCompileOutcome {
+    case compiled(String)
+    // Il sorgente non compila: esito definitivo, si può ricordare.
+    case texFailed
+    // Motore non disponibile (pagina non caricata, processo web morto,
+    // richiesta appesa): transitorio, NON va ricordato.
+    case unavailable
+}
+
 // Compila sorgenti TikZ in SVG con TikZJax: il motore TeX vero compilato
 // in WebAssembly, impacchettato nell'app (BoostNote/TikZJax) — offline e
 // gratis, come KaTeX. Pacchetti inclusi nel build: tikz, pgfplots,
-// automata (catene di Markov), positioning, arrows, matrix, calc.
-// circuitikz NON c'è: richiederebbe di ricompilare il motore coi suoi
-// sorgenti (nota in backlog).
+// automata (catene di Markov), positioning, arrows, matrix, calc — e
+// anche circuitikz, che nei tex_files del bundle c'è davvero.
 //
 // La COMPILAZIONE è il quality gate delle figure: se il TeX del modello
 // non compila, la figura semplicemente non esiste — mai un disegno rotto
@@ -21,10 +34,18 @@ import WebKit
 final class TikZCompiler: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     static let shared = TikZCompiler()
 
+    // Rete di sicurezza SOPRA il timeout di 45s che vive nel JS: copre i
+    // casi in cui il JS non risponde affatto (processo web ucciso per
+    // memoria, pagina mai eseguita). Senza, la continuation restava
+    // sospesa, `busy` non tornava mai false e la coda si bloccava per
+    // TUTTE le figure successive.
+    private static let jobTimeout: TimeInterval = 75
+
     private var webView: WKWebView?
     private var pageLoaded = false
     private var pendingLoad: [CheckedContinuation<Bool, Never>] = []
-    private var inFlight: [String: CheckedContinuation<String?, Never>] = [:]
+    private var inFlight: [String: CheckedContinuation<TikZCompileOutcome, Never>] = [:]
+    private var watchdogs: [String: Task<Void, Never>] = [:]
     // Un solo texify per volta: il worker è unico e la libreria accoda,
     // ma serializzare qui rende i timeout onesti (non contano l'attesa
     // in coda di qualcun altro).
@@ -36,39 +57,43 @@ final class TikZCompiler: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     // nella stessa schermata.
     private var sessionCache: [String: String] = [:]
 
-    func compile(_ tikz: String) async -> String? {
+    func compile(_ tikz: String) async -> TikZCompileOutcome {
         let source = Self.normalized(tikz)
-        guard !source.isEmpty else { return nil }
-        if let cached = sessionCache[source] { return cached.isEmpty ? nil : cached }
+        guard !source.isEmpty else { return .texFailed }
+        if let cached = sessionCache[source] {
+            return cached.isEmpty ? .texFailed : .compiled(cached)
+        }
 
-        guard await ensureReady() else { return nil }
+        guard await ensureReady() else { return .unavailable }
 
-        let result: String? = await withCheckedContinuation { continuation in
+        let result: TikZCompileOutcome = await withCheckedContinuation { continuation in
             let job = { [weak self] in
                 guard let self, let webView = self.webView else {
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: .unavailable)
                     return
                 }
                 let requestID = UUID().uuidString
                 self.inFlight[requestID] = continuation
+                self.startWatchdog(for: requestID)
                 guard let sourceJSON = try? String(data: JSONEncoder().encode(source), encoding: .utf8),
                       let idJSON = try? String(data: JSONEncoder().encode(requestID), encoding: .utf8) else {
-                    self.inFlight.removeValue(forKey: requestID)
-                    continuation.resume(returning: nil)
+                    self.settle(requestID, with: .unavailable)
                     return
                 }
                 webView.evaluateJavaScript("compileTikz(\(sourceJSON), \(idJSON))") { _, error in
-                    if error != nil, let waiting = self.inFlight.removeValue(forKey: requestID) {
-                        waiting.resume(returning: nil)
-                        self.finishJob()
-                    }
+                    if error != nil { self.settle(requestID, with: .unavailable) }
                 }
             }
             enqueue(job)
         }
-        // Anche il fallimento si ricorda (stringa vuota): un TeX che non
-        // compila non va ritentato a ogni apparizione della card.
-        sessionCache[source] = result ?? ""
+        // Si ricorda SOLO l'esito definitivo. Un motore non disponibile
+        // non lascia traccia: alla prossima apparizione si ritenta, ed è
+        // ciò che distingue una figura rotta da una webview non pronta.
+        switch result {
+        case .compiled(let svg): sessionCache[source] = svg
+        case .texFailed: sessionCache[source] = ""
+        case .unavailable: break
+        }
         return result
     }
 
@@ -149,7 +174,39 @@ final class TikZCompiler: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         if let url = Bundle.main.url(forResource: "tikz-template", withExtension: "html", subdirectory: "TikZJax")
             ?? Bundle.main.url(forResource: "tikz-template", withExtension: "html") {
             view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        } else {
+            // Risorse mancanti dal bundle: nessuno chiamerà mai i
+            // delegate, quindi va chiuso qui o si aspetta per sempre.
+            tearDownEngine()
         }
+    }
+
+    // Butta il motore e sblocca tutti gli in attesa. La webview NON viene
+    // ricreata qui: la ricrea il prossimo `ensureReady()`, così un
+    // fallimento non si trascina dietro un ciclo di ricostruzioni a vuoto
+    // ma nemmeno condanna la sessione — era il difetto di prima: pagina
+    // non caricata = attesa infinita, spinner "Preparo la figura…" per
+    // sempre e coda ferma.
+    private func tearDownEngine() {
+        webView?.navigationDelegate = nil
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "tikzHandler")
+        webView?.removeFromSuperview()
+        webView = nil
+        pageLoaded = false
+
+        let waiting = pendingLoad
+        pendingLoad.removeAll()
+        waiting.forEach { $0.resume(returning: false) }
+
+        let pending = inFlight
+        inFlight.removeAll()
+        watchdogs.values.forEach { $0.cancel() }
+        watchdogs.removeAll()
+        pending.values.forEach { $0.resume(returning: .unavailable) }
+        // La coda riparte: senza, un motore morto fermava per sempre
+        // tutte le figure successive.
+        busy = false
+        drainIfIdle()
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -159,8 +216,37 @@ final class TikZCompiler: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        pendingLoad.forEach { $0.resume(returning: false) }
-        pendingLoad.removeAll()
+        tearDownEngine()
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        tearDownEngine()
+    }
+
+    // Il processo di contenuto è morto (tipicamente memoria: qui dentro
+    // girano ~7 MB di JS più il WASM di TeX). Senza questo, il messaggio
+    // di ritorno non arriva MAI e la coda resta bloccata.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        tearDownEngine()
+    }
+
+    private func startWatchdog(for requestID: String) {
+        watchdogs[requestID] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.jobTimeout))
+            guard !Task.isCancelled, let self else { return }
+            // Se siamo ancora qui, il motore non ha risposto nemmeno col
+            // suo timeout interno: si considera morto e si riparte
+            // pulito al prossimo tentativo.
+            if self.inFlight[requestID] != nil { self.tearDownEngine() }
+        }
+    }
+
+    // Chiude UNA richiesta, sempre una volta sola, e fa avanzare la coda.
+    private func settle(_ requestID: String, with outcome: TikZCompileOutcome) {
+        watchdogs.removeValue(forKey: requestID)?.cancel()
+        guard let continuation = inFlight.removeValue(forKey: requestID) else { return }
+        continuation.resume(returning: outcome)
+        finishJob()
     }
 
     private func enqueue(_ job: @escaping () -> Void) {
@@ -182,15 +268,16 @@ final class TikZCompiler: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any],
-              let requestID = body["id"] as? String,
-              let continuation = inFlight.removeValue(forKey: requestID) else { return }
+              let requestID = body["id"] as? String else { return }
         let ok = body["ok"] as? Bool ?? false
         let svg = body["svg"] as? String ?? ""
         if ok, !svg.isEmpty {
-            continuation.resume(returning: svg)
-        } else {
-            continuation.resume(returning: nil)
+            settle(requestID, with: .compiled(svg))
+            return
         }
-        finishJob()
+        // Il JS dice PERCHÉ ha fallito: "compile-error"/"no-svg" sono il
+        // TeX (definitivo), "timeout" è il motore appeso (transitorio).
+        let reason = body["error"] as? String ?? ""
+        settle(requestID, with: reason == "timeout" ? .unavailable : .texFailed)
     }
 }

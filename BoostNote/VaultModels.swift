@@ -94,16 +94,19 @@ final class VaultDocument {
     var sortedChunks: [VaultChunk] { chunks.sorted { $0.pageStart < $1.pageStart } }
 
     // Tutti gli argomenti del documento, dall'indice (vuoto se non
-    // ancora indicizzato).
+    // ancora indicizzato). Le etichette escono CONSOLIDATE: ogni chunk è
+    // etichettato per conto suo, quindi lo stesso argomento rientra
+    // scritto in modi diversi e senza questo passaggio l'elenco si
+    // riempie di quasi-duplicati.
     var allTopics: [String] {
         var seen: Set<String> = []
-        var result: [String] = []
+        var raw: [String] = []
         for chunk in sortedChunks {
             for topic in chunk.topics where seen.insert(topic.lowercased()).inserted {
-                result.append(topic)
+                raw.append(topic)
             }
         }
-        return result
+        return TopicVocabulary.consolidated(raw)
     }
 }
 
