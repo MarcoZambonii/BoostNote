@@ -360,7 +360,11 @@ struct NoteEditorView: View {
             }
         }
         .sheet(isPresented: $showingWebeepDocPicker) {
-            WebeepFilePickerSheet { data, name in
+            // Il pannello Documento ne mostra UNO: lì la spunta multipla
+            // non avrebbe senso. In coda alle pagine invece sì.
+            WebeepFilePickerSheet(
+                selectionMode: webeepPickerTarget == .documentPanel ? .single : .multiple
+            ) { data, name in
                 switch webeepPickerTarget {
                 case .notePages:
                     // Import diretto come pagine in coda, come dai File.
@@ -768,6 +772,13 @@ struct NoteEditorView: View {
                             // spunta una vuota sotto: si può sempre
                             // continuare a scrivere senza sbattere contro
                             // un muro.
+                            //
+                            // Solo se è cambiata l'ULTIMA pagina, però:
+                            // il controllo deserializza il disegno per
+                            // sapere se ha inchiostro, e su una pagina
+                            // che nessuno ha toccato la risposta è la
+                            // stessa dell'ultima volta.
+                            guard note.sortedPages.last === page else { return }
                             note.ensureTrailingBlankPage(in: context)
                         },
                         onNeedMorePages: {
