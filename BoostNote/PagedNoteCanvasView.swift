@@ -316,7 +316,10 @@ final class PageLiveStrokeView: UIView {
 
     override func draw(_ rect: CGRect) {
         guard let stroke, let ctx = UIGraphicsGetCurrentContext() else { return }
-        InkRenderer.draw(stroke, in: ctx, scale: renderScale)
+        // `rect` è la coda appena aggiunta: il renderer emette solo gli
+        // stampi che ci cadono dentro, invece di riemettere tutto il
+        // tratto a ogni campione della Pencil.
+        InkRenderer.draw(stroke, in: ctx, scale: renderScale, clipTo: rect)
     }
 
     // Butta anche il backing store: a fine sessione di scrittura la
@@ -1147,6 +1150,13 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         activeWritingPage?.endWriting()
         activeWritingPage = page
         page.beginWriting()
+        // Il travaso su disco NON va fatto qui in linea: questa funzione
+        // la chiama `touchesBegan`, e serializzare la pagina precedente
+        // (più la scrittura SwiftData e il giro di SwiftUI che ne segue)
+        // prima ancora di disegnare il primo campione ritardava la
+        // comparsa del tratto al cambio pagina. Si programma per subito
+        // dopo, quando il tocco è già stato servito.
+        Task { @MainActor [weak self] in self?.flushPendingSaves() }
     }
     // Segnalibro automatico: pagina da cui ripartire alla prima
     // apertura, applicata appena il layout ha dimensioni reali.
@@ -1181,6 +1191,22 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         // butta via la posizione di lettura.
         scrollsToTop = false
         addSubview(contentHost)
+
+        // Il salvataggio è differito (vedi scheduleSave): l'app che va in
+        // background è l'ultimo momento in cui si può scrivere su disco
+        // con certezza, quindi lì si travasa subito.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(flushOnBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(flushOnBackground),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
 
         // La cattura del tratto sta sotto l'overlay di testo/media: un
         // tocco su una casella di testo va alla casella, come oggi.
@@ -1342,7 +1368,8 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         // logica del contenuto cambia davvero, e in modo compatibile con
         // la trasformazione (bounds + center, mai frame).
         let unscaled = CGSize(width: pageWidth, height: max(y - pageGap, defaultHeight))
-        if contentLayoutSize != unscaled {
+        let geometryChanged = contentLayoutSize != unscaled
+        if geometryChanged {
             contentLayoutSize = unscaled
             applyContentLayoutSize()
         }
@@ -1351,7 +1378,11 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         for page in pageViews {
             page.applyRenderScale(zoomScale)
         }
-        residentRange = 0..<0
+        // Il reset serve SOLO quando le pagine si sono mosse: azzerarlo
+        // a ogni sync annullava la guardia di `updateResidency` e
+        // rifaceva il giro su tutte le pagine a ogni aggiornamento di
+        // SwiftUI — cioè, prima del salvataggio differito, a ogni tratto.
+        if geometryChanged { residentRange = 0..<0 }
         updateResidency()
         // Le pagine vengono inserite subito sotto overlayLayer, quindi
         // finirebbero SOPRA la cattura del tratto: va rialzata.
@@ -1420,17 +1451,58 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
             page.setStrokes(strokes, invalidating: rect)
         }
         lastActivePageView = page
-        // L'UNICO PKDrawing del giro: serializzazione per lo storage.
-        let data = PKDrawing(strokes: strokes).dataRepresentation()
-        page.appliedDrawingData = data
-        if let index = pageViews.firstIndex(where: { $0 === page }) {
-            onPageDataChanged?(index, data)
-        }
+        // La serializzazione NON sta più qui. Serializzare l'intera
+        // pagina a ogni tratto (più la scrittura SwiftData che ne segue,
+        // più l'invalidazione di SwiftUI che ne segue ancora) era lo
+        // scatto che si sentiva al distacco della penna, e cresceva con
+        // l'inchiostro già sulla pagina. La verità è `page.strokes` in
+        // memoria — undo compreso; il disco può arrivare un attimo dopo.
+        scheduleSave(of: page)
         // Vicino al fondo dell'ultima pagina: se ne chiede una nuova,
         // così scrivere resta continuo, senza un muro.
         if pageViews.last === page, page.frame.height > 0,
            page.inkBounds.maxY > page.frame.height - 120 {
             onNeedsMorePages?()
+        }
+    }
+
+    @objc private func flushOnBackground() { flushPendingSaves() }
+
+    // MARK: - Salvataggio differito
+
+    // Pagine con tratti non ancora serializzati. Riferimenti forti, ma
+    // la finestra è di qualche centinaio di millisecondi e al travaso si
+    // tengono solo quelle ancora vive.
+    private var pendingSaves: [NotePageView] = []
+    private var saveTask: Task<Void, Never>?
+
+    private func scheduleSave(of page: NotePageView) {
+        if !pendingSaves.contains(where: { $0 === page }) { pendingSaves.append(page) }
+        saveTask?.cancel()
+        saveTask = Task { @MainActor [weak self] in
+            // Abbastanza corto da perdere al massimo l'ultimo mezzo
+            // secondo se l'app muore di colpo, abbastanza lungo da
+            // coprire una frase intera scritta di getto.
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.flushPendingSaves()
+        }
+    }
+
+    // Travaso immediato: si chiama quando si cambia pagina, quando l'app
+    // va in background e quando l'editor sparisce. Fuori da questi
+    // momenti ci pensa il timer.
+    func flushPendingSaves() {
+        saveTask?.cancel()
+        saveTask = nil
+        guard !pendingSaves.isEmpty else { return }
+        let pages = pendingSaves
+        pendingSaves.removeAll()
+        for page in pages {
+            guard let index = pageViews.firstIndex(where: { $0 === page }) else { continue }
+            let data = PKDrawing(strokes: page.strokes).dataRepresentation()
+            page.appliedDrawingData = data
+            onPageDataChanged?(index, data)
         }
     }
 
@@ -1666,6 +1738,13 @@ struct PagedNoteCanvasView: UIViewRepresentable {
 
         context.coordinator.syncTextBoxes(in: container.overlayLayer)
         context.coordinator.syncMedia(in: container.overlayLayer)
+    }
+
+    // L'editor sparisce (si torna all'elenco, si apre un'altra nota):
+    // qui si scrive su disco ciò che il salvataggio differito aveva
+    // ancora in mano.
+    static func dismantleUIView(_ container: PagedCanvasContainer, coordinator: Coordinator) {
+        container.flushPendingSaves()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }

@@ -1,7 +1,11 @@
 import UIKit
 import PencilKit
 
-// LABORATORIO — disegno dell'inchiostro fatto da noi.
+// IL MOTORE D'INCHIOSTRO — disegno dei tratti fatto da noi.
+//
+// (Nasceva come laboratorio a fianco di PencilKit; da quando l'inchiostro
+// è tutto nostro questo file È il motore delle note a pagine, e la
+// schermata di confronto non esiste più.)
 //
 // PencilKit rasterizza i tratti alla propria scala: se lo zoom lo fa una
 // scroll view esterna (com'è nelle nostre note a pagine), quella bitmap
@@ -11,9 +15,6 @@ import PencilKit
 // QUALSIASI scala — e lo stesso codice, mandato in un contesto PDF,
 // produce l'export vettoriale vero.
 //
-// Questo file non è collegato al canvas dell'app: lo usa solo la
-// schermata di confronto (InkLabView). Finché il risultato non convince,
-// non tocca niente di ciò che già funziona.
 enum InkRenderer {
 
     // Passo di campionamento della spline, in punti di contenuto e
@@ -88,15 +89,33 @@ enum InkRenderer {
     static func draw(_ strokes: [PKStroke], in context: CGContext, scale: CGFloat = 1, clipTo rect: CGRect? = nil) {
         for stroke in strokes {
             if let rect, !stroke.renderBounds.intersects(rect) { continue }
-            draw(stroke, in: context, scale: scale)
+            draw(stroke, in: context, scale: scale, clipTo: rect)
         }
     }
 
-    static func draw(_ stroke: PKStroke, in context: CGContext, scale: CGFloat = 1) {
+    // `clipTo` è in coordinate della VISTA (lo stesso rettangolo che
+    // arriva a draw(_ rect:)). Senza, disegnare la coda di un tratto
+    // costava quanto disegnarlo tutto: il clip di CoreGraphics scarta i
+    // pixel ma noi emettevamo comunque migliaia di stampi, e con la
+    // Pencil a 240 Hz il costo per campione cresceva con la lunghezza del
+    // tratto — era l'attrito che si sentiva DURANTE un tratto lungo.
+    static func draw(_ stroke: PKStroke, in context: CGContext, scale: CGFloat = 1, clipTo rect: CGRect? = nil) {
         let length = stroke.renderBounds.width + stroke.renderBounds.height
         let step = samplingStep(for: scale, length: length)
         let points = sampledPoints(of: stroke, step: step)
         guard !points.isEmpty else { return }
+
+        // Il rettangolo va portato nello spazio del tratto (che può
+        // essere stato spostato col lasso) e allargato del pennino: uno
+        // stampo il cui centro è appena fuori dipinge ancora dentro.
+        let localClip: CGRect? = rect.map { visible in
+            let inflate = max(stroke.renderBounds.width, stroke.renderBounds.height) > 0
+                ? maxNibReach(of: points, ink: stroke.ink.inkType)
+                : 0
+            return visible
+                .applying(stroke.transform.inverted())
+                .insetBy(dx: -inflate, dy: -inflate)
+        }
 
         context.saveGState()
         defer { context.restoreGState() }
@@ -129,28 +148,59 @@ enum InkRenderer {
             context.setBlendMode(.normal)
         }
 
-        // Gli stampi si sovrappongono di molto: disegnati uno per uno con
-        // il colore semitrasparente, ogni sovrapposizione si sommerebbe e
-        // il tratto verrebbe a chiazze scure. Dentro un livello di
-        // trasparenza si disegnano opachi e il gruppo viene composto UNA
-        // volta sola con l'alfa giusto.
+        // UNO STAMPO, UN RIEMPIMENTO. Sembra sprecato e invece è la via
+        // veloce: provato a raccogliere tutti gli stampi in un CGPath
+        // solo e riempirlo una volta con la regola non-zero (2026-08-19),
+        // ed è risultato dalle 5 alle 44 volte PIÙ LENTO, con il divario
+        // che cresce sulla lunghezza del tratto — una pagina piena 16
+        // volte più lenta, l'evidenziatore peggio ancora (ellissi ruotate
+        // e `multiply` su un'area grande). Il motivo: il rasterizzatore
+        // di CoreGraphics lavora per scanline sull'elenco degli spigoli,
+        // e migliaia di sotto-percorsi sovrapposti dentro un solo path
+        // fanno esplodere quell'elenco; mille riempimenti piccoli sono
+        // invece limitati ciascuno alla propria area. NON riprovarci.
+        //
+        // Il livello di trasparenza però serve SOLO quando il colore è
+        // semitrasparente (l'evidenziatore): stampi opachi disegnati uno
+        // per uno non si sommano, quindi sulla penna il buffer fuori
+        // schermo era puro spreco.
         context.setAlpha(alpha)
-        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        let needsTransparencyLayer = alpha < 0.999
+        if needsTransparencyLayer { context.beginTransparencyLayer(auxiliaryInfo: nil) }
         context.setFillColor(color.withAlphaComponent(1).cgColor)
 
         let inkType = stroke.ink.inkType
-        var previous: (point: PKStrokePoint, nib: CGSize)?
+        var previous: (point: PKStrokePoint, nib: CGSize, visible: Bool)?
         for point in points {
             let nib = nibSize(for: point, ink: inkType)
-            stamp(point, nib: nib, in: context)
+            let visible = isVisible(point, nib: nib, clip: localClip)
+            if visible { stamp(point, nib: nib, in: context) }
             // A curvatura alta due stampi consecutivi possono staccarsi:
-            // il quadrilatero che li unisce chiude il buco.
-            if let previous, distance(previous.point.location, point.location) > step * 1.5 {
-                connect(previous, (point, nib), in: context)
+            // il quadrilatero che li unisce chiude il buco. Si traccia se
+            // ALMENO uno dei due estremi è nella regione da ridisegnare.
+            if let previous, previous.visible || visible,
+               distance(previous.point.location, point.location) > step * 1.5 {
+                connect((previous.point, previous.nib), (point, nib), in: context)
             }
-            previous = (point, nib)
+            previous = (point, nib, visible)
         }
-        context.endTransparencyLayer()
+        if needsTransparencyLayer { context.endTransparencyLayer() }
+    }
+
+    // Il raggio massimo del pennino sui punti campionati: serve solo ad
+    // allargare il rettangolo di clip quanto basta.
+    private static func maxNibReach(of points: [PKStrokePoint], ink: PKInk.InkType) -> CGFloat {
+        var reach: CGFloat = 0
+        for point in points {
+            let nib = nibSize(for: point, ink: ink)
+            reach = max(reach, max(nib.width, nib.height))
+        }
+        return reach * widthScale / 2 + 1
+    }
+
+    private static func isVisible(_ point: PKStrokePoint, nib: CGSize, clip: CGRect?) -> Bool {
+        guard let clip else { return true }
+        return clip.contains(point.location)
     }
 
     // Uno stampo del pennino nella posizione del punto.
