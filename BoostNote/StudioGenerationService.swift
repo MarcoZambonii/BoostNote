@@ -406,11 +406,14 @@ enum StudioGenerationService {
             case .success(let decoded): dto = decoded
             }
             guard !dto.exercises.isEmpty else { return .failure(emptyError) }
+            // Costruito UNA volta per set: `snap` lo interroga per ogni
+            // esercizio, ricostruirlo ogni volta sarebbe sprecato.
+            let vocabularyIndex = TopicVocabulary(vocabulary)
             var exercises = dto.exercises.map { item in
                 StudyExercise(
                     categoryRaw: (ExerciseCategory(rawValue: item.category ?? "") ?? .theoretical).rawValue,
                     difficultyRaw: (ExerciseDifficulty(rawValue: item.difficulty ?? "") ?? .base).rawValue,
-                    topic: snap(item.topic ?? "Senza argomento", to: vocabulary),
+                    topic: snap(item.topic ?? "Senza argomento", in: vocabularyIndex),
                     prompt: item.prompt,
                     steps: item.steps,
                     answer: item.answer,
@@ -419,7 +422,8 @@ enum StudioGenerationService {
                     checkExpression: item.checkExpression,
                     verificationRaw: ExerciseVerification.notChecked.rawValue,
                     originRaw: (ExerciseOrigin(rawValue: item.origin ?? "") ?? .invented).rawValue,
-                    figureTikZ: item.figureTikZ
+                    figureTikZ: item.figureTikZ,
+                    figureExpected: figureIsMissing(declared: item.figuraServe, tikz: item.figureTikZ, prompt: item.prompt)
                 )
             }
             // Doppio passaggio: gli esercizi che non reggono una seconda
@@ -577,27 +581,19 @@ enum StudioGenerationService {
     // — "dualità in PL (problema duale)"). Se non riconosce nulla, si
     // tiene ciò che ha scritto il modello: inventare un aggancio sarebbe
     // peggio di un argomento in più.
-    private static func snap(_ topic: String, to vocabulary: [String]) -> String {
+    private static func snap(_ topic: String, in vocabulary: TopicVocabulary) -> String {
         guard !vocabulary.isEmpty else { return topic }
-        let needle = topic.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { return topic }
-        if let exact = vocabulary.first(where: { $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == needle }) {
-            return exact
-        }
-        // Il più lungo tra quelli compatibili: evita che "dualità" catturi
-        // un esercizio che parlava di "dualità in programmazione lineare".
-        let contained = vocabulary.filter { candidate in
-            let other = candidate.lowercased()
-            return needle.contains(other) || other.contains(needle)
-        }
-        return contained.max(by: { $0.count < $1.count }) ?? topic
+        return vocabulary.canonical(for: topic) ?? topic
     }
 
     private static func filtered(_ chunks: [VaultChunkInfo], by topics: [String]) -> [VaultChunkInfo] {
         guard !topics.isEmpty else { return chunks }
-        let wanted = Set(topics.map { $0.lowercased() })
+        // Il confronto passa dalla chiave canonica: selezionare
+        // "problema di trasporto" deve tenere anche i chunk etichettati
+        // "problemi di trasporto", che è lo stesso argomento.
+        let wanted = Set(topics.map { TopicKey.key($0) })
         let kept = chunks.filter { chunk in
-            chunk.topics.isEmpty || chunk.topics.contains { wanted.contains($0.lowercased()) }
+            chunk.topics.isEmpty || chunk.topics.contains { wanted.contains(TopicKey.key($0)) }
         }
         // Se il filtro non lascia niente (etichette disallineate), meglio
         // generare su tutto che fallire il modulo.
@@ -648,8 +644,8 @@ enum StudioGenerationService {
             ? "\(selectedPages) pagine su \(totalPages)"
             : "\(selected.count) parti su \(chunks.count)"
 
-        let covered = Set(selected.flatMap(\.topics).map { $0.lowercased() })
-        let missing = orderedTopics(of: chunks).filter { !covered.contains($0.lowercased()) }
+        let covered = Set(selected.flatMap(\.topics).map { TopicKey.key($0) })
+        let missing = orderedTopics(of: chunks).filter { !covered.contains(TopicKey.key($0)) }
 
         if missing.isEmpty {
             return "Il materiale supera lo spazio di una generazione: l'indice del Vault ha scelto le parti più utili (\(extent)). Tutti gli argomenti sono coperti."
@@ -667,7 +663,7 @@ enum StudioGenerationService {
         var primary: [VaultChunkInfo] = []
         var secondary: [VaultChunkInfo] = []
         for chunk in chunks {
-            let fresh = chunk.topics.map { $0.lowercased() }.filter { !covered.contains($0) }
+            let fresh = chunk.topics.map { TopicKey.key($0) }.filter { !covered.contains($0) }
             if chunk.topics.isEmpty || !fresh.isEmpty {
                 covered.formUnion(fresh)
                 primary.append(chunk)
@@ -678,15 +674,20 @@ enum StudioGenerationService {
         return primary + secondary
     }
 
+    // Gli argomenti dei chunk, nell'ordine del corso e CONSOLIDATI: le
+    // varianti della stessa etichetta collassano su una canonica, che è
+    // ciò che finisce nel prompt come vocabolario e nella nota di
+    // selezione. Senza, una dispensa da ~17 chunk arrivava a un centinaio
+    // di voci quasi-duplicate.
     private static func orderedTopics(of chunks: [VaultChunkInfo]) -> [String] {
         var seen: Set<String> = []
-        var result: [String] = []
+        var raw: [String] = []
         for chunk in chunks {
             for topic in chunk.topics where seen.insert(topic.lowercased()).inserted {
-                result.append(topic)
+                raw.append(topic)
             }
         }
-        return result
+        return TopicVocabulary.consolidated(raw)
     }
 
     // Il riassunto a mappa: una chiamata Lite per chunk, 3 in parallelo,
@@ -778,6 +779,21 @@ enum StudioGenerationService {
         guard sources.contains(where: { !$0.text.isEmpty }) else {
             return "Senza testo nei materiali non posso rigenerare l'esercizio."
         }
+        // Vocabolario per lo `snap` del sostituto: le etichette scelte in
+        // creazione se ci sono, altrimenti quelle già in uso nel set
+        // (che sono a loro volta passate da snap alla generazione). Senza
+        // questo, un esercizio rigenerato rientrava con l'argomento
+        // scritto a modo suo e spezzava in due le statistiche — cioè
+        // disfaceva proprio ciò per cui `snap` esiste.
+        let vocabulary: TopicVocabulary = {
+            let chosen = module.options.selectedTopics
+            guard chosen.isEmpty else { return TopicVocabulary(chosen) }
+            var seen: Set<String> = []
+            let used = content.exercises.map(\.topic).filter { topic in
+                !topic.isEmpty && seen.insert(topic.lowercased()).inserted
+            }
+            return TopicVocabulary(used)
+        }()
 
         let prompt = """
         \(commonPreamble(from: sources))
@@ -792,7 +808,8 @@ enum StudioGenerationService {
 
         Genera UN SOLO esercizio sostitutivo, sullo stesso argomento ("\(old.topic)") e della stessa difficoltà, che non ripeta l'errore segnalato.
         Gli altri esercizi del set coprono già questi argomenti, NON generarne uno su di essi: \(otherTopics.isEmpty ? "nessuno" : otherTopics.joined(separator: ", ")). Valgono tutte le regole di prima: traccia autosufficiente, formule in LaTeX tra $$ su riga propria, citazione verbatim dai materiali.
-        Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials"}]}
+        Vale anche la regola sulla figura: indica SEMPRE "figuraServe" (true/false) applicando lo stesso criterio operativo — serve quando la traccia contiene informazione non lineare che lo studente dovrebbe disegnarsi da sé per risolverla, non quando il disegno sarebbe decorazione. Se è true, "figureTikZ" è obbligatorio: solo il codice da \\begin{tikzpicture} a \\end{tikzpicture}, con dati IDENTICI a quelli della NUOVA traccia (la figura del vecchio esercizio non si riusa: i dati sono cambiati). Librerie disponibili: pgfplots, automata, positioning, arrows.meta, matrix, calc, shapes; circuitikz e tikz-cd non ci sono.
+        Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials","figuraServe":true,"figureTikZ":"..."}]}
         """
 
         guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: exercisesSchema, thinkingBudget: exercisesThinkingBudget, qualityFirst: true),
@@ -805,14 +822,20 @@ enum StudioGenerationService {
         content.exercises[index] = StudyExercise(
             categoryRaw: (ExerciseCategory(rawValue: item.category ?? "") ?? old.category).rawValue,
             difficultyRaw: (ExerciseDifficulty(rawValue: item.difficulty ?? "") ?? old.difficulty).rawValue,
-            topic: item.topic ?? old.topic,
+            topic: snap(item.topic ?? old.topic, in: vocabulary),
             prompt: item.prompt,
             steps: item.steps,
             answer: item.answer,
             sourceTitle: item.source,
             quote: makeCitation(quote: item.quote, source: item.source, in: sources),
             checkExpression: item.checkExpression,
-            originRaw: (ExerciseOrigin(rawValue: item.origin ?? "") ?? .invented).rawValue
+            originRaw: (ExerciseOrigin(rawValue: item.origin ?? "") ?? .invented).rawValue,
+            // La figura del VECCHIO esercizio non si eredita: la traccia
+            // è stata riscritta con dati diversi, e un disegno che non
+            // corrisponde è peggio di nessun disegno. Si tiene solo
+            // quella nuova, che verrà compilata alla prima apertura.
+            figureTikZ: item.figureTikZ,
+            figureExpected: figureIsMissing(declared: item.figuraServe, tikz: item.figureTikZ, prompt: item.prompt)
         )
         module.encodeContent(content)
         // La segnalazione si chiude da sola: il contenuto che l'aveva
@@ -1018,6 +1041,8 @@ enum StudioGenerationService {
 
     private static func stringField() -> [String: Any] { ["type": "STRING"] }
 
+    private static func boolField() -> [String: Any] { ["type": "BOOLEAN"] }
+
     private static func arrayField(of items: [String: Any]) -> [String: Any] {
         ["type": "ARRAY", "items": items]
     }
@@ -1062,8 +1087,15 @@ enum StudioGenerationService {
                 "prompt": stringField(), "steps": arrayField(of: stringField()),
                 "answer": stringField(), "source": stringField(), "quote": stringField(),
                 "checkExpression": stringField(), "origin": stringField(),
+                // "figuraServe" è tra i REQUIRED: qui l'obbligo non è una
+                // raccomandazione nel prompt ma un vincolo dello schema,
+                // che il provider fa rispettare. È la differenza fra
+                // sperare che il modello si ponga la domanda e costringerlo
+                // a rispondere. La figura in sé resta facoltativa: obbligata
+                // è la DECISIONE, non il disegno.
+                "figuraServe": boolField(),
                 "figureTikZ": stringField()
-            ], required: ["prompt", "answer"]))
+            ], required: ["prompt", "answer", "figuraServe"]))
         ], required: ["exercises"])
     }
 
@@ -1144,10 +1176,17 @@ enum StudioGenerationService {
 
             Ogni esercizio ha una soluzione guidata in 3-5 passi concreti e una risposta finale; "topic" è l'argomento in 2-4 parole; "source" è il titolo del materiale a cui ti sei ispirato e "quote" il passaggio originale (servono solo alla tracciabilità, NON vanno citati nella traccia).
             Indica "origin": "invented" se hai scritto tu la traccia ispirandoti ai materiali (è il caso normale), "fromMaterials" solo se la traccia è già presente come tale nei materiali e l'hai riportata.
-            FIGURA (facoltativa ma preziosa): se la traccia beneficia di un disegno — un grafo con nodi e pesi, il grafico di una funzione, una catena di Markov, una figura geometrica — includi "figureTikZ" con SOLO il codice dell'ambiente, da \\begin{tikzpicture} a \\end{tikzpicture} (eventuali \\usetikzlibrary su righe precedenti). Librerie disponibili: pgfplots (\\begin{axis} per le funzioni), automata, positioning, arrows.meta, matrix, calc, shapes. NON usare circuitikz né tikz-cd: non sono disponibili e la figura verrebbe scartata. I dati della figura devono coincidere ESATTAMENTE con quelli della traccia (stessi pesi, stessi nodi, stessa funzione). Se la figura non serve, ometti il campo.
+            FIGURA — decisione OBBLIGATORIA. Per ogni esercizio devi indicare "figuraServe": true oppure false. Non omettere mai questo campo.
+            Il criterio non è estetico ma operativo: la figura serve quando la traccia contiene informazione che di per sé NON è lineare, e il testo si limita a trascriverla — relazioni fra entità, disposizioni nello spazio, andamento di una grandezza. Il segnale più affidabile è questo: se per risolvere l'esercizio lo studente dovrebbe prima ricostruirsi un disegno partendo dal testo, allora quel disegno deve stare nella traccia.
+            Caso da non mancare: se la traccia elenca legami fra entità — "A collegato a B con valore 5", una transizione fra due stati, un vincolo fra due elementi — quell'elenco È già un disegno scritto a parole, e va disegnato.
+            La figura NON serve quando la traccia è già completa in forma simbolica o discorsiva e il disegno sarebbe solo decorazione: manipolazioni algebriche, dimostrazioni, calcoli su valori già dati, definizioni. E non sono figure: una tabella di dati, un elenco riscritto dentro riquadri, un enunciato messo in cornice.
+            Gli esempi qui sopra sono illustrativi, NON un elenco chiuso di argomenti: applica il criterio alla traccia che hai davanti, qualunque sia la materia.
+            Se "figuraServe" è true, allora "figureTikZ" è OBBLIGATORIO: solo il codice dell'ambiente, da \\begin{tikzpicture} a \\end{tikzpicture} (eventuali \\usetikzlibrary sulle righe precedenti). I dati della figura devono coincidere ESATTAMENTE con quelli della traccia (stessi valori, stesse entità, stessa funzione).
+            Librerie disponibili: pgfplots (\\begin{axis} per le funzioni), automata, positioning, arrows.meta, matrix, calc, shapes. NON sono disponibili circuitikz né tikz-cd.
+            Se il disegno che servirebbe richiede strumenti non disponibili, metti "figuraServe": false — meglio nessuna figura che una figura sbagliata.
             Includi "checkExpression" SOLO quando la risposta è un valore matematico verificabile in modo indipendente: mettici l'espressione da calcolare in sintassi Wolfram Alpha, il cui risultato deve coincidere con "answer". Omettilo per gli esercizi discorsivi.
             IMPORTANTE su checkExpression: dev'essere una FORMULA o una grandezza, non la descrizione di un compito. Wolfram accetta "integrate x^2 from 0 to 1", "eigenvalues {{2,1},{1,2}}", "roots of s^2+3s+2", "10*2000/(1000+2000)", "bode plot 1/(s+1)"; RIFIUTA fraseggi come "step response 1/(s^2+2s+1)", "voltage divider 10V 1kohm 2kohm", "beam deflection cantilever", "is G(s) stable". Se il calcolo è ingegneristico, scrivilo come espressione numerica esplicita con i valori già sostituiti.
-            Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["...","..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials"}]}
+            Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["...","..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials","figuraServe":true,"figureTikZ":"..."}]}
             """
         case .reviewPoints:
             return common + """
@@ -1200,10 +1239,16 @@ enum StudioGenerationService {
             var quote: String?
             var checkExpression: String?
             var origin: String?
+            // OPZIONALE anche se il prompt lo dichiara obbligatorio:
+            // l'obbligo vive nel prompt, mai nello schema. Con la
+            // decodifica per-elemento, un campo davvero obbligatorio e
+            // mancante farebbe sparire l'INTERO esercizio invece della
+            // sola figura.
+            var figuraServe: Bool?
             var figureTikZ: String?
 
             enum CodingKeys: String, CodingKey {
-                case category, difficulty, topic, prompt, answer, source, quote, checkExpression, origin, figureTikZ
+                case category, difficulty, topic, prompt, answer, source, quote, checkExpression, origin, figuraServe, figureTikZ
                 case stepList = "steps"
             }
         }
@@ -1327,6 +1372,43 @@ enum StudioGenerationService {
         @unknown default:
             return "Il modello ha restituito un JSON non conforme."
         }
+    }
+
+    // MARK: - Figura mancante
+    //
+    // Due rilevatori di forza molto diversa, entrambi programmatici: non
+    // si chiede a un modello di giudicare il lavoro di un altro modello.
+    //
+    // 1. ESATTO, zero falsi positivi: il modello ha dichiarato
+    //    "figuraServe": true e poi non ha scritto la figura. Non stiamo
+    //    interpretando la traccia — è lui che si è contraddetto.
+    // 2. EURISTICO: la decisione manca (o è false) su una traccia che ha
+    //    la FORMA di un elenco di relazioni. Volutamente strutturale e
+    //    non lessicale: un elenco di parole chiave ("grafo", "nodi")
+    //    coprirebbe solo le materie a cui abbiamo pensato noi, mentre la
+    //    forma prende allo stesso modo cammini minimi, catene di Markov,
+    //    reti di precedenze e sistemi di vincoli.
+    //
+    // Restituisce nil quando non c'è niente da segnalare, così il campo
+    // resta assente nella stragrande maggioranza degli esercizi.
+    private static func figureIsMissing(declared: Bool?, tikz: String?, prompt: String) -> Bool? {
+        let hasFigure = !(tikz ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !hasFigure else { return nil }
+        if declared == true { return true }
+        return looksRelational(prompt) ? true : nil
+    }
+
+    // Almeno tre RIGHE che contengono una coppia fra parentesi: è la
+    // firma di un elenco di legami ("(1,2) con costo 5"). Si contano le
+    // righe e non le occorrenze perché un singolo intervallo come
+    // $(0,1)$ dentro un testo discorsivo non deve far scattare niente,
+    // mentre un elenco puntato di relazioni sì.
+    private static func looksRelational(_ prompt: String) -> Bool {
+        guard let pair = try? Regex(#"\([^()\n]{1,24},[^()\n]{1,24}\)"#) else { return false }
+        let linesWithPair = prompt
+            .split(separator: "\n")
+            .filter { $0.firstMatch(of: pair) != nil }
+        return linesWithPair.count >= 3
     }
 
     // MARK: - Verifica programmatica delle citazioni

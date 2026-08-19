@@ -286,17 +286,20 @@ struct StudioCreateFlowView: View {
         let ids = Set(sources.compactMap(\.vaultDocumentID))
         guard !ids.isEmpty else { return [] }
         var seen: Set<String> = []
-        var result: [String] = []
+        var raw: [String] = []
         for document in vaultDocuments where ids.contains(document.id) {
             for topic in document.allTopics where seen.insert(topic.lowercased()).inserted {
-                result.append(topic)
+                raw.append(topic)
             }
         }
-        return result
+        // Consolidamento sull'UNIONE dei documenti scelti, non documento
+        // per documento: una sigla ("PL") può trovare la sua forma estesa
+        // in una dispensa diversa da quella dove è stata usata.
+        return TopicVocabulary.consolidated(raw)
     }
 
     private var selectedTopics: [String] {
-        availableTopics.filter { !excludedTopics.contains($0.lowercased()) }
+        availableTopics.filter { !excludedTopics.contains(TopicKey.key($0)) }
     }
 
     // Restringere il campo serve alla PROFONDITÀ: con trenta argomenti e
@@ -350,24 +353,30 @@ struct StudioCreateFlowView: View {
                 // Consumo una tantum: l'indice arriva dopo il primo
                 // disegno, e da qui in poi la selezione è dell'utente.
                 guard let focus = pendingFocusTopics, !focus.isEmpty else { return }
-                let wanted = Set(focus.map { $0.lowercased() })
-                let matching = topics.filter { wanted.contains($0.lowercased()) }
-                guard !matching.isEmpty else { return }
-                excludedTopics = Set(topics.map { $0.lowercased() }).subtracting(wanted)
+                let wanted = Set(focus.map { TopicKey.key($0) })
+                let matching = topics.filter { wanted.contains(TopicKey.key($0)) }
+                // Nessuna corrispondenza: si consuma comunque il prefill,
+                // altrimenti il banner "Argomenti preselezionati" resta
+                // acceso davanti a una selezione che non è mai avvenuta.
+                guard !matching.isEmpty else {
+                    pendingFocusTopics = nil
+                    return
+                }
+                excludedTopics = Set(topics.map { TopicKey.key($0) }).subtracting(wanted)
                 pendingFocusTopics = nil
             }
         }
     }
 
     private func topicChip(_ topic: String) -> some View {
-        let isOn = !excludedTopics.contains(topic.lowercased())
+        let isOn = !excludedTopics.contains(TopicKey.key(topic))
         return Button {
             if isOn {
                 // L'ultimo argomento non si può togliere: senza nessun
                 // argomento non resterebbe niente da generare.
-                if selectedTopics.count > 1 { excludedTopics.insert(topic.lowercased()) }
+                if selectedTopics.count > 1 { excludedTopics.insert(TopicKey.key(topic)) }
             } else {
-                excludedTopics.remove(topic.lowercased())
+                excludedTopics.remove(TopicKey.key(topic))
             }
         } label: {
             HStack(spacing: 5) {

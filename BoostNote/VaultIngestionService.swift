@@ -26,6 +26,12 @@ final class VaultActivity {
 enum VaultIngestionService {
 
     private static var runningFolders: Set<UUID> = []
+    // Cartelle a cui è stato aggiunto materiale MENTRE un giro era già in
+    // corso. Serve perché `ingest` prende il suo elenco di documenti una
+    // volta sola, all'inizio: senza, aggiungendo più file insieme (dal
+    // selettore WeBeep si fa in un tocco) veniva letto solo il primo e
+    // gli altri restavano fermi finché qualcos'altro non li risvegliava.
+    private static var pendingRerun: Set<UUID> = []
 
     // MARK: - Aggiunta documenti
 
@@ -52,7 +58,13 @@ enum VaultIngestionService {
     }
 
     static func startIngestion(for folder: StudyFolder, in context: ModelContext) {
-        guard !runningFolders.contains(folder.id) else { return }
+        guard !runningFolders.contains(folder.id) else {
+            // Il giro in corso ha già in mano il suo elenco: si prenota
+            // un secondo giro invece di lasciare indietro i documenti
+            // appena arrivati.
+            pendingRerun.insert(folder.id)
+            return
+        }
         let folderID = folder.id
         runningFolders.insert(folderID)
         VaultActivity.shared.ingestingFolders.insert(folderID)
@@ -60,6 +72,9 @@ enum VaultIngestionService {
             await ingest(folder: folder, in: context)
             runningFolders.remove(folderID)
             VaultActivity.shared.ingestingFolders.remove(folderID)
+            if pendingRerun.remove(folderID) != nil {
+                startIngestion(for: folder, in: context)
+            }
         }
     }
 
@@ -79,6 +94,9 @@ enum VaultIngestionService {
         await ingest(folder: folder, in: context)
         runningFolders.remove(folderID)
         VaultActivity.shared.ingestingFolders.remove(folderID)
+        // Questo giro ha appena riletto tutto: la prenotazione eventuale
+        // è già stata onorata di fatto.
+        pendingRerun.remove(folderID)
     }
 
     // MARK: - Il giro di ingestione

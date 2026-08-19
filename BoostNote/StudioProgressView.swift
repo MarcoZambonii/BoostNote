@@ -237,6 +237,17 @@ struct StudioProgressView: View {
 
     // MARK: - Copertura argomenti
 
+    // L'etichetta da mostrare per un gruppo di tentativi: la più
+    // specifica (più parole), a parità la più recente. Le varianti sono
+    // la stessa cosa, ma allo studente si fa vedere quella che dice di
+    // più.
+    private static func displayLabel(of attempts: [ExerciseAttempt]) -> String {
+        attempts
+            .map(\.topic)
+            .filter { !$0.isEmpty }
+            .max { TopicKey.tokens($0).count < TopicKey.tokens($1).count } ?? ""
+    }
+
     private struct TopicStat: Identifiable {
         var id: String { topic }
         var topic: String
@@ -245,9 +256,13 @@ struct StudioProgressView: View {
     }
 
     private var topicStats: [TopicStat] {
-        let grouped = Dictionary(grouping: attempts) { $0.topic }
+        // Raggruppamento sulla CHIAVE canonica, non sulla stringa nuda:
+        // "problemi di trasporto" e "problema di trasporto" sono lo
+        // stesso argomento e devono fare una riga sola. L'etichetta
+        // mostrata è la più specifica del gruppo.
+        let grouped = Dictionary(grouping: attempts) { TopicKey.key($0.topic) }
         return grouped
-            .map { TopicStat(topic: $0.key, total: $0.value.count, correct: $0.value.filter(\.isCorrect).count) }
+            .map { TopicStat(topic: Self.displayLabel(of: $0.value), total: $0.value.count, correct: $0.value.filter(\.isCorrect).count) }
             .sorted { $0.total > $1.total }
             .prefix(6)
             .map { $0 }
@@ -276,9 +291,10 @@ struct StudioProgressView: View {
     private var weakTopics: [WeakTopic] {
         // Un argomento appartiene al Vault dello studio in cui è stato
         // esercitato: senza cartella non si saprebbe da dove rigenerare.
-        let grouped = Dictionary(grouping: attempts.filter { $0.study?.folder != nil }) { $0.topic }
-        return grouped.compactMap { topic, items -> WeakTopic? in
-            guard !topic.isEmpty, items.count >= 3,
+        let grouped = Dictionary(grouping: attempts.filter { $0.study?.folder != nil }) { TopicKey.key($0.topic) }
+        return grouped.compactMap { key, items -> WeakTopic? in
+            let topic = Self.displayLabel(of: items)
+            guard !key.isEmpty, !topic.isEmpty, items.count >= 3,
                   let folder = items.compactMap({ $0.study?.folder }).last else { return nil }
             let correct = items.filter(\.isCorrect).count
             let stat = WeakTopic(topic: topic, correct: correct, total: items.count, folder: folder)

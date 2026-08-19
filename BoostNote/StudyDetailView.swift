@@ -949,6 +949,17 @@ private struct ExercisesModuleView: View {
                             onCompiled: { svg in persistFigure(svg, for: exercise.id) },
                             onFailed: { persistFigure("", for: exercise.id) }
                         )
+                    } else if exercise.figureExpected == true {
+                        // Assenza DICHIARATA invece che silenziosa: senza
+                        // questa riga, "il modello non ha disegnato" e
+                        // "qui non serviva un disegno" sono
+                        // indistinguibili, e chi legge non sa se gli
+                        // manca qualcosa. La traccia resta risolvibile:
+                        // è una nota, non un errore.
+                        Label("Per questa traccia servirebbe una figura, ma il modello non l'ha generata: disegnala tu prima di risolvere.", systemImage: "scribble.variable")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesignColor.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(DesignSpace.s5)

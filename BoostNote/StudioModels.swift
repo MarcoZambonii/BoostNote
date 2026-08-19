@@ -565,6 +565,13 @@ struct StudyExercise: Codable, Identifiable {
     // figureSVG vuoto (non nil) = compilazione fallita, non ritentare.
     var figureTikZ: String?
     var figureSVG: String?
+    // "Qui una figura ci voleva, e non c'è." Lo dice o il modello stesso
+    // (ha dichiarato figuraServe: true e poi non l'ha scritta — una
+    // contraddizione sua, non una nostra interpretazione) oppure il
+    // controllo strutturale sulla traccia. Non blocca niente: serve a
+    // non far sembrare una mancanza una scelta, ed è l'innesco naturale
+    // per una futura generazione mirata delle figure mancanti.
+    var figureExpected: Bool?
 
     var category: ExerciseCategory { ExerciseCategory(rawValue: categoryRaw) ?? .theoretical }
     var difficulty: ExerciseDifficulty { ExerciseDifficulty(rawValue: difficultyRaw) ?? .base }

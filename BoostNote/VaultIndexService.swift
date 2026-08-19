@@ -94,14 +94,30 @@ enum VaultIndexService {
 
     // Etichetta un chunk: una chiamata Lite, thinking a zero (è un
     // compito di classificazione, non di ragionamento).
+    //
+    // `knownTopics` sono le etichette già in uso in QUESTO Vault. Non
+    // costa nessuna chiamata in più — i chunk si indicizzano già in
+    // sequenza — ed è il rimedio alla radice della frammentazione: senza,
+    // ogni chunk battezza lo stesso argomento con parole sue e l'elenco
+    // si riempie di quasi-duplicati che poi vanno riconciliati a valle.
     @MainActor
-    static func indexChunk(_ chunk: VaultChunk) async -> Bool {
+    static func indexChunk(_ chunk: VaultChunk, knownTopics: [String] = []) async -> Bool {
         let text = chunk.text
         guard !text.isEmpty else { return false }
+        // Tetto sull'elenco: il vocabolario di un corso sta in poche
+        // decine di voci, e un prompt che cresce senza limite si mangia
+        // il contesto che serve all'estratto.
+        let known = Array(knownTopics.prefix(60))
+        let reuse = known.isEmpty ? "" : """
+
+        ETICHETTE GIÀ IN USO IN QUESTO CORSO — se un argomento dell'estratto è uno di questi, COPIA l'etichetta ALLA LETTERA, identica carattere per carattere. Creane una nuova SOLO se l'argomento non è in elenco.
+        \(known.map { "- \($0)" }.joined(separator: "\n"))
+        """
         let prompt = """
         Analizza questo estratto di materiale universitario e restituisci SOLO JSON.
         - "topics": gli argomenti trattati (da 1 a 6), ognuno in 2-5 parole, specifici ("dualità in programmazione lineare", non "matematica"). In italiano.
         - "nature": "theory" se l'estratto è teoria/definizioni/dimostrazioni, "exercises" se è fatto di esercizi o temi d'esame (tracce, soluzioni), "mixed" se contiene entrambi in misura simile.
+        \(reuse)
 
         ESTRATTO:
         \(String(text.prefix(25000)))
@@ -112,7 +128,14 @@ enum VaultIndexService {
               !dto.topics.isEmpty else {
             return false
         }
-        chunk.topics = dto.topics.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        // Il prompt è una preghiera, questa è la garanzia: ciò che il
+        // modello scrive viene comunque riportato all'etichetta esistente
+        // quando è una variante della stessa (accenti, plurali, sigle).
+        let vocabulary = TopicVocabulary(known)
+        chunk.topics = dto.topics
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { vocabulary.canonical(for: $0) ?? $0 }
         chunk.natureRaw = ["theory", "exercises", "mixed"].contains(dto.nature ?? "") ? (dto.nature ?? "") : "mixed"
         chunk.indexedAt = .now
         return true
@@ -124,9 +147,29 @@ enum VaultIndexService {
     @discardableResult
     static func indexDocument(_ document: VaultDocument, in context: ModelContext) async -> Int {
         let toIndex = rebuildChunks(for: document, in: context)
+        // Vocabolario di partenza: tutto ciò che il Vault (la cartella,
+        // non il singolo documento) ha già etichettato. Cresce mano a
+        // mano, così i chunk successivi riusano ciò che hanno scelto i
+        // precedenti.
+        var known: [String] = []
+        var seen: Set<String> = []
+        let siblings = document.folder?.vaultDocuments ?? [document]
+        for sibling in siblings {
+            for chunk in sibling.sortedChunks where chunk.isIndexed {
+                for topic in chunk.topics where seen.insert(TopicKey.key(topic)).inserted {
+                    known.append(topic)
+                }
+            }
+        }
+
         var indexed = 0
         for chunk in toIndex {
-            if await indexChunk(chunk) { indexed += 1 }
+            if await indexChunk(chunk, knownTopics: known) {
+                indexed += 1
+                for topic in chunk.topics where seen.insert(TopicKey.key(topic)).inserted {
+                    known.append(topic)
+                }
+            }
             try? context.save()
         }
         return indexed
