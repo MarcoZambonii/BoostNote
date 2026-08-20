@@ -270,8 +270,33 @@ final class PageInkView: UIView {
 // travaso verso le tessere avviene UNA volta, quando si lascia la
 // pagina — un momento in cui nessuno sta guardando il tratto.
 final class PageActiveInkView: UIView {
-    var strokes: [PKStroke] = []
+    // I tratti ci sono ancora, ma NON sono più la sorgente del disegno a
+    // ogni ridisegno: servono solo a ricostruire la bitmap quando cambia
+    // qualcosa di strutturale (gomma, undo, zoom, caricamento).
+    private(set) var strokes: [PKStroke] = []
     var renderScale: CGFloat = 1
+
+    // LA BITMAP È NOSTRA — misurato 2026-08-19, ed è il motivo di tutto
+    // questo file.
+    //
+    // Prima si ridisegnava dai tratti a ogni `draw(_:)`, chiedendo un
+    // ridisegno MIRATO al rettangolo del tratto nuovo. Quel rettangolo
+    // veniva ignorato: `setNeedsDisplay(rect:)` su una UIView normale è
+    // un suggerimento, il backing store viene rigenerato per intero e
+    // `draw(_:)` riceve sempre i bounds completi (il parziale vero lo fa
+    // solo CATiledLayer — ed è per questo che le altre pagine stanno su
+    // tessere). Su una pagina da 785 tratti significava ristamparli
+    // TUTTI a ogni sollevamento di penna: 112-148 ms misurati, cioè
+    // 13-18 fotogrammi persi per far comparire un tratto solo.
+    //
+    // Con un CGLayer nostro l'inchiostro si ACCUMULA: al commit si
+    // dipinge dentro il solo tratto nuovo, e `draw(_:)` si limita a
+    // riversare la bitmap. Il costo per sollevamento smette di dipendere
+    // da quanti tratti ci sono sulla pagina.
+    private var inkLayer: CGLayer?
+    private var builtAtSize: CGSize = .zero
+    private var builtAtScale: CGFloat = 0
+    private var needsRebuild = true
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -282,13 +307,73 @@ final class PageActiveInkView: UIView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
 
+    // Sostituzione dei tratti. Con un rettangolo (gomma, lasso) il
+    // ridisegno è PARZIALE: si azzera la zona toccata nella bitmap e si
+    // ridipingono solo i tratti che ci passano dentro. È esattamente il
+    // ridisegno mirato che UIKit rifiutava di fare — ora possiamo,
+    // perché i pixel sono nostri. Senza rettangolo (caricamento, undo,
+    // cambio zoom) si rifà tutto.
+    func setStrokes(_ newStrokes: [PKStroke], invalidating rect: CGRect? = nil) {
+        strokes = newStrokes
+        guard !needsRebuild,
+              let context = inkLayer?.context,
+              let rect, !rect.isNull, !rect.isEmpty else {
+            needsRebuild = true
+            return
+        }
+        context.saveGState()
+        // Il clip serve a garantire che un tratto che sborda dalla zona
+        // non ridipinga anche fuori: là i pixel sono già giusti, e
+        // ripassarli raddoppierebbe il multiply dell'evidenziatore.
+        context.clear(rect)
+        context.addRect(rect)
+        context.clip()
+        InkRenderer.draw(strokes, in: context, scale: renderScale, clipTo: rect)
+        context.restoreGState()
+    }
+
+    // Il percorso caldo: un tratto solo, dipinto sopra a ciò che c'è già.
+    func appendStroke(_ stroke: PKStroke) {
+        strokes.append(stroke)
+        guard !needsRebuild, let context = inkLayer?.context else { return }
+        InkRenderer.draw(stroke, in: context, scale: renderScale)
+    }
+
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
-        InkRenderer.draw(strokes, in: ctx, scale: renderScale, clipTo: rect)
+        _ = prepareLayer(in: ctx)
+        if let inkLayer { ctx.draw(inkLayer, in: bounds) }
+    }
+
+    // Ritorna quanti tratti ha ridisegnato: 0 quando la bitmap era già
+    // pronta, che deve essere il caso normale.
+    private func prepareLayer(in ctx: CGContext) -> Int {
+        let scale = contentScaleFactor
+        if inkLayer != nil, !needsRebuild, builtAtSize == bounds.size, builtAtScale == scale {
+            return 0
+        }
+        guard bounds.width > 0, bounds.height > 0,
+              let layer = CGLayer(ctx, size: bounds.size, auxiliaryInfo: nil),
+              let layerContext = layer.context else {
+            inkLayer = nil
+            return 0
+        }
+        // NIENTE ribaltamento manuale: il contesto di un CGLayer creato
+        // da un contesto UIKit eredita già il suo sistema di coordinate
+        // (y verso il basso). Aggiungerne uno ribalta la nota — pagato
+        // in prova, 2026-08-19.
+        InkRenderer.draw(strokes, in: layerContext, scale: renderScale)
+        inkLayer = layer
+        builtAtSize = bounds.size
+        builtAtScale = scale
+        needsRebuild = false
+        return strokes.count
     }
 
     func clearContents() {
         strokes = []
+        inkLayer = nil
+        needsRebuild = true
         layer.contents = nil
     }
 }
@@ -414,7 +499,7 @@ final class NotePageView: UIView {
         strokes = newStrokes
         if isActiveForWriting {
             if let rect, !rect.isNull { activeDirtyRegion = activeDirtyRegion.union(rect) } else { activeDirtyRegion = bounds }
-            activeInkView.strokes = newStrokes
+            activeInkView.setStrokes(newStrokes, invalidating: rect)
             activeInkView.isHidden = !isResident
             if let rect, !rect.isNull {
                 activeInkView.setNeedsDisplay(rect.insetBy(dx: -8, dy: -8))
@@ -442,7 +527,7 @@ final class NotePageView: UIView {
         if !isActiveForWriting { beginWriting() }
         strokes.append(stroke)
         activeDirtyRegion = activeDirtyRegion.union(rect)
-        activeInkView.strokes = strokes
+        activeInkView.appendStroke(stroke)
         activeInkView.isHidden = !isResident
         activeInkView.setNeedsDisplay(rect)
     }
@@ -457,7 +542,7 @@ final class NotePageView: UIView {
         activeDirtyRegion = .null
         activeInkView.renderScale = zoomForInk
         if lastAppliedRenderTarget > 0 { activeInkView.contentScaleFactor = lastAppliedRenderTarget }
-        activeInkView.strokes = strokes
+        activeInkView.setStrokes(strokes)
         activeInkView.isHidden = !isResident
         activeInkView.setNeedsDisplay()
         penInkView.isHidden = true
@@ -615,20 +700,50 @@ final class NotePageView: UIView {
 // Validato nel Laboratorio ("Motore nostro"): la Pencil parla
 // direttamente con noi, senza PencilKit in mezzo. `coalescedTouches`
 // recupera i campioni a 240 Hz fra un fotogramma e l'altro (senza, il
-// tratto esce spigoloso), `predictedTouches` disegna qualche
-// millisecondo avanti alla punta per mascherare la latenza — i punti
-// previsti sono una scommessa e NON entrano mai nel tratto salvato.
+// tratto esce spigoloso).
+//
+// NIENTE `predictedTouches` (tolti 2026-08-19). Disegnavano qualche
+// millisecondo avanti alla punta per mascherare la latenza, ma erano una
+// scommessa: a ogni fotogramma quella coda veniva cancellata e rifatta
+// altrove, e al sollevamento spariva del tutto perché nel tratto salvato
+// i punti previsti non entrano mai. Il risultato era una codina che
+// ballava mentre si scrive e cambiava forma quando si alzava — che
+// l'utente leggeva come lentezza, mentre i ridisegni stavano a 0,1-1,6 ms
+// su una pagina da 750 tratti. Meno inchiostro attaccato alla punta, ma
+// fermo: era il fastidio vero.
 //
 // Il tratto finito diventa un PKStroke vero dentro il PKDrawing della
 // pagina: lo storage non cambia, gomma lasso e undo di PencilKit
 // continuano a funzionare, e l'assegnazione del disegno registra l'undo
 // nativo da sola.
+// GLI APPUNTI DELL'INCHIOSTRO — copia/taglia/incolla del lasso.
+//
+// I tratti si conservano con la loro trasformazione: la disposizione
+// reciproca è già dentro la geometria, e all'incollaggio basta traslare
+// il gruppo. Vivono quanto la sessione e valgono fra pagine e fra note,
+// che è il caso d'uso vero (ricopiare uno schema da una pagina all'altra).
+enum InkClipboard {
+    private(set) static var strokes: [PKStroke] = []
+    static var isEmpty: Bool { strokes.isEmpty }
+
+    static func store(_ newStrokes: [PKStroke]) {
+        strokes = newStrokes
+    }
+}
+
 final class LiveInkCaptureOverlay: UIView {
     weak var container: PagedCanvasContainer?
     var onStrokeBegan: (() -> Void)?
     // Operazione di lasso conclusa (spostamento o eliminazione): il
     // chiamante riporta lo strumento a quello di prima, come la gomma.
     var onLassoFinished: (() -> Void)?
+    // Passata di gomma conclusa. È un evento di INTERAZIONE — il dito si
+    // è alzato — e va tenuto separato dal salvataggio: stava agganciato
+    // a `onPageDataChanged`, che da quando il salvataggio è differito
+    // arriva tre secondi dopo (e più ancora se si continua a cancellare,
+    // per via della guardia sulla penna giù). Risultato: lo strumento
+    // non tornava alla penna finché non ci si fermava del tutto.
+    var onEraseFinished: (() -> Void)?
 
     // Cosa fa la Pencil quando tocca: scrive, oppure cancella (gomma
     // NOSTRA, vedi InkEraser — lavora sulla geometria, quindi cancella
@@ -647,6 +762,9 @@ final class LiveInkCaptureOverlay: UIView {
     var pressureSensitive = true
 
     private var activePage: NotePageView?
+    // Vero mentre un tratto (o una passata di gomma) è in corso: il
+    // salvataggio non deve mai cadere in mezzo a un gesto.
+    var isDrawing: Bool { activePage != nil }
     private var points: [PKStrokePoint] = []
     private var startTime: TimeInterval = 0
     // Regione (in coordinate di pagina) toccata dall'ultimo aggiornamento
@@ -806,6 +924,7 @@ final class LiveInkCaptureOverlay: UIView {
         guard let working = eraseWorkingStrokes, eraseChanged else { return }
         // Un commit per passata: un undo, una serializzazione.
         container?.commitStrokes(working, previous: eraseStrokesAtPassStart, on: page)
+        onEraseFinished?()
     }
 
     // Aggiunge i campioni del tocco e ritorna il rettangolo che coprono,
@@ -839,29 +958,30 @@ final class LiveInkCaptureOverlay: UIView {
 
     private func updateLive(with event: UIEvent?, appended: CGRect) {
         guard let page = activePage else { return }
-        var preview = points
-        var predictedBox = CGRect.null
-        // Solo DUE punti predetti: bastano a tenere l'inchiostro attaccato
-        // alla punta, e la previsione lunga era ciò che al sollevamento si
-        // ritirava vistosamente ("il tratto si muove") — i punti predetti
-        // non entrano mai nel tratto vero.
-        if let touch = event?.allTouches?.first,
-           let predicted = event?.predictedTouches(for: touch)?.prefix(2) {
-            for sample in predicted {
-                let point = strokePoint(from: sample, in: page)
-                preview.append(point)
-                predictedBox = predictedBox.union(CGRect(origin: point.location, size: .zero))
-            }
-        }
+        // ATTENZIONE — qui ci va il tratto INTERO, non la sua coda.
+        //
+        // Provato (2026-08-19) a passare solo gli ultimi ~64 punti,
+        // contando sul fatto che la vista accumuli sul proprio layer e
+        // che `draw(_:)` ripulisca solo la regione sporca. NON È
+        // GARANTITO: CoreAnimation può ridisegnare l'INTERO layer quando
+        // vuole (regione sporca complessa, backing store rigenerato,
+        // `contentScaleFactor` cambiato dallo zoom), e in quel momento
+        // `draw(_:)` riceve i bounds interi — con la sola coda in mano,
+        // il resto del tratto viene cancellato e sparisce sotto la penna.
+        // Riprodotto sul dispositivo: un tratto lungo scompare.
+        //
+        // L'accumulo vero si fa possedendo la bitmap (contesto nostro,
+        // riversato in draw), non appoggiandosi alla conservazione del
+        // backing store di UIKit.
         let live = page.liveStrokeView
-        live.stroke = makeStroke(from: preview)
+        live.stroke = makeStroke(from: points)
 
         // La coda da ridisegnare: gli ULTIMI OTTO punti veri, non solo i
         // nuovi — una B-spline cubica flette i segmenti vicini quando
         // arriva un punto di controllo nuovo, e invalidare solo i punti
         // appena aggiunti lasciava pixel fantasma lungo la curva (che
         // "sparivano" al sollevamento, sembrando un movimento del tratto).
-        var tail = appended.union(predictedBox)
+        var tail = appended
         for point in points.suffix(8) {
             tail = tail.union(CGRect(origin: point.location, size: .zero))
         }
@@ -942,6 +1062,9 @@ final class LiveInkCaptureOverlay: UIView {
     private var selectedIndices: [Int] = []
     private var selectionBaseStrokes: [PKStroke] = []
     private var isMovingSelection = false
+    // C'era una selezione quando il dito è sceso? Distingue il tocco che
+    // POSA la selezione da quello che INCOLLA.
+    private var hadSelectionAtTouchDown = false
     private var moveStart: CGPoint = .zero
     private var moveTranslation: CGPoint = .zero
 
@@ -965,20 +1088,49 @@ final class LiveInkCaptureOverlay: UIView {
         return layer
     }()
 
-    private lazy var deleteChip: UIButton = {
-        var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: "trash", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
-        let button = UIButton(configuration: config)
-        button.tintColor = .systemRed
-        button.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.95)
-        button.layer.cornerRadius = 16
-        button.layer.borderWidth = 1
-        button.layer.borderColor = UIColor.separator.cgColor
-        button.frame = CGRect(x: 0, y: 0, width: 32, height: 32)
-        button.isHidden = true
-        button.addTarget(self, action: #selector(deleteSelection), for: .touchUpInside)
-        addSubview(button)
+    // Le azioni sulla selezione, in una barretta sopra il recinto.
+    // L'ordine va dal meno al più distruttivo, e il cestino resta
+    // l'unico rosso: è la sola azione che non si può rifare guardando.
+    private func makeChip(_ symbol: String, tint: UIColor, action: Selector) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setImage(
+            UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)),
+            for: .normal
+        )
+        button.tintColor = tint
+        button.addTarget(self, action: action, for: .touchUpInside)
         return button
+    }
+
+    private lazy var duplicateChip = makeChip("plus.square.on.square", tint: .label, action: #selector(duplicateSelection))
+    private lazy var copyChip = makeChip("doc.on.doc", tint: .label, action: #selector(copySelection))
+    private lazy var cutChip = makeChip("scissors", tint: .label, action: #selector(cutSelection))
+    private lazy var deleteChip = makeChip("trash", tint: .systemRed, action: #selector(deleteSelection))
+
+    private static let chipWidth: CGFloat = 40
+    private static let chipHeight: CGFloat = 32
+
+    private lazy var selectionBar: UIView = {
+        let bar = UIView()
+        bar.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.95)
+        bar.layer.cornerRadius = Self.chipHeight / 2
+        bar.layer.borderWidth = 1
+        bar.layer.borderColor = UIColor.separator.cgColor
+        bar.isHidden = true
+        let chips = [duplicateChip, copyChip, cutChip, deleteChip]
+        for (index, chip) in chips.enumerated() {
+            chip.frame = CGRect(
+                x: CGFloat(index) * Self.chipWidth, y: 0,
+                width: Self.chipWidth, height: Self.chipHeight
+            )
+            bar.addSubview(chip)
+        }
+        bar.frame = CGRect(
+            x: 0, y: 0,
+            width: CGFloat(chips.count) * Self.chipWidth, height: Self.chipHeight
+        )
+        addSubview(bar)
+        return bar
     }()
 
     private var selectionBounds: CGRect {
@@ -998,7 +1150,7 @@ final class LiveInkCaptureOverlay: UIView {
         isMovingSelection = false
         lassoLayer.path = nil
         selectionLayer.path = nil
-        deleteChip.isHidden = true
+        selectionBar.isHidden = true
     }
 
     private func lassoBegan(_ touch: UITouch, on page: NotePageView) {
@@ -1011,6 +1163,9 @@ final class LiveInkCaptureOverlay: UIView {
             moveTranslation = .zero
             selectionBaseStrokes = page.strokes
         } else {
+            // `clearLassoSelection` cancella la selezione: se c'era, il
+            // rilascio deve saperlo per distinguere "posa" da "incolla".
+            hadSelectionAtTouchDown = selectionPage != nil && !selectedIndices.isEmpty
             clearLassoSelection()
             lassoPage = page
             lassoPoints = [pagePoint]
@@ -1055,6 +1210,31 @@ final class LiveInkCaptureOverlay: UIView {
             // Spostamento fatto = operazione conclusa: si torna allo
             // strumento di prima, come dopo un tratto di gomma.
             onLassoFinished?()
+            return
+        }
+        // Un TOCCO (non un recinto) col lasso incolla lì, se negli
+        // appunti c'è qualcosa: nessun pulsante in più da mostrare, e il
+        // punto in cui si incolla lo decide il dito.
+        //
+        // MA SOLO SE NON C'È GIÀ UNA SELEZIONE. Altrimenti il tocco
+        // serve a posarla, e senza questa condizione si finiva in una
+        // catena: incolli, la copia resta selezionata, tocchi altrove per
+        // deselezionare e ne incolli un'altra, che resta selezionata, e
+        // così via. Ora il primo tocco depone, il secondo incolla.
+        let box = lassoPoints.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
+        let isTap = lassoPoints.count < 3 || (box.width < 12 && box.height < 12)
+        if isTap, hadSelectionAtTouchDown {
+            lassoLayer.path = nil
+            lassoPage = nil
+            lassoPoints = []
+            clearLassoSelection()
+            return
+        }
+        if isTap, !InkClipboard.isEmpty, let page = lassoPage, let point = lassoPoints.first {
+            lassoLayer.path = nil
+            lassoPage = nil
+            lassoPoints = []
+            pasteClipboard(on: page, at: point)
             return
         }
         guard let page = lassoPage, lassoPoints.count >= 3 else {
@@ -1109,19 +1289,106 @@ final class LiveInkCaptureOverlay: UIView {
             height: bounds.height
         ).insetBy(dx: -10, dy: -10)
         selectionLayer.path = UIBezierPath(roundedRect: overlayRect, cornerRadius: 8).cgPath
-        deleteChip.isHidden = false
-        deleteChip.center = CGPoint(x: overlayRect.maxX, y: overlayRect.minY)
-        bringSubviewToFront(deleteChip)
+        selectionBar.isHidden = false
+        // Sopra la selezione, allineata a destra. Se lassù non ci sta
+        // (selezione a filo del bordo alto), scende sotto invece di
+        // finire fuori schermo.
+        let width = selectionBar.frame.width
+        let height = selectionBar.frame.height
+        let above = overlayRect.minY - height - 6
+        selectionBar.frame = CGRect(
+            x: max(0, overlayRect.maxX - width),
+            y: above >= 0 ? above : overlayRect.maxY + 6,
+            width: width, height: height
+        )
+        bringSubviewToFront(selectionBar)
+    }
+
+    // I tratti selezionati, nell'ordine in cui stanno sulla pagina.
+    private var selectedStrokes: [PKStroke] {
+        guard let page = selectionPage else { return [] }
+        return selectedIndices.sorted().compactMap { index in
+            page.strokes.indices.contains(index) ? page.strokes[index] : nil
+        }
     }
 
     @objc private func deleteSelection() {
+        removeSelection()
+    }
+
+    // Copiare NON conclude l'operazione: la selezione resta viva, così si
+    // può copiare e poi spostare o duplicare senza rifare il recinto.
+    @objc private func copySelection() {
+        let picked = selectedStrokes
+        guard !picked.isEmpty else { return }
+        InkClipboard.store(picked)
+    }
+
+    @objc private func cutSelection() {
+        let picked = selectedStrokes
+        guard !picked.isEmpty else { return }
+        InkClipboard.store(picked)
+        removeSelection()
+    }
+
+    // Duplica sul posto con uno scarto visibile, e la copia diventa la
+    // nuova selezione: si può trascinarla subito dove serve.
+    @objc private func duplicateSelection() {
+        guard let page = selectionPage else { return }
+        let picked = selectedStrokes
+        guard !picked.isEmpty else { return }
+        let offset = CGAffineTransform(translationX: 24, y: 24)
+        insert(picked.map { stroke in
+            var copy = stroke
+            copy.transform = copy.transform.concatenating(offset)
+            return copy
+        }, on: page)
+    }
+
+    // Rimozione condivisa da cestino e forbici.
+    private func removeSelection() {
         guard let page = selectionPage, !selectedIndices.isEmpty else { return }
+        let dirty = selectionBounds.insetBy(dx: -40, dy: -40)
         let keep = page.strokes.enumerated()
             .filter { !selectedIndices.contains($0.offset) }
             .map(\.element)
-        container?.commitStrokes(keep, previous: page.strokes, on: page)
+        container?.commitStrokes(keep, previous: page.strokes, on: page, invalidating: dirty)
         clearLassoSelection()
         onLassoFinished?()
+    }
+
+    // Incolla il contenuto degli appunti CENTRATO sul punto toccato.
+    private func pasteClipboard(on page: NotePageView, at point: CGPoint) {
+        let clip = InkClipboard.strokes
+        guard !clip.isEmpty else { return }
+        let bounds = clip.reduce(CGRect.null) { $0.union($1.renderBounds) }
+        guard !bounds.isNull else { return }
+        let shift = CGAffineTransform(
+            translationX: point.x - bounds.midX,
+            y: point.y - bounds.midY
+        )
+        insert(clip.map { stroke in
+            var copy = stroke
+            copy.transform = copy.transform.concatenating(shift)
+            return copy
+        }, on: page)
+    }
+
+    // Aggiunge tratti in coda e li lascia SELEZIONATI: è ciò che rende
+    // duplica e incolla immediatamente utili, perché la cosa appena
+    // creata è già presa in mano.
+    private func insert(_ newStrokes: [PKStroke], on page: NotePageView) {
+        guard !newStrokes.isEmpty else { return }
+        let previous = page.strokes
+        let merged = previous + newStrokes
+        let dirty = newStrokes
+            .reduce(CGRect.null) { $0.union($1.renderBounds) }
+            .insetBy(dx: -40, dy: -40)
+        container?.commitStrokes(merged, previous: previous, on: page, invalidating: dirty)
+        selectionPage = page
+        selectedIndices = Array(previous.count..<merged.count)
+        selectionBaseStrokes = merged
+        updateSelectionChrome()
     }
 }
 
@@ -1318,12 +1585,63 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         }
     }
 
+    // ZOOM MAGNETICO — due posizioni notevoli, come sui visori di
+    // documenti: la pagina che riempie la larghezza, e la pagina intera
+    // in altezza. Sono i due punti in cui uno vuole davvero fermarsi, e
+    // centrarli a mano con due dita è un esercizio di pazienza.
+    //
+    // L'aggancio scatta SOLO se il gesto è finito già vicino (7%): fuori
+    // da lì lo zoom resta completamente libero, che è la ragione per cui
+    // una calamita del genere non dà fastidio.
+    private static let snapTolerance: CGFloat = 0.13
+
+    // La pagina che si sta guardando: l'ancora verticale è la sua, non
+    // quella della prima pagina del documento (le pagine PDF importate
+    // hanno altezze diverse fra loro).
+    private var zoomAnchors: [CGFloat] {
+        guard pageWidth > 0 else { return [] }
+        // La finestra è quella VISIBILE, non `bounds` meno gli inset di
+        // contenuto: `centerContent` mette inset verticali proprio quando
+        // il contenuto ci sta tutto in altezza, cioè vicino all'ancora
+        // verticale. Sottraendoli, l'ancora si rimpiccioliva man mano che
+        // ci si avvicinava — un bersaglio che scappa, ed è il motivo per
+        // cui in verticale non agganciava.
+        let viewport = safeAreaLayoutGuide.layoutFrame.size
+        let visibleWidth = viewport.width
+        let visibleHeight = viewport.height
+        var anchors: [CGFloat] = []
+        if visibleWidth > 0 { anchors.append(visibleWidth / pageWidth) }
+        let index = currentPageIndex()
+        if pageViews.indices.contains(index) {
+            let height = pageViews[index].frame.height
+            if height > 0, visibleHeight > 0 { anchors.append(visibleHeight / height) }
+        }
+        return anchors.filter { $0 >= minimumZoomScale && $0 <= maximumZoomScale }
+    }
+
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
         userDidZoom = true
+
+        // Si sceglie l'ancora più vicina IN PROPORZIONE, non in valore
+        // assoluto: a zoom 3 uno scarto di 0,1 è impercettibile, a zoom
+        // 0,4 è un salto.
+        let target = zoomAnchors
+            .filter { abs(scale - $0) / $0 < Self.snapTolerance }
+            .min { abs(scale - $0) < abs(scale - $1) }
+
+        if let target, abs(target - scale) > 0.001 {
+            // `setZoomScale` conserva il centro di ciò che si sta
+            // guardando: l'aggancio non fa saltare la vista al centro
+            // della pagina, resta dove è finito il gesto.
+            setZoomScale(target, animated: true)
+        }
+
         // Ridisegna sfondi e pattern alla risoluzione dello zoom raggiunto:
-        // è ciò che toglie la sfocatura quando si ingrandisce.
+        // è ciò che toglie la sfocatura quando si ingrandisce. Si usa la
+        // scala di DESTINAZIONE, così non si rasterizza due volte.
+        let finalScale = target ?? scale
         for page in pageViews {
-            page.applyRenderScale(scale)
+            page.applyRenderScale(finalScale)
         }
     }
 
@@ -1466,7 +1784,7 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         }
     }
 
-    @objc private func flushOnBackground() { flushPendingSaves() }
+    @objc private func flushOnBackground() { flushPendingSaves(force: true) }
 
     // MARK: - Salvataggio differito
 
@@ -1476,14 +1794,21 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
     private var pendingSaves: [NotePageView] = []
     private var saveTask: Task<Void, Never>?
 
+    // Quanto si aspetta prima di scrivere su disco. NON è una preferenza:
+    // `PKDrawing.dataRepresentation()` riserializza l'INTERA pagina, e il
+    // costo cresce senza fermarsi col numero di tratti — misurato sul
+    // dispositivo: 12 ms a 90 tratti, 30 a 167, 44 a 299, **60 a 750**.
+    // Con 400 ms quella fitta cadeva a ogni pausa di scrittura, cioè
+    // proprio mentre si appoggia il tratto dopo. Tre secondi la spostano
+    // nelle pause vere. La cura vera è non riserializzare tutto (storage
+    // per tratto); questo è il palliativo che non tocca il disegno.
+    private static let saveDelay = Duration.seconds(3)
+
     private func scheduleSave(of page: NotePageView) {
         if !pendingSaves.contains(where: { $0 === page }) { pendingSaves.append(page) }
         saveTask?.cancel()
         saveTask = Task { @MainActor [weak self] in
-            // Abbastanza corto da perdere al massimo l'ultimo mezzo
-            // secondo se l'app muore di colpo, abbastanza lungo da
-            // coprire una frase intera scritta di getto.
-            try? await Task.sleep(for: .milliseconds(400))
+            try? await Task.sleep(for: Self.saveDelay)
             guard !Task.isCancelled else { return }
             self?.flushPendingSaves()
         }
@@ -1492,7 +1817,20 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
     // Travaso immediato: si chiama quando si cambia pagina, quando l'app
     // va in background e quando l'editor sparisce. Fuori da questi
     // momenti ci pensa il timer.
-    func flushPendingSaves() {
+    func flushPendingSaves(force: Bool = false) {
+        // Penna giù: si rimanda. Una fitta da 60 ms in mezzo a un tratto
+        // è esattamente ciò che si sta cercando di evitare. `force` la
+        // impone quando non c'è alternativa (app che va in background,
+        // vista che sparisce): lì perdere i dati sarebbe peggio.
+        if !force, liveInkOverlay.isDrawing {
+            saveTask?.cancel()
+            saveTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
+                self?.flushPendingSaves()
+            }
+            return
+        }
         saveTask?.cancel()
         saveTask = nil
         guard !pendingSaves.isEmpty else { return }
@@ -1744,7 +2082,7 @@ struct PagedNoteCanvasView: UIViewRepresentable {
     // qui si scrive su disco ciò che il salvataggio differito aveva
     // ancora in mano.
     static func dismantleUIView(_ container: PagedCanvasContainer, coordinator: Coordinator) {
-        container.flushPendingSaves()
+        container.flushPendingSaves(force: true)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -1779,9 +2117,10 @@ struct PagedNoteCanvasView: UIViewRepresentable {
             container.onPageDataChanged = { [weak self] index, data in
                 guard let self, self.parent.pages.indices.contains(index) else { return }
                 self.parent.onPageDrawingChanged(self.parent.pages[index], data)
-                if self.parent.tool == .eraser {
-                    self.parent.onEraseStrokeCompleted()
-                }
+            }
+            container.liveInkOverlay.onEraseFinished = { [weak self] in
+                guard let self, self.parent.tool == .eraser else { return }
+                self.parent.onEraseStrokeCompleted()
             }
             container.onNeedsMorePages = { [weak self] in self?.parent.onNeedMorePages() }
             if !pencilInteractionInstalled {
