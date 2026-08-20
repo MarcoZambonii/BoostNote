@@ -187,7 +187,7 @@ struct StudioTrustSheet: View {
             info(
                 icon: "timer",
                 title: "Un tetto di tempo per ogni modulo",
-                detail: "Tre minuti per riassunti, flashcard e ripasso; cinque per gli esercizi, che prima di accontentarsi provano tutti i modelli capaci compreso il più lento. Scaduto il tetto la generazione si ferma con un errore chiaro invece di girare a vuoto. Mentre genera, la card mostra quale modello sta provando e puoi annullare in ogni momento."
+                detail: "Cinque minuti per riassunti, flashcard ed esercizi teorici; dieci per gli esercizi da risolvere, che prima di accontentarsi provano tutti i modelli capaci compreso il più lento e poi rifanno i conti per verificarli. Scaduto il tetto la generazione si ferma con un errore chiaro invece di girare a vuoto. Mentre genera, la card mostra quale modello sta provando e puoi annullare in ogni momento."
             )
         }
     }

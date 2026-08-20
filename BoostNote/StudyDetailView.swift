@@ -403,11 +403,17 @@ struct StudyDetailView: View {
             return "\(count) sezioni"
         case .exercises:
             let exercises = module.decodeContent(ExerciseSetContent.self)?.exercises ?? []
-            let practical = exercises.filter { $0.category == .practical }.count
-            return "\(exercises.count) esercizi (\(exercises.count - practical) teorici, \(practical) pratici)"
+            let verified = exercises.filter { $0.verification == .agreed }.count
+            // La ripartizione teorici/pratici non si mostra più: sono
+            // tutti da risolvere. Al suo posto un numero che dice
+            // qualcosa che non si sa già — quanti hanno retto la seconda
+            // risoluzione.
+            return verified == 0
+                ? "\(exercises.count) esercizi"
+                : "\(exercises.count) esercizi, \(verified) verificati"
         case .reviewPoints:
             let count = module.decodeContent(ReviewPointsContent.self)?.points.count ?? 0
-            return "\(count) punti con domanda"
+            return count == 1 ? "1 domanda" : "\(count) domande"
         case .flashcards:
             let count = module.decodeContent(FlashcardsContent.self)?.cards.count ?? 0
             return "\(count) carte"
@@ -467,7 +473,11 @@ struct StudyDetailView: View {
                     module: module
                 )
             case .reviewPoints:
-                ReviewPointsModuleView(content: module.decodeContent(ReviewPointsContent.self) ?? ReviewPointsContent(), module: module)
+                ReviewPointsModuleView(
+                    content: module.decodeContent(ReviewPointsContent.self) ?? ReviewPointsContent(),
+                    module: module,
+                    study: study
+                )
             case .flashcards:
                 FlashcardsModuleView(content: module.decodeContent(FlashcardsContent.self) ?? FlashcardsContent())
             case nil:
@@ -724,7 +734,6 @@ private struct ExercisesModuleView: View {
         var detail: [WolframPod] = []
     }
 
-    @State private var categoryFilter: ExerciseCategory?
     @State private var index = 0
     @State private var revealedSteps = 0
     @State private var showAnswer = false
@@ -737,17 +746,14 @@ private struct ExercisesModuleView: View {
     // stesso esercizio se ci si torna sopra.
     @State private var outcomes: [UUID: Bool] = [:]
 
-    private var exercises: [StudyExercise] {
-        guard let categoryFilter else { return content.exercises }
-        return content.exercises.filter { $0.category == categoryFilter }
-    }
+    private var exercises: [StudyExercise] { content.exercises }
 
     var body: some View {
         VStack(spacing: 0) {
-            filterBar
+            progressBar
 
             if exercises.isEmpty {
-                ContentUnavailableView("Nessun esercizio in questa categoria", systemImage: "pencil.slash")
+                ContentUnavailableView("Nessun esercizio", systemImage: "pencil.slash")
             } else if finished {
                 sessionSummary
             } else {
@@ -799,13 +805,11 @@ private struct ExercisesModuleView: View {
         }
     }
 
-    private var filterBar: some View {
+    // Era una barra di filtri "Tutti / Teorici / Pratici". Su un insieme
+    // di una natura sola erano tre pulsanti che dicevano la stessa cosa:
+    // resta la sola posizione nel set, che invece serve.
+    private var progressBar: some View {
         HStack(spacing: DesignSpace.s2) {
-            filterChip(nil, label: "Tutti (\(content.exercises.count))")
-            ForEach(ExerciseCategory.allCases, id: \.self) { category in
-                let count = content.exercises.filter { $0.category == category }.count
-                filterChip(category, label: "\(category.label) (\(count))")
-            }
             Spacer()
             if !finished && !exercises.isEmpty {
                 Text("\(min(index + 1, exercises.count)) di \(exercises.count)")
@@ -815,23 +819,6 @@ private struct ExercisesModuleView: View {
         }
         .padding(.horizontal, DesignSpace.s6)
         .padding(.vertical, DesignSpace.s3)
-    }
-
-    private func filterChip(_ category: ExerciseCategory?, label: String) -> some View {
-        let isSelected = categoryFilter == category
-        return Button {
-            categoryFilter = category
-            restartSession()
-        } label: {
-            Text(label)
-                .fixedSize()
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(isSelected ? DesignColor.textOnBrand : DesignColor.textSecondary)
-                .padding(.horizontal, DesignSpace.s3)
-                .padding(.vertical, 6)
-                .background(isSelected ? DesignColor.brandPrimary : DesignColor.surfaceSunken, in: Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     // Striscia degli esercizi: si salta dove si vuole invece di essere
@@ -921,7 +908,9 @@ private struct ExercisesModuleView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 HStack(spacing: DesignSpace.s2) {
-                    chip(exercise.category.label, color: exercise.category == .practical ? DesignColor.attention : DesignColor.brandPrimary)
+                    // Niente più etichetta di categoria: erano tutte
+                    // "Teorico"/"Pratico" su esercizi che ormai sono di
+                    // una natura sola.
                     chip(exercise.difficulty.label, color: exercise.difficulty.color)
                     // Provenienza: "Nuovo" se la traccia è stata scritta
                     // ispirandosi ai materiali, "Nei materiali: X" se era
@@ -949,6 +938,16 @@ private struct ExercisesModuleView: View {
                             onCompiled: { svg in persistFigure(svg, for: exercise.id) },
                             onFailed: { persistFigure("", for: exercise.id) }
                         )
+                        // IDENTITÀ LEGATA ALL'ESERCIZIO. Il player mostra
+                        // un esercizio alla volta nella STESSA posizione
+                        // della gerarchia: senza `.id`, passando da uno
+                        // all'altro SwiftUI riusa la vista e con essa il
+                        // suo `@State svg`, cioè la figura di prima resta
+                        // appesa finché la nuova non è compilata — e su
+                        // una figura già in cache può restarci del tutto.
+                        // Con l'id la vista viene ricreata, e lo stato
+                        // muore con lei.
+                        .id(exercise.id)
                     } else if exercise.figureExpected == true {
                         // Assenza DICHIARATA invece che silenziosa: senza
                         // questa riga, "il modello non ha disegnato" e
@@ -1287,10 +1286,17 @@ private struct ExercisesModuleView: View {
 // MARK: - Punti di ripasso
 // Ogni punto: concetto + domanda di verifica; la risposta si rivela al tocco.
 private struct ReviewPointsModuleView: View {
+    @Environment(\.modelContext) private var context
     let content: ReviewPointsContent
     let module: StudyModule
+    let study: Study
 
     @State private var revealedIDs: Set<UUID> = []
+    // Autovalutazione già data in questa sessione, per domanda: serve a
+    // mostrare quale delle due si è scelta e a non contare due volte la
+    // stessa domanda se ci si ripassa sopra.
+    @State private var outcomes: [UUID: Bool] = [:]
+    @State private var startedAt = Date.now
 
     var body: some View {
         ScrollView {
@@ -1318,16 +1324,38 @@ private struct ReviewPointsModuleView: View {
                                 .frame(width: 26, height: 26)
                                 .background(DesignColor.toolExplainBg, in: Circle())
                             VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                                StudioRichText(text: point.statement, size: 15, color: DesignColor.textPrimary)
-                                StudioRichText(text: point.question, size: 13)
+                                // PRIMA LA DOMANDA, e prima del resto:
+                                // `statement` è l'enunciato su cui verte,
+                                // e quando questi erano "punti di ripasso"
+                                // stava in cima di diritto — il punto era
+                                // quello, la domanda serviva a controllare
+                                // di averlo capito. Da quando sono
+                                // esercizi il verso è opposto: mostrare
+                                // l'enunciato sopra la domanda ne regala
+                                // la risposta prima ancora che venga
+                                // letta. Ora scende insieme alla
+                                // soluzione.
+                                StudioRichText(text: point.question, size: 15, color: DesignColor.textPrimary)
                             }
                         }
 
                         if revealed {
+                            StudioRichText(text: point.statement, size: 13, color: DesignColor.textPrimary)
                             StudioRichText(text: point.answer, size: 13)
                                 .padding(DesignSpace.s3)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(DesignColor.successBg, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                            // Autovalutazione: è ciò che rende questi
+                            // esercizi e non schede da leggere. Senza, non
+                            // entrano nell'analisi e la teoria resta fuori
+                            // dai progressi come se non l'avessi studiata.
+                            HStack(spacing: DesignSpace.s2) {
+                                selfCheckButton(point: point, correct: true, title: "Sapevo rispondere", icon: "checkmark.circle.fill", color: DesignColor.success)
+                                selfCheckButton(point: point, correct: false, title: "Da rivedere", icon: "arrow.counterclockwise.circle.fill", color: DesignColor.attention)
+                                Spacer()
+                            }
+                            .padding(.leading, 26 + DesignSpace.s3)
+
                             HStack(spacing: DesignSpace.s2) {
                                 CitationDisclosure(citation: point.quote)
                                 Spacer()
@@ -1353,6 +1381,44 @@ private struct ReviewPointsModuleView: View {
                     }
         .padding(DesignSpace.s4)
         .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+    }
+
+    private func selfCheckButton(point: ReviewPoint, correct: Bool, title: String, icon: String, color: Color) -> some View {
+        let chosen = outcomes[point.id]
+        let isSelected = chosen == correct
+        return Button {
+            record(correct: correct, point: point)
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isSelected ? DesignColor.textOnBrand : color)
+                .padding(.horizontal, DesignSpace.s3)
+                .padding(.vertical, 6)
+                .background(isSelected ? color : color.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func record(correct: Bool, point: ReviewPoint) {
+        // Cambiare idea sostituisce il tentativo invece di aggiungerne
+        // uno: due tentativi sulla stessa domanda nella stessa sessione
+        // gonfierebbero i conteggi.
+        if let previous = outcomes[point.id], previous == correct { return }
+        let attempt = ExerciseAttempt(
+            isCorrect: correct,
+            durationSeconds: Date.now.timeIntervalSince(startedAt),
+            // Senza argomento il tentativo esiste ma non si somma a
+            // niente: i payload generati prima del campo "topic" finiscono
+            // qui, e "Senza argomento" lo dice invece di nasconderlo.
+            topic: point.topic ?? "Senza argomento",
+            // Un esercizio teorico non ha difficoltà: vedi ExerciseAttempt.
+            difficulty: nil,
+            category: .theoretical,
+            study: study
+        )
+        context.insert(attempt)
+        outcomes[point.id] = correct
+        startedAt = .now
     }
 }
 

@@ -267,9 +267,10 @@ enum StudioGenerationService {
     // è la ragione per cui il Flash produce "ottimo finito 15, quanto
     // vale il duale?" e il Lite "scrivi il duale di min c'x". 2048
     // perché nelle prove i casi buoni usavano 1.400-2.000 token; i
-    // 5.300-7.800 osservati erano spirale, non qualità. Tutti gli altri
-    // compiti (estrattivi) viaggiano a zero.
-    private static let exercisesThinkingBudget = 2048
+    // 5.300-7.800 osservati erano spirale, non qualità. Lo usano i moduli
+    // che inventano (esercizi, loro verifica, esercizi teorici); gli altri,
+    // estrattivi, viaggiano a zero.
+    private static let reasoningThinkingBudget = 2048
 
     // Tetto complessivo per modulo. Senza, il caso peggiore era il
     // prodotto di tutti i moltiplicatori della catena: ~40 minuti di
@@ -277,14 +278,22 @@ enum StudioGenerationService {
     //
     // Gli esercizi hanno un tetto più alto, e NON è una preferenza: con
     // `qualityFirst` la loro catena mette il Flash lento in terza
-    // posizione, quindi il caso peggiore diventa due 503 da ~20s + fino a
-    // 120s di timeout su quel modello + i Lite in coda. Con 180s si
-    // sfonderebbe proprio mentre restano modelli liberi da provare, e il
-    // risultato non sarebbe "esercizi più semplici" ma "nessun esercizio"
-    // — cioè peggio di prima. Il tetto serve a fermare le derive, non a
-    // impedire l'attesa che abbiamo scelto di accettare.
+    // posizione, quindi il caso peggiore è due 503 da ~20s + un timeout
+    // pieno su quel modello + i Lite in coda. Se il tetto scade mentre
+    // restano modelli liberi da provare, il risultato non è "esercizi più
+    // semplici" ma "nessun esercizio" — cioè peggio di non avere tetto.
+    // Serve a fermare le derive, non a impedire l'attesa che abbiamo
+    // scelto di accettare.
+    //
+    // I numeri SEGUONO il timeout di rete di AIPurpose, e vanno rifatti
+    // se quello cambia: oggi una chiamata `.generation` può prendersi
+    // 240s, quindi 180 significherebbe morire prima ancora di finire il
+    // PRIMO tentativo. Gli esercizi ne fanno due di chiamate — generare e
+    // poi rifare i conti per verificare — e devono starci dentro
+    // entrambe, altrimenti il set arriva senza verifica proprio quando è
+    // stato lento, cioè quando è più grosso.
     private static func moduleDeadline(for kind: StudyModuleKind) -> TimeInterval {
-        kind == .exercises ? 300 : 180
+        kind == .exercises ? 600 : 300
     }
 
     private static func generateWithAI(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, indexTopics: [String] = [], progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
@@ -337,29 +346,56 @@ enum StudioGenerationService {
         case retryable(GenerationOutcome)
     }
 
+    // I due moduli in cui il modello SCRIVE qualcosa che nei materiali
+    // non c'è — tracce nuove, domande di ragionamento — e che quindi
+    // vogliono il modello capace e un budget per pensare. Riassunti e
+    // flashcard riordinano quello che c'è già.
+    private static func invents(_ kind: StudyModuleKind) -> Bool {
+        kind == .exercises || kind == .reviewPoints
+    }
+
     private static func generateOnce(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, indexTopics: [String] = [], progress: @escaping @Sendable (String) -> Void) async -> AttemptResult {
         let prompt = buildPrompt(for: kind, from: sources, options: options, indexTopics: indexTopics)
         let raw: String
         let usedModel: String?
-        // Gli esercizi passano dal modello capace, gli altri moduli no.
+        var wasTruncated = false
+        // Chi INVENTA passa dal modello capace; chi ESTRAE no.
         // Misurato sullo stesso prompt: il Lite produce domande di
         // definizione ("scrivi il duale di min c'x"), il Flash esercizi
         // con dati concreti da applicare ("ottimo finito 15, quanto vale
-        // il duale?"). Su riassunti, flashcard e punti di ripasso — che
-        // sono compiti estrattivi — la differenza non si vede, e lì il
-        // Lite è sei volte più veloce.
+        // il duale?"). Riassunti e flashcard restano ai Lite, che sono
+        // sei volte più veloci e su un compito estrattivo pareggiano.
+        //
+        // Gli esercizi TEORICI sono passati di qua il 2026-08-20, quando
+        // hanno smesso di essere "estrai i concetti chiave" e hanno
+        // iniziato a chiedere ragionamento (sotto quali ipotesi vale,
+        // quando il metodo NON si applica). Lasciarli sui Lite significava
+        // chiedere ragionamento al modello che sappiamo produrre
+        // definizioni — cioè esattamente ciò che il loro prompt ora
+        // vieta. Niente `qualityFirst` però: lì non c'è aritmetica da
+        // sbagliare, quindi aspettare i 58s del Flash lento prima di
+        // scendere sui Lite non si ripaga.
         switch await AIService.generate(
             prompt: prompt,
-            tier: kind == .exercises ? .full : .lite,
+            tier: invents(kind) ? .full : .lite,
             schema: responseSchema(for: kind),
-            thinkingBudget: kind == .exercises ? exercisesThinkingBudget : 0,
+            thinkingBudget: invents(kind) ? reasoningThinkingBudget : 0,
             // Sugli esercizi si spendono TUTTI i Flash prima di scendere
             // sui Lite, anche il lento da ~58s (scelta dell'utente,
             // 2026-08-17): il declassamento qui non è un rallentamento,
             // è un esercizio peggiore.
             qualityFirst: kind == .exercises,
-            onAttempt: { modelID, position, total in
-                progress("Provo \(modelID) (\(position)/\(total))…")
+            onAttempt: { modelID, position, total, previousFailure in
+                // Il motivo del salto va detto: tre "era sovraccarico" di
+                // fila sono Google che arranca, tre "non ha risposto in
+                // tempo" sono il nostro tetto di tempo troppo stretto.
+                // Senza, davanti a "Provo X (3/5)" i due casi sono
+                // indistinguibili.
+                if let previousFailure {
+                    progress("Provo \(modelID) (\(position)/\(total)) — il precedente \(previousFailure).")
+                } else {
+                    progress("Provo \(modelID) (\(position)/\(total))…")
+                }
             }
         ) {
         case .failure(let error):
@@ -367,10 +403,16 @@ enum StudioGenerationService {
         case .success(let reply):
             raw = reply.text
             usedModel = reply.modelID
+            wasTruncated = reply.wasTruncated
         }
         switch await parse(raw, for: kind, from: sources, options: options, modelID: usedModel, vocabulary: indexTopics) {
         case .success(let outcome):
-            return .final(outcome)
+            // Recuperato il recuperabile, ma quello che c'è è MENO di
+            // quanto chiesto: dirlo, o quel numero più basso sembra una
+            // scelta nostra invece di una risposta tagliata.
+            return .final(wasTruncated
+                ? outcome.addingWarning("La risposta si è interrotta per lunghezza: è stata salvata la parte completa, quindi qui c'è meno di quanto avevi chiesto. Rigenera per averlo intero, o chiedi meno contenuti per volta.")
+                : outcome)
         case .failure(let message):
             return .retryable(.failure(message))
         }
@@ -411,7 +453,7 @@ enum StudioGenerationService {
             let vocabularyIndex = TopicVocabulary(vocabulary)
             var exercises = dto.exercises.map { item in
                 StudyExercise(
-                    categoryRaw: (ExerciseCategory(rawValue: item.category ?? "") ?? .theoretical).rawValue,
+                    categoryRaw: ExerciseCategory.practical.rawValue,
                     difficultyRaw: (ExerciseDifficulty(rawValue: item.difficulty ?? "") ?? .base).rawValue,
                     topic: snap(item.topic ?? "Senza argomento", in: vocabularyIndex),
                     prompt: item.prompt,
@@ -436,9 +478,30 @@ enum StudioGenerationService {
                 if !verdicts.isEmpty {
                     var kept: [StudyExercise] = []
                     for (index, var exercise) in exercises.enumerated() {
-                        let agreed = verdicts[index] ?? true
-                        if agreed {
+                        // NESSUN VERDETTO PER QUESTO INDICE. Il correttore
+                        // ha risposto, ma non su di lui (risposta parziale,
+                        // indici saltati). Prima questo caso valeva
+                        // "promosso": l'esercizio usciva col badge "risolto
+                        // due volte" senza che nessuno l'avesse risolto una
+                        // seconda volta. Ora si tiene — scartarlo sarebbe
+                        // punirlo per una mancanza NOSTRA — ma resta non
+                        // marcato, che è la verità.
+                        guard let verdict = verdicts[index] else {
+                            kept.append(exercise)
+                            continue
+                        }
+                        if verdict.correct {
                             exercise.verificationRaw = ExerciseVerification.agreed.rawValue
+                            // LA DIFFICOLTÀ LA DICHIARA CHI HA RISOLTO,
+                            // non chi ha inventato. Il generatore gonfia
+                            // l'etichetta (dice "avanzato" e consegna un
+                            // esercizio da un passaggio); il correttore ha
+                            // appena rifatto il conto ed è l'unico in
+                            // posizione di graduarlo su ciò che è servito
+                            // davvero.
+                            if let graded = verdict.difficulty {
+                                exercise.difficultyRaw = graded.rawValue
+                            }
                             kept.append(exercise)
                         } else {
                             discarded += 1
@@ -462,9 +525,15 @@ enum StudioGenerationService {
             case .success(let decoded): dto = decoded
             }
             guard !dto.points.isEmpty else { return .failure(emptyError) }
+            // Stesso vocabolario degli esercizi da risolvere, e non è un
+            // dettaglio: se "programmazione lineare" qui e "PL" là restano
+            // due stringhe diverse, nell'analisi diventano due argomenti e
+            // la teoria non si somma mai alla pratica.
+            let pointVocabulary = TopicVocabulary(vocabulary)
             return .success(encodePayload(ReviewPointsContent(points: dto.points.map {
                 ReviewPoint(statement: $0.statement, question: $0.question, answer: $0.answer,
-                            quote: makeCitation(quote: $0.quote, source: $0.source, in: sources))
+                            quote: makeCitation(quote: $0.quote, source: $0.source, in: sources),
+                            topic: $0.topic.map { snap($0, in: pointVocabulary) })
             }), modelID: modelID))
         case .flashcards:
             let dto: AIFlashcardsDTO
@@ -809,10 +878,10 @@ enum StudioGenerationService {
         Genera UN SOLO esercizio sostitutivo, sullo stesso argomento ("\(old.topic)") e della stessa difficoltà, che non ripeta l'errore segnalato.
         Gli altri esercizi del set coprono già questi argomenti, NON generarne uno su di essi: \(otherTopics.isEmpty ? "nessuno" : otherTopics.joined(separator: ", ")). Valgono tutte le regole di prima: traccia autosufficiente, formule in LaTeX tra $$ su riga propria, citazione verbatim dai materiali.
         Vale anche la regola sulla figura: indica SEMPRE "figuraServe" (true/false) applicando lo stesso criterio operativo — serve quando la traccia contiene informazione non lineare che lo studente dovrebbe disegnarsi da sé per risolverla, non quando il disegno sarebbe decorazione. Se è true, "figureTikZ" è obbligatorio: solo il codice da \\begin{tikzpicture} a \\end{tikzpicture}, con dati IDENTICI a quelli della NUOVA traccia (la figura del vecchio esercizio non si riusa: i dati sono cambiati). Librerie disponibili: pgfplots, automata, positioning, arrows.meta, matrix, calc, shapes; circuitikz e tikz-cd non ci sono.
-        Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials","figuraServe":true,"figureTikZ":"..."}]}
+        Schema: {"exercises":[{"difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials","figuraServe":true,"figureTikZ":"..."}]}
         """
 
-        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: exercisesSchema, thinkingBudget: exercisesThinkingBudget, qualityFirst: true),
+        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: exercisesSchema, thinkingBudget: reasoningThinkingBudget, qualityFirst: true),
               let json = AIService.extractJSON(from: reply.text),
               case .success(let dto) = decodeDTO(AIExercisesDTO.self, from: json),
               let item = dto.exercises.first else {
@@ -820,7 +889,7 @@ enum StudioGenerationService {
         }
 
         content.exercises[index] = StudyExercise(
-            categoryRaw: (ExerciseCategory(rawValue: item.category ?? "") ?? old.category).rawValue,
+            categoryRaw: ExerciseCategory.practical.rawValue,
             difficultyRaw: (ExerciseDifficulty(rawValue: item.difficulty ?? "") ?? old.difficulty).rawValue,
             topic: snap(item.topic ?? old.topic, in: vocabulary),
             prompt: item.prompt,
@@ -851,16 +920,40 @@ enum StudioGenerationService {
     // free tier la quota è la risorsa scarsa. Il verificatore riceve i
     // materiali e le tracce, risolve per conto suo e dichiara per ognuno
     // se la risposta proposta regge.
-    private static func verifyExercises(_ exercises: [StudyExercise], from sources: [ResolvedSource]) async -> [Int: Bool] {
+    private static func verifyExercises(_ exercises: [StudyExercise], from sources: [ResolvedSource]) async -> [Int: ExerciseVerdict] {
         guard !exercises.isEmpty else { return [:] }
         var list = ""
         for (index, exercise) in exercises.enumerated() {
-            list += "\n[\(index)] TRACCIA: \(exercise.prompt)\nRISPOSTA PROPOSTA: \(exercise.answer)\n"
+            // I PASSAGGI vanno mostrati: senza, il correttore rifà il
+            // conto alla cieca e basta un percorso diverso per far
+            // divergere il risultato — e l'esercizio spariva.
+            let steps = exercise.steps.isEmpty
+                ? ""
+                : "\nPASSAGGI PROPOSTI:\n" + exercise.steps.enumerated()
+                    .map { "  \($0.offset + 1)) \($0.element)" }
+                    .joined(separator: "\n")
+            list += "\n[\(index)] TRACCIA: \(exercise.prompt)\(steps)\nRISPOSTA PROPOSTA: \(exercise.answer)\n"
         }
         let prompt = """
-        Sei un correttore severo. Per ogni esercizio qui sotto, risolvilo tu stesso a partire dai materiali e poi giudica se la RISPOSTA PROPOSTA è corretta e coerente con i materiali.
-        Sii critico: se la risposta è vaga, non verificabile dai materiali, o matematicamente errata, marcala come NON corretta.
-        Rispondi SOLO con JSON valido, senza testo attorno, nel formato: {"verdicts":[{"index":0,"correct":true},{"index":1,"correct":false}]}
+        Sei un correttore. Per ogni esercizio qui sotto risolvilo per conto tuo partendo DAI DATI DELLA TRACCIA, poi giudica se la RISPOSTA PROPOSTA è corretta.
+
+        IL CRITERIO È UNO SOLO: il risultato proposto è sbagliato rispetto ai dati della traccia? Sono tutti esercizi da risolvere facendo un conto, quindi il giudice sei TU che lo rifai. I materiali qui sotto servono a ricordarti il METODO, le condizioni di applicabilità e le convenzioni della materia — un esercizio che le contraddice è sbagliato anche se l'aritmetica torna — ma NON sono la fonte con cui verificare i numeri: quelli si verificano ricalcolandoli.
+
+        NON sono motivi di bocciatura, e sbagliare qui fa danno:
+        - che l'esercizio non si trovi nei materiali. Le tracce sono INVENTATE APPOSTA, ispirate al corso: cercarle nei materiali e non trovarle è il comportamento previsto, non un difetto.
+        - che i dati siano diversi da quelli degli esempi del corso. Devono esserlo.
+        - che tu avresti impostato il problema in un altro modo, se anche la strada proposta arriva al risultato giusto.
+
+        In entrambi i casi boccia anche quando: i passaggi si contraddicono fra loro o con la risposta, la traccia non porta abbastanza per poter rispondere, oppure la risposta non risponde alla domanda posta.
+
+        COME RISPONDERE — l'ordine dei campi è vincolante e va rispettato:
+        1) "risultato": il risultato a cui sei arrivato TU rifacendo il conto. Scrivilo per primo, PRIMA di formulare il giudizio. Se la traccia non porta i dati per arrivarci, scrivi qui che cosa manca.
+        2) "correct": true solo se il tuo risultato e la RISPOSTA PROPOSTA coincidono (o sono la stessa cosa scritta in forma diversa). Se hai ottenuto un risultato diverso, è false — anche se la strada proposta ti sembra ragionevole.
+        3) "difficolta": il livello VERO dell'esercizio, misurato su quello che hai dovuto fare TU per risolverlo, non su quello che l'esercizio dichiara di essere. Un esercizio che si risolve in un passaggio è "base" anche se si presenta come avanzato.
+
+        \(Self.difficultyMeaning)
+
+        Rispondi SOLO con JSON valido, senza testo attorno, nel formato: {"verdicts":[{"index":0,"risultato":"...","correct":true,"difficolta":"medio"}]}
 
         MATERIALI (estratto di contesto):
         \(String(materialsBlock(from: sources).prefix(20000)))
@@ -873,7 +966,7 @@ enum StudioGenerationService {
         // `qualityFirst`, per lo stesso motivo: un Lite che fa il
         // "correttore severo" di esercizi è un giudice debole, e il
         // secondo passaggio vale esattamente per la sua severità.
-        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: verdictsSchema, thinkingBudget: exercisesThinkingBudget, qualityFirst: true),
+        guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .full, schema: verdictsSchema, thinkingBudget: reasoningThinkingBudget, qualityFirst: true),
               let json = AIService.extractJSON(from: reply.text),
               let data = json.data(using: .utf8),
               let dto = try? JSONDecoder().decode(AIVerdictsDTO.self, from: data) else {
@@ -881,16 +974,35 @@ enum StudioGenerationService {
             // esercizio non verificato che perderlo per un errore nostro).
             return [:]
         }
-        var result: [Int: Bool] = [:]
+        var result: [Int: ExerciseVerdict] = [:]
         for verdict in dto.verdicts {
-            result[verdict.index] = verdict.correct
+            result[verdict.index] = ExerciseVerdict(
+                correct: verdict.correct,
+                difficulty: verdict.difficolta.flatMap { ExerciseDifficulty(rawValue: $0.lowercased()) }
+            )
         }
         return result
     }
 
     private struct AIVerdictsDTO: Decodable {
-        struct Verdict: Decodable { var index: Int; var correct: Bool }
+        struct Verdict: Decodable {
+            var index: Int
+            var correct: Bool
+            // Il risultato che il correttore ha ottenuto da solo. Non si
+            // mostra da nessuna parte: serve a farglielo CALCOLARE prima
+            // di giudicare (vedi verdictsSchema).
+            var risultato: String?
+            var difficolta: String?
+        }
         var verdicts: [Verdict]
+    }
+
+    // Esito del correttore su un esercizio: se il conto torna e quanto è
+    // difficile DAVVERO, misurato da chi l'ha appena risolto invece che
+    // da chi l'ha inventato.
+    private struct ExerciseVerdict {
+        var correct: Bool
+        var difficulty: ExerciseDifficulty?
     }
 
     private static func encodePayload(_ payload: some Encodable, discarded: Int = 0, modelID: String? = nil, warning: String? = nil) -> GenerationOutcome {
@@ -1066,7 +1178,7 @@ enum StudioGenerationService {
             return objectField([
                 "points": arrayField(of: objectField([
                     "statement": stringField(), "question": stringField(), "answer": stringField(),
-                    "quote": stringField(), "source": stringField()
+                    "quote": stringField(), "source": stringField(), "topic": stringField()
                 ], required: ["statement", "question", "answer"]))
             ], required: ["points"])
         case .flashcards:
@@ -1083,7 +1195,15 @@ enum StudioGenerationService {
     private static var exercisesSchema: [String: Any] {
         objectField([
             "exercises": arrayField(of: objectField([
-                "category": stringField(), "difficulty": stringField(), "topic": stringField(),
+                // NIENTE "category": gli esercizi sono tutti pratici (si
+                // risolvono facendo qualcosa) e la parte concettuale sta
+                // nei punti di ripasso. Il campo c'era, significava la
+                // PROVENIENZA — "practical" = ispirato ai temi d'esame,
+                // "theoretical" = nato dalla teoria — ma veniva letto come
+                // se dicesse la natura del compito, e il modello lo
+                // assegnava per far quadrare le quote richieste. Tre
+                // significati su un'etichetta sola: meglio nessuna.
+                "difficulty": stringField(), "topic": stringField(),
                 "prompt": stringField(), "steps": arrayField(of: stringField()),
                 "answer": stringField(), "source": stringField(), "quote": stringField(),
                 "checkExpression": stringField(), "origin": stringField(),
@@ -1101,11 +1221,43 @@ enum StudioGenerationService {
 
     private static var verdictsSchema: [String: Any] {
         objectField([
-            "verdicts": arrayField(of: objectField([
-                "index": ["type": "INTEGER"], "correct": ["type": "BOOLEAN"]
-            ], required: ["index", "correct"]))
+            "verdicts": arrayField(of: [
+                "type": "OBJECT",
+                "properties": [
+                    "index": ["type": "INTEGER"],
+                    "risultato": stringField(),
+                    "correct": boolField(),
+                    "difficolta": ["type": "STRING", "enum": ["base", "medio", "avanzato"]]
+                ],
+                // L'ORDINE DEI CAMPI È IL MECCANISMO, non un dettaglio.
+                // Un booleano "correct" da solo costa zero ragionamento:
+                // `true` è la risposta di default di un modello
+                // accondiscendente, e infatti passavano esercizi
+                // irrecuperabili. Obbligandolo a scrivere PRIMA il
+                // risultato suo, il giudizio che segue è il confronto fra
+                // due numeri invece che un'impressione. Senza
+                // propertyOrdering l'ordine di generazione è arbitrario e
+                // il trucco non funziona.
+                "propertyOrdering": ["index", "risultato", "correct", "difficolta"],
+                "required": ["index", "risultato", "correct", "difficolta"]
+            ])
         ], required: ["verdicts"])
     }
+
+    // Senza dire COSA SIGNIFICANO, i tre livelli restano tre parole e il
+    // modello produce tre volte lo stesso esercizio introduttivo. La
+    // definizione è volutamente indipendente dalla materia, e la riga che
+    // conta è l'ultima: avanzato non vuol dire più conti, vuol dire più
+    // decisioni. La usano DUE prompt — chi genera e chi corregge — e devono
+    // usare la stessa, altrimenti il voto sulla difficoltà misura un metro
+    // diverso da quello con cui l'esercizio è stato scritto.
+    static let difficultyMeaning = """
+    Cosa significano i livelli, in qualunque materia:
+    - "base": un passaggio solo, applicazione diretta di una definizione o di una formula.
+    - "medio": due o tre passaggi concatenati, dove il risultato di uno entra nel successivo.
+    - "avanzato": bisogna COMBINARE due concetti diversi del corso, oppure riconoscere un caso limite o una condizione da verificare PRIMA di poter applicare il metodo, oppure ricavare un dato mancante prima di partire.
+    "Avanzato" non vuol dire conti più lunghi: vuol dire più DECISIONI da prendere. Un esercizio con numeri brutti e un solo passaggio resta "base".
+    """
 
     private static func buildPrompt(for kind: StudyModuleKind, from sources: [ResolvedSource], options: StudyModuleOptions, indexTopics: [String] = []) -> String {
         let common = commonPreamble(from: sources)
@@ -1131,10 +1283,7 @@ enum StudioGenerationService {
             """
         case .exercises:
             let difficultyRule = options.difficulty.map { "Tutti gli esercizi devono avere difficoltà \"\($0.rawValue)\"." }
-                ?? "Varia la difficoltà tra base, medio e avanzato."
-            var categoryRule = ""
-            if !options.includeTheoretical || options.theoreticalCount == 0 { categoryRule += " Non generare esercizi teorici." }
-            if !options.includePractical || options.practicalCount == 0 { categoryRule += " Non generare esercizi pratici." }
+                ?? "Varia la difficoltà tra base, medio e avanzato, e fai in modo che gli \"avanzato\" siano davvero tali."
             // Con l'indice del Vault gli argomenti sono GIÀ noti: la
             // FASE 1 parte da lì invece di riscoprirli sui soli
             // materiali selezionati — è così che la copertura resta
@@ -1155,10 +1304,16 @@ enum StudioGenerationService {
 
             \(phase1)
 
-            FASE 2 — Per OGNI argomento individuato genera \(options.theoreticalCount) esercizi teorici e \(options.practicalCount) pratici. Il campo "topic" contiene l'argomento.
+            FASE 2 — Per OGNI argomento individuato genera \(options.exerciseCount) esercizi. Il campo "topic" contiene l'argomento.
+
+            COSA CONTA COME ESERCIZIO, e qui non ci sono eccezioni: una richiesta che si chiude con un RISULTATO — un numero, un'espressione, una soluzione, una scelta che per essere presa richiede un conto. Chi legge deve dover FARE qualcosa per rispondere.
+            Se per rispondere basta enunciare, definire, elencare o spiegare, NON è un esercizio e qui non va: quella è materia da ripasso teorico, che questo studio tratta altrove. Nel dubbio, il test è uno: la risposta è qualcosa che si calcola, o qualcosa che si racconta? Se si racconta, scarta la traccia e scrivine un'altra.
+
             Se due esercizi finiscono sullo stesso argomento devono affrontarlo da angoli DIVERSI (dato incognito diverso, verso opposto, caso limite), mai essere la stessa traccia con altri numeri.
             TETTO: se argomenti × esercizi supererebbe 15 esercizi totali, riduci il numero per argomento — ma copri comunque OGNI argomento almeno una volta. La copertura viene prima della profondità.
-            \(difficultyRule)\(categoryRule)
+            \(difficultyRule)
+
+            \(Self.difficultyMeaning)
 
             FORMA DELLA TRACCIA — è la cosa più importante. Una traccia deve presentare da sé tutto il problema, come farebbe un libro di esercizi. Esempio di come DEVE essere:
             "Si consideri il vettore aleatorio gaussiano X con matrice di covarianza $$C_X = \\begin{pmatrix} 8 & 1 & 1 \\\\ 1 & 4 & 1 \\\\ 1 & 1 & 2 \\end{pmatrix}$$ Verificare se X è un vettore aleatorio continuo calcolando il determinante di $$C_X$$."
@@ -1168,9 +1323,9 @@ enum StudioGenerationService {
             REGOLA FONDAMENTALE — gli esercizi devono essere AUTOSUFFICIENTI:
             - Chi legge la traccia deve poterla risolvere SENZA avere davanti i materiali o il tema d'esame. Riporta nella traccia tutti i dati, le funzioni, i valori e le ipotesi che servono.
             - È VIETATO rimandare alla fonte: mai "come nell'esercizio 3 del tema del 2019", "risolvi l'esercizio del compito", "si consideri la funzione dell'esempio precedente". Se copi la traccia di un tema d'esame parola per parola non stai aiutando: quello lo studente può già farlo da solo.
-            - Gli esercizi "practical" devono essere INVENTATI ISPIRANDOSI ai temi d'esame: stessa tipologia, stessa struttura di richiesta, stesso livello di difficoltà e stesso tipo di conti, ma con dati, numeri, funzioni e contesto DIVERSI. Devono sembrare usciti dallo stesso esame, senza esserne la copia.
-            - Gli esercizi "theoretical" nascono invece dai materiali di teoria.
-            - Se non ci sono temi d'esame tra i materiali, non generare esercizi "practical".
+            - Gli esercizi vanno INVENTATI ISPIRANDOSI ai temi d'esame: stessa tipologia, stessa struttura di richiesta, stesso livello di difficoltà e stesso tipo di conti, ma con dati, numeri, funzioni e contesto DIVERSI. Devono sembrare usciti dallo stesso esame, senza esserne la copia.
+            - I materiali di TEORIA vanno letti eccome: è lì che stanno il metodo, le condizioni di applicabilità e le convenzioni della materia, e un esercizio che le contraddice è sbagliato anche se i conti tornano. Servono a impostare il problema, non a fornire la traccia.
+            - Se fra i materiali non ci sono temi d'esame, prendi la forma dagli ESEMPI SVOLTI nella teoria: la mancanza di temi non è un motivo per non generare esercizi.
 
             Ricorda le regole di formattazione: le funzioni, le espressioni e i risultati con esponenti o frazioni vanno in LaTeX tra $$ su riga propria, sia nella traccia sia nei passi sia nella risposta.
 
@@ -1186,11 +1341,37 @@ enum StudioGenerationService {
             Se il disegno che servirebbe richiede strumenti non disponibili, metti "figuraServe": false — meglio nessuna figura che una figura sbagliata.
             Includi "checkExpression" SOLO quando la risposta è un valore matematico verificabile in modo indipendente: mettici l'espressione da calcolare in sintassi Wolfram Alpha, il cui risultato deve coincidere con "answer". Omettilo per gli esercizi discorsivi.
             IMPORTANTE su checkExpression: dev'essere una FORMULA o una grandezza, non la descrizione di un compito. Wolfram accetta "integrate x^2 from 0 to 1", "eigenvalues {{2,1},{1,2}}", "roots of s^2+3s+2", "10*2000/(1000+2000)", "bode plot 1/(s+1)"; RIFIUTA fraseggi come "step response 1/(s^2+2s+1)", "voltage divider 10V 1kohm 2kohm", "beam deflection cantilever", "is G(s) stable". Se il calcolo è ingegneristico, scrivilo come espressione numerica esplicita con i valori già sostituiti.
-            Schema: {"exercises":[{"category":"theoretical|practical","difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["...","..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials","figuraServe":true,"figureTikZ":"..."}]}
+            Schema: {"exercises":[{"difficulty":"base|medio|avanzato","topic":"...","prompt":"...","steps":["...","..."],"answer":"...","source":"...","quote":"...","checkExpression":"...","origin":"invented|fromMaterials","figuraServe":true,"figureTikZ":"..."}]}
             """
         case .reviewPoints:
+            // L'argomento serve all'ANALISI: è la chiave con cui teoria e
+            // pratica finiscono nella stessa riga. Col vocabolario del
+            // Vault va copiato alla lettera, per la stessa ragione per cui
+            // lo si impone agli esercizi — una variante spezza in due le
+            // statistiche dello stesso argomento.
+            let reviewTopicRule = indexTopics.isEmpty
+                ? """
+                ARGOMENTO: ogni domanda porta il campo "topic", l'argomento in 2-4 parole (es. "dualità in PL", "analisi di sensitività"). Serve a incrociare queste domande con gli esercizi da risolvere sullo stesso argomento.
+                """
+                : """
+                ARGOMENTO: ogni domanda porta il campo "topic", COPIATO ALLA LETTERA da questo elenco, identico carattere per carattere — non riformularlo, non abbreviarlo, non cambiare maiuscole:
+                \(indexTopics.map { "- \($0)" }.joined(separator: "\n"))
+                Se una domanda non ricade in nessuno di questi argomenti, non farla.
+                """
             return common + """
-            Compito: estrai i 5-10 concetti chiave dai materiali di teoria. Per ognuno: l'enunciato del concetto (statement), una domanda di autoverifica (question) e la risposta corretta basata sui materiali (answer).
+            Compito: scrivi 5-10 ESERCIZI TEORICI sui materiali di teoria. Per ognuno: l'enunciato del concetto su cui verte (statement), la domanda (question) e la risposta corretta (answer).
+
+            COSA DEVE CHIEDERE LA DOMANDA. Non "che cos'è X" e non "definisci X": quello è richiamo a memoria, e in questo studio lo fanno le flashcard. Qui la domanda deve costringere a RAGIONARE su qualcosa che si è già letto:
+            - sotto quali ipotesi vale un risultato, e che cosa succede se cade l'ipotesi;
+            - quando un metodo si applica e quando NON si applica, e perché;
+            - la differenza fra due nozioni vicine che si confondono facilmente;
+            - perché un passaggio di una dimostrazione è necessario, o cosa andrebbe storto senza;
+            - se un'affermazione è vera o falsa, con la giustificazione.
+            Una domanda a cui si può rispondere ripetendo una frase dei materiali è una domanda sbagliata: riscrivila.
+
+            VINCOLO SULLA FONTE: la risposta deve essere sostenuta da quello che c'è scritto NEI MATERIALI, non da quello che sai tu della materia. Se per rispondere devi aggiungere un risultato che lì non c'è, cambia domanda. In "quote" va il passaggio originale che la sostiene.
+
+            \(reviewTopicRule)
             Schema: {"points":[{"statement":"...","question":"...","answer":"...","quote":"...","source":"..."}]}
             """
         case .flashcards:
@@ -1226,7 +1407,6 @@ enum StudioGenerationService {
     private struct AIExercisesDTO: Decodable, ArrayWrapped {
         static let arrayKey = "exercises"
         struct Item: Decodable {
-            var category: String?
             var difficulty: String?
             var topic: String?
             var prompt: String
@@ -1248,7 +1428,7 @@ enum StudioGenerationService {
             var figureTikZ: String?
 
             enum CodingKeys: String, CodingKey {
-                case category, difficulty, topic, prompt, answer, source, quote, checkExpression, origin, figuraServe, figureTikZ
+                case difficulty, topic, prompt, answer, source, quote, checkExpression, origin, figuraServe, figureTikZ
                 case stepList = "steps"
             }
         }
@@ -1259,7 +1439,7 @@ enum StudioGenerationService {
 
     private struct AIReviewPointsDTO: Decodable, ArrayWrapped {
         static let arrayKey = "points"
-        struct Point: Decodable { var statement: String; var question: String; var answer: String; var quote: String?; var source: String? }
+        struct Point: Decodable { var statement: String; var question: String; var answer: String; var quote: String?; var source: String?; var topic: String? }
         var pointItems: [Failable<Point>]
         var points: [Point] { pointItems.compactMap(\.value) }
         enum CodingKeys: String, CodingKey { case pointItems = "points" }
@@ -1366,9 +1546,16 @@ enum StudioGenerationService {
             let path = context.codingPath.map(\.stringValue).joined(separator: ".")
             return "Il modello ha lasciato vuoto il campo \"\(path)\"."
         case .dataCorrupted:
-            // Il caso di gran lunga più frequente: risposta interrotta
-            // prima della fine, e nemmeno un elemento completo da salvare.
-            return "La risposta del modello si è interrotta prima della fine. Riprova, oppure chiedi meno contenuti per volta."
+            // ERA "la risposta si è interrotta prima della fine", e per
+            // molto tempo era vero: una risposta tagliata da MAX_TOKENS
+            // arrivava fin qui e moriva nel decoder. Da quando il
+            // troncamento ha una strada sua (recupero degli elementi
+            // completi, e in mancanza un errore che lo dice), qui resta il
+            // JSON semplicemente NON VALIDO — su Gemini quasi impossibile
+            // con lo schema attivo, plausibile su Claude e sul modello
+            // locale, che schema non hanno. Chiamarlo ancora
+            // "interruzione" manderebbe a cercare la causa sbagliata.
+            return "Il modello ha risposto con un JSON non valido, e non c'era nessun elemento completo da salvare. Riprova, oppure chiedi meno contenuti per volta."
         @unknown default:
             return "Il modello ha restituito un JSON non conforme."
         }

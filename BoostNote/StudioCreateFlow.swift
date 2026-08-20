@@ -50,11 +50,11 @@ struct StudioCreateFlowView: View {
 
     // Opzioni per il modulo esercizi (ignorate dagli altri moduli).
     @State private var difficulty: ExerciseDifficulty? = nil
-    @State private var includeTheoretical = true
-    @State private var includePractical = true
     @State private var verifyExercises = true
-    @State private var theoreticalCount = 1
-    @State private var practicalCount = 1
+    // Un numero solo: gli esercizi sono tutti da risolvere. Erano due
+    // (teorici + pratici) e il default sommava a 2 per argomento: si
+    // parte da lì per non cambiare sotto i piedi quanto esce.
+    @State private var exerciseCount = 2
 
     // Si memorizzano gli argomenti ESCLUSI, non quelli scelti: così
     // aggiungere un documento include automaticamente i suoi argomenti,
@@ -418,8 +418,8 @@ struct StudioCreateFlowView: View {
             }
             Spacer()
 
-            // Toggle "tema d'esame": decide se il materiale alimenta gli
-            // esercizi pratici invece della teoria.
+            // Toggle "tema d'esame": decide se il materiale dà la forma
+            // agli esercizi da risolvere invece di alimentare la teoria.
             Button {
                 toggleExamPaper(source)
             } label: {
@@ -522,28 +522,42 @@ struct StudioCreateFlowView: View {
                 }
             }
 
-            // Un'unica riga per categoria: interruttore + quanti
-            // argomenti coprire. Tenerli separati costringeva a spegnere
-            // in un punto e contare in un altro.
+            // Una riga sola. Prima erano due categorie con due
+            // interruttori e due contatori, ma "teorico" e "pratico"
+            // dicevano da DOVE veniva l'esercizio, non che cosa chiedeva:
+            // l'etichetta non corrispondeva a quello che si leggeva nella
+            // traccia. Ora gli esercizi sono tutti da risolvere e la parte
+            // concettuale sta nei punti di ripasso, quindi qui si sceglie
+            // solo quanta profondità dare a ogni argomento.
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
-                categoryRow(
-                    title: "Teorici",
-                    detail: "Dagli argomenti di note e dispense",
-                    isOn: $includeTheoretical,
-                    count: $theoreticalCount
-                )
-                Divider()
-                categoryRow(
-                    title: "Pratici",
-                    detail: "Dagli argomenti dei temi d'esame",
-                    isOn: $includePractical,
-                    count: $practicalCount
-                )
+                HStack(spacing: DesignSpace.s3) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Quanti esercizi")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(DesignColor.textPrimary)
+                        Text("Tracce da risolvere, inventate sui temi d'esame")
+                            .font(.system(size: 11))
+                            .foregroundStyle(DesignColor.textTertiary)
+                    }
+                    Spacer(minLength: DesignSpace.s3)
+                    HStack(spacing: DesignSpace.s2) {
+                        Text("\(exerciseCount)")
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .foregroundStyle(DesignColor.brandPrimary)
+                            .frame(minWidth: 22)
+                        Text("per argomento")
+                            .font(.system(size: 11))
+                            .foregroundStyle(DesignColor.textTertiary)
+                        Stepper(value: $exerciseCount, in: 1...3) { EmptyView() }
+                            .labelsHidden()
+                            .fixedSize()
+                    }
+                }
                 Text("Gli **argomenti li individua l'app** leggendo i materiali, e li copre tutti. Questo numero dice quanti esercizi fare **per ciascun argomento**: alzalo per insistere di più su ogni cosa.")
                     .font(.system(size: 11))
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
-                if theoreticalCount + practicalCount > 3 {
+                if exerciseCount > 2 {
                     Label("Con molti argomenti nei materiali il totale cresce in fretta: oltre 15 esercizi la generazione riduce da sola il numero per argomento, per coprirli comunque tutti.", systemImage: "info.circle")
                         .font(.system(size: 11))
                         .foregroundStyle(DesignColor.attention)
@@ -568,39 +582,6 @@ struct StudioCreateFlowView: View {
         .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
     }
 
-    private func categoryRow(title: String, detail: String, isOn: Binding<Bool>, count: Binding<Int>) -> some View {
-        HStack(spacing: DesignSpace.s3) {
-            Toggle(isOn: isOn) { EmptyView() }
-                .labelsHidden()
-                .tint(DesignColor.brandPrimary)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isOn.wrappedValue ? DesignColor.textPrimary : DesignColor.textTertiary)
-                Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignColor.textTertiary)
-            }
-
-            Spacer(minLength: DesignSpace.s3)
-
-            HStack(spacing: DesignSpace.s2) {
-                Text("\(count.wrappedValue)")
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .foregroundStyle(isOn.wrappedValue ? DesignColor.brandPrimary : DesignColor.textTertiary)
-                    .frame(minWidth: 22)
-                Text("per argomento")
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignColor.textTertiary)
-                Stepper(value: count, in: 0...3) { EmptyView() }
-                    .labelsHidden()
-                    .fixedSize()
-            }
-            .opacity(isOn.wrappedValue ? 1 : 0.4)
-            .disabled(!isOn.wrappedValue)
-        }
-    }
 
     private func difficultyChip(_ level: ExerciseDifficulty?, label: String) -> some View {
         let isSelected = difficulty == level
@@ -771,11 +752,8 @@ struct StudioCreateFlowView: View {
 
         var options = StudyModuleOptions()
         options.difficulty = difficulty
-        options.includeTheoretical = includeTheoretical
-        options.includePractical = includePractical
         options.verifyExercises = verifyExercises
-        options.theoreticalCount = includeTheoretical ? theoreticalCount : 0
-        options.practicalCount = includePractical ? practicalCount : 0
+        options.exerciseCount = exerciseCount
         // Si registrano solo se sono un sottoinsieme vero: "tutti" resta
         // vuoto, così il significato non cambia se domani si aggiunge
         // materiale al Vault.

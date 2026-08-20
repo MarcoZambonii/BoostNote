@@ -212,8 +212,9 @@ struct StudySourceMaterial: Codable, Identifiable, Hashable {
     // Contesto extra: nome del corso WeBeep o della cartella della nota.
     var subtitle: String?
     var noteID: UUID?
-    // Un tema d'esame alimenta gli esercizi PRATICI (composizione di
-    // esercizi esistenti); tutto il resto alimenta quelli teorici.
+    // Un tema d'esame dà la FORMA agli esercizi da risolvere (tipologia e
+    // struttura delle richieste, da cui inventarne di nuovi); tutto il
+    // resto alimenta la teoria — riassunti ed esercizi teorici.
     var isExamPaper: Bool = false
     // Riferimento al file WeBeep, tenuto da parte per poterlo scaricare
     // al momento della generazione invece che alla selezione.
@@ -256,7 +257,11 @@ enum StudyModuleKind: String, CaseIterable, Codable {
         switch self {
         case .summary: "Riassunto"
         case .exercises: "Esercizi"
-        case .reviewPoints: "Punti di ripasso"
+        // Il valore salvato resta `reviewPoints`: cambiarlo renderebbe
+        // illeggibili gli studi già creati. Cambia solo il nome mostrato,
+        // che ora dice cosa sono diventati — la metà concettuale che gli
+        // esercizi non fanno più.
+        case .reviewPoints: "Esercizi teorici"
         case .flashcards: "Flashcard"
         }
     }
@@ -265,8 +270,8 @@ enum StudyModuleKind: String, CaseIterable, Codable {
     var subtitle: String {
         switch self {
         case .summary: "Sintesi dei materiali, sezione per sezione"
-        case .exercises: "Teorici dalle note, pratici dai temi d'esame"
-        case .reviewPoints: "Concetti chiave con domanda di verifica"
+        case .exercises: "Tracce da risolvere, sui temi d'esame"
+        case .reviewPoints: "Domande di ragionamento sulla teoria"
         case .flashcards: "Carte domanda/risposta da ripassare"
         }
     }
@@ -275,7 +280,7 @@ enum StudyModuleKind: String, CaseIterable, Codable {
         switch self {
         case .summary: "text.alignleft"
         case .exercises: "pencil.and.list.clipboard"
-        case .reviewPoints: "checklist"
+        case .reviewPoints: "brain.head.profile"
         case .flashcards: "rectangle.on.rectangle"
         }
     }
@@ -412,6 +417,13 @@ final class StudyModule {
 struct StudyModuleOptions: Codable {
     // nil = difficoltà mista (un po' di tutto).
     var difficultyRaw: String?
+    // Non più usati: gli esercizi sono tutti da risolvere e la parte
+    // concettuale è passata al modulo "Esercizi teorici". Restano perché
+    // le opzioni GIÀ SALVATE contengono queste chiavi, e la sintesi di
+    // Codable non perdona un campo che sparisce dal tipo ma resta nel
+    // JSON... nel verso opposto: toglierli è sicuro in lettura, ma li
+    // legge ancora `exerciseCount` per capire quanti esercizi voleva chi
+    // ha salvato le opzioni prima del cambio.
     var includeTheoretical: Bool = true
     var includePractical: Bool = true
     // Doppio passaggio: una seconda chiamata rifà gli esercizi da zero e
@@ -454,6 +466,19 @@ struct StudyModuleOptions: Codable {
         set { practicalCountValue = newValue }
     }
 
+    // Quanti esercizi per argomento, ORA CHE SONO TUTTI PRATICI. Erano
+    // due numeri perché il modulo mescolava le due nature; la parte
+    // concettuale è passata ai punti di ripasso e il numero è tornato
+    // uno. I due vecchi campi restano solo per le opzioni GIÀ SALVATE:
+    // se il nuovo manca, il totale che l'utente aveva chiesto allora
+    // resta quello giusto adesso.
+    var exerciseCountValue: Int?
+
+    var exerciseCount: Int {
+        get { exerciseCountValue ?? max(1, theoreticalCount + practicalCount) }
+        set { exerciseCountValue = newValue }
+    }
+
     var difficulty: ExerciseDifficulty? {
         get { difficultyRaw.flatMap(ExerciseDifficulty.init(rawValue:)) }
         set { difficultyRaw = newValue?.rawValue }
@@ -479,17 +504,20 @@ enum ExerciseDifficulty: String, Codable, CaseIterable {
 enum ExerciseCategory: String, Codable, CaseIterable {
     case theoretical, practical
 
+    // Gli stessi nomi dei due moduli (vedi StudyModuleKind.label): il
+    // tentativo registrato nell'analisi deve chiamarsi come la scheda da
+    // cui arriva, o l'utente deve indovinare la corrispondenza.
     var label: String {
         switch self {
-        case .theoretical: "Teorico"
-        case .practical: "Pratico"
+        case .theoretical: "Esercizi teorici"
+        case .practical: "Esercizi"
         }
     }
 
     var explanation: String {
         switch self {
-        case .theoretical: "Domande generate dalle tue note e dispense"
-        case .practical: "Composti da esercizi di veri temi d'esame"
+        case .theoretical: "Domande di ragionamento su note e dispense"
+        case .practical: "Tracce da risolvere, sui temi d'esame"
         }
     }
 
@@ -636,6 +664,12 @@ struct ReviewPoint: Codable, Identifiable {
     var question: String
     var answer: String
     var quote: SourceCitation?
+    // Argomento, stessa stringa canonica degli esercizi da risolvere: è
+    // quella che fa incontrare teoria e pratica nella stessa riga
+    // dell'analisi invece di tenerle in due mondi separati. OPZIONALE per
+    // la trappola Codable descritta su StudyExercise: i payload già
+    // generati non hanno questa chiave.
+    var topic: String?
 }
 
 struct FlashcardsContent: Codable {
@@ -664,15 +698,21 @@ final class ExerciseAttempt {
     var categoryRaw: String = ExerciseCategory.theoretical.rawValue
     var study: Study?
 
-    var difficulty: ExerciseDifficulty { ExerciseDifficulty(rawValue: difficultyRaw) ?? .base }
+    // nil = tentativo su un esercizio teorico, che una difficoltà non ce
+    // l'ha. Diverso da "base": non è facile, è un'altra cosa.
+    var difficulty: ExerciseDifficulty? { ExerciseDifficulty(rawValue: difficultyRaw) }
     var category: ExerciseCategory { ExerciseCategory(rawValue: categoryRaw) ?? .theoretical }
 
-    init(date: Date = .now, isCorrect: Bool, durationSeconds: Double, topic: String, difficulty: ExerciseDifficulty, category: ExerciseCategory, study: Study? = nil) {
+    // `difficulty` è OPZIONALE perché gli esercizi teorici non ne hanno
+    // una: inventarne una per farceli stare significherebbe sporcare
+    // l'accuratezza per difficoltà con dati finti. Chi non ce l'ha salva
+    // stringa vuota, e i grafici per difficoltà lo escludono.
+    init(date: Date = .now, isCorrect: Bool, durationSeconds: Double, topic: String, difficulty: ExerciseDifficulty?, category: ExerciseCategory, study: Study? = nil) {
         self.date = date
         self.isCorrect = isCorrect
         self.durationSeconds = durationSeconds
         self.topic = topic
-        self.difficultyRaw = difficulty.rawValue
+        self.difficultyRaw = difficulty?.rawValue ?? ""
         self.categoryRaw = category.rawValue
         self.study = study
     }

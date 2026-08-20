@@ -65,8 +65,9 @@ struct StudioProgressView: View {
                         dailyChart
                         AdaptiveHVStack {
                             accuracyByDifficulty
-                            topicCoverage
+                            accuracyByCategory
                         }
+                        topicCoverage
                     }
                     .padding(DesignSpace.s6)
                     .frame(maxWidth: 860, alignment: .leading)
@@ -213,6 +214,15 @@ struct StudioProgressView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
+            // I teorici non compaiono qui, e non per una svista: una
+            // difficoltà non ce l'hanno (`difficulty` è nil e il filtro
+            // qui sotto non li prende). Dirlo evita che la somma di questo
+            // riquadro sembri sbagliata rispetto ai totali in alto.
+            if attempts.contains(where: { $0.difficulty == nil }) {
+                Text("Solo esercizi da risolvere: i teorici non hanno un livello.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignColor.textTertiary)
+            }
 
             Chart(difficultyStats) { stat in
                 BarMark(
@@ -229,6 +239,63 @@ struct StudioProgressView: View {
             .chartXScale(domain: 0...110)
             .chartXAxis(.hidden)
             .frame(height: CGFloat(max(difficultyStats.count, 1)) * 44)
+        }
+        .padding(DesignSpace.s5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+    }
+
+    // MARK: - Teoria e pratica
+
+    private struct CategoryStat: Identifiable {
+        var id: String { category.rawValue }
+        var category: ExerciseCategory
+        var accuracy: Double
+        var count: Int
+    }
+
+    // Le due metà dello studio, con i nomi dei moduli da cui arrivano
+    // (ExerciseCategory.label): saper risolvere e saper spiegare sono
+    // bravure diverse, e questa è la riga che dice se ne stai allenando
+    // una sola.
+    private var categoryStats: [CategoryStat] {
+        ExerciseCategory.allCases.compactMap { category in
+            let subset = attempts.filter { $0.category == category }
+            guard !subset.isEmpty else { return nil }
+            let correct = subset.filter(\.isCorrect).count
+            return CategoryStat(category: category, accuracy: Double(correct) / Double(subset.count), count: subset.count)
+        }
+    }
+
+    private var accuracyByCategory: some View {
+        VStack(alignment: .leading, spacing: DesignSpace.s3) {
+            Text("TEORIA E PRATICA")
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(DesignColor.textTertiary)
+
+            if categoryStats.count < 2 {
+                Text("Qui il confronto compare quando hai svolto sia esercizi da risolvere sia esercizi teorici: sapere risolvere e sapere spiegare sono due bravure diverse, e vale la pena vederle affiancate.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesignColor.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Chart(categoryStats) { stat in
+                BarMark(
+                    x: .value("Accuratezza", stat.accuracy * 100),
+                    y: .value("Tipo", stat.category.label)
+                )
+                .foregroundStyle(stat.category == .practical ? DesignColor.toolWolfram : DesignColor.toolExplain)
+                .annotation(position: .trailing) {
+                    Text("\(Int(stat.accuracy * 100))% · \(stat.count)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+            }
+            .chartXScale(domain: 0...110)
+            .chartXAxis(.hidden)
+            .frame(height: CGFloat(max(categoryStats.count, 1)) * 44)
         }
         .padding(DesignSpace.s5)
         .frame(maxWidth: .infinity, alignment: .leading)

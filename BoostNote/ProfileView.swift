@@ -384,7 +384,7 @@ struct ProfileView: View {
     private var aiSection: some View {
         sectionCard(title: "AI per lo Studio") {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
-                Text("Genera riassunti, esercizi, punti di ripasso e flashcard nell'ambiente Studio. Senza provider configurato vengono mostrati contenuti d'esempio.")
+                Text("Genera riassunti, esercizi, esercizi teorici e flashcard nell'ambiente Studio. Senza provider configurato vengono mostrati contenuti d'esempio.")
                     .font(.system(size: 13))
                     .foregroundStyle(DesignColor.textTertiary)
 
