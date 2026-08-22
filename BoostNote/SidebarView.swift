@@ -111,7 +111,7 @@ struct SidebarView: View {
                         sidebarNode(item)
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, DesignSpace.s4)
                 .padding(.bottom, DesignSpace.s3)
             }
             .id(outlineResetID)
@@ -189,9 +189,9 @@ struct SidebarView: View {
         }
         .foregroundStyle(DesignColor.textPrimary)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 24)
-        .padding(.top, 30)
-        .padding(.bottom, 24)
+        .padding(.horizontal, DesignSpace.s6)
+        .padding(.top, DesignSpace.s8)
+        .padding(.bottom, DesignSpace.s6)
     }
 
     // Riga fissa sopra all'elenco delle cartelle: etichetta "Cartelle" e,
@@ -245,11 +245,12 @@ struct SidebarView: View {
                     .overlay {
                         Circle().strokeBorder(DesignColor.borderDefault, lineWidth: 1)
                     }
+                    .contentShape(Rectangle().inset(by: -11))
             }
             .accessibilityLabel("Nuovo documento")
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 12)
+        .padding(.horizontal, DesignSpace.s6)
+        .padding(.bottom, DesignSpace.s3)
         .background(
             dropTargetingRoot ? DesignColor.brandPrimarySubtle : Color.clear,
             in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
@@ -292,7 +293,7 @@ struct SidebarView: View {
                 selectedFolder = nil
             }
         }
-        .padding(.bottom, 22)
+        .padding(.bottom, DesignSpace.s6)
     }
 
     private func navRow(icon: String, label: String, isActive: Bool, dot: Color? = nil, action: @escaping () -> Void) -> some View {
@@ -310,15 +311,15 @@ struct SidebarView: View {
                     Circle().fill(dot).frame(width: 6, height: 6)
                 }
             }
-            .padding(.vertical, 9)
-            .padding(.horizontal, 24)
+            .padding(.vertical, DesignSpace.s2)
+            .padding(.horizontal, DesignSpace.s6)
             .contentShape(Rectangle())
             .overlay(alignment: .leading) {
                 if isActive {
                     UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0, bottomTrailingRadius: 3, topTrailingRadius: 3, style: .continuous)
                         .fill(DesignColor.brandPrimary)
                         .frame(width: 3)
-                        .padding(.vertical, 7)
+                        .padding(.vertical, DesignSpace.s2)
                 }
             }
         }
@@ -405,8 +406,8 @@ struct SidebarView: View {
                     .font(.system(size: DesignIcon.sm))
                     .foregroundStyle(DesignColor.textTertiary)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, DesignSpace.s5)
+            .padding(.vertical, DesignSpace.s4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -444,14 +445,14 @@ struct SidebarView: View {
                         AnyView(sidebarNode(child))
                     }
                 }
-                .padding(.leading, 4)
+                .padding(.leading, DesignSpace.s1)
                 .overlay(alignment: .leading) {
                     Rectangle()
                         .fill(DesignColor.borderDefault)
                         .frame(width: 1.5)
                 }
-                .padding(.leading, 17)
-                .padding(.bottom, 4)
+                .padding(.leading, DesignSpace.s4)
+                .padding(.bottom, DesignSpace.s1)
             }
         }
     }
@@ -491,7 +492,7 @@ struct SidebarView: View {
                 RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     .fill(folder.folderColor.color)
                     .frame(width: 9, height: 9)
-                    .padding(.horizontal, 3)
+                    .padding(.horizontal, DesignSpace.s1)
 
                 Text(folder.name)
                     .font(DesignFont.body)
@@ -505,8 +506,8 @@ struct SidebarView: View {
                     .font(DesignFont.caption.monospacedDigit())
                     .foregroundStyle(DesignColor.textTertiary)
             }
-            .padding(.vertical, 9)
-            .padding(.horizontal, 10)
+            .padding(.vertical, DesignSpace.s2)
+            .padding(.horizontal, DesignSpace.s3)
             .background(
                 RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     .fill(isTarget ? DesignColor.brandPrimarySubtle
@@ -568,8 +569,8 @@ struct SidebarView: View {
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 10)
+            .padding(.vertical, DesignSpace.s2)
+            .padding(.horizontal, DesignSpace.s3)
             .background(
                 RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     .fill(isSelected ? DesignColor.brandPrimarySubtle : Color.clear)
@@ -728,6 +729,7 @@ struct FolderEditSheet: View {
                                     .overlay(
                                         Circle().stroke(option.color, lineWidth: color == option ? 2 : 0)
                                     )
+                                    .contentShape(Rectangle().inset(by: -3))
                             }
                         }
                     }

@@ -111,7 +111,7 @@ struct TodoPanelContent: View {
                 }
                 .disabled(newText.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .padding(8)
+            .padding(DesignSpace.s2)
             .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm))
         }
         .padding(DesignSpace.s4)
@@ -452,9 +452,9 @@ struct WolframPanelContent: View {
                     .disabled(expression.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-            .padding(.leading, 10)
-            .padding(.trailing, 8)
-            .padding(.vertical, 7)
+            .padding(.leading, DesignSpace.s3)
+            .padding(.trailing, DesignSpace.s2)
+            .padding(.vertical, DesignSpace.s2)
             .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
@@ -495,8 +495,8 @@ struct WolframPanelContent: View {
             Text(label.replacingOccurrences(of: "(", with: ""))
                 .font(monospaced ? DesignFont.mono : DesignFont.action)
                 .foregroundStyle(DesignColor.textPrimary)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
+                .padding(.horizontal, DesignSpace.s2)
+                .padding(.vertical, DesignSpace.s1)
                 .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
@@ -569,7 +569,7 @@ struct WolframPanelContent: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.85)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 5)
+                            .padding(.vertical, DesignSpace.s1)
                             .background(
                                 isOpen ? DesignColor.attentionBg : DesignColor.surfaceSunken,
                                 in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
@@ -586,7 +586,7 @@ struct WolframPanelContent: View {
                             .font(DesignFont.action)
                             .foregroundStyle(DesignColor.toolWolfram)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 5)
+                            .padding(.vertical, DesignSpace.s1)
                             .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                     .buttonStyle(.plain)
@@ -616,7 +616,7 @@ struct WolframPanelContent: View {
                                     .font(.system(size: DesignIcon.sm))
                                     .foregroundStyle(DesignColor.toolWolfram)
                             }
-                            .padding(.vertical, 7)
+                            .padding(.vertical, DesignSpace.s2)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)

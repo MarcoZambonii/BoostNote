@@ -153,8 +153,8 @@ struct NoteSearchSheet: View {
                 Text("\(results.count)")
                     .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.textTertiary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
+                    .padding(.horizontal, DesignSpace.s1)
+                    .padding(.vertical, DesignSpace.s1)
                     .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
             .foregroundStyle(DesignColor.textSecondary)
@@ -175,7 +175,7 @@ struct NoteSearchSheet: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, DesignSpace.s3)
-                    .padding(.vertical, DesignSpace.s2 + 2)
+                    .padding(.vertical, DesignSpace.s3)
                     .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
                     .contentShape(Rectangle())
                 }

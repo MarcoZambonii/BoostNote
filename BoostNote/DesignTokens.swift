@@ -15,6 +15,16 @@ enum DeviceLayout {
 // I colori erano definiti in OKLCH: qui sono approssimati in sRGB, dato
 // che SwiftUI non offre un init OKLCH diretto su tutte le versioni iOS.
 enum DesignColor {
+    // Palette delle cartelle (la scelta dell'utente sta nel modello,
+    // il valore cromatico sta qui con gli altri).
+    static let folderGray = Color(hex: 0x8A857F)
+    static let folderBlue = Color(hex: 0x6E87D8)
+    static let folderRed = Color(hex: 0xC96A5E)
+    static let folderGreen = Color(hex: 0x5E9678)
+    static let folderOrange = Color(hex: 0xC08552)
+    static let folderPurple = Color(hex: 0x8B7FD0)
+    static let folderTeal = Color(hex: 0x5F9EA0)
+
     // Neutrali (grigio caldo)
     static let gray900 = Color(hex: 0x1C1B1A)
     static let gray800 = Color(hex: 0x302E2C)
@@ -129,7 +139,7 @@ enum DesignFont {
     static let monoLineSpacing: CGFloat = 2
 }
 
-// `.font(.system(size:))` su un'Image NON è tipografia: è dimensione
+// `.system(size:)` su un'Image NON è tipografia: è dimensione
 // icona, e i passi sono quattro — nessun altro.
 enum DesignIcon {
     static let sm: CGFloat = 14

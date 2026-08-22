@@ -45,7 +45,7 @@ struct StudioProgressView: View {
                 .pickerStyle(.menu)
                 .tint(DesignColor.brandPrimary)
             }
-            .padding(.horizontal, DesignSpace.s6 + 4)
+            .padding(.horizontal, DesignSpace.s6)
             .frame(height: 56)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(DesignColor.borderDefault).frame(height: 1)

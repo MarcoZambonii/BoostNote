@@ -243,7 +243,7 @@ struct StudioCreateFlowView: View {
             }
             .foregroundStyle(DesignColor.textSecondary)
             .padding(.horizontal, DesignSpace.s4)
-            .padding(.vertical, DesignSpace.s2 + 2)
+            .padding(.vertical, DesignSpace.s3)
             .background(
                 RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1)
             )
@@ -427,8 +427,8 @@ struct StudioCreateFlowView: View {
                     .fixedSize()
                     .font(DesignFont.caption)
                     .foregroundStyle(source.isExamPaper ? DesignColor.attention : DesignColor.textTertiary)
-                    .padding(.horizontal, DesignSpace.s2 + 2)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, DesignSpace.s3)
+                    .padding(.vertical, DesignSpace.s1)
                     .background(
                         source.isExamPaper ? DesignColor.attentionBg : DesignColor.surfacePage,
                         in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
@@ -449,7 +449,7 @@ struct StudioCreateFlowView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Togli \(source.title)")
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
     }
 
@@ -591,8 +591,8 @@ struct StudioCreateFlowView: View {
             Text(label)
                 .font(DesignFont.action)
                 .foregroundStyle(isSelected ? DesignColor.textOnBrand : DesignColor.textSecondary)
-                .padding(.horizontal, DesignSpace.s3 + 2)
-                .padding(.vertical, 7)
+                .padding(.horizontal, DesignSpace.s4)
+                .padding(.vertical, DesignSpace.s2)
                 .background(
                     isSelected ? DesignColor.brandPrimary : DesignColor.surfacePage,
                     in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
@@ -653,6 +653,7 @@ struct StudioCreateFlowView: View {
                             .font(.system(size: DesignIcon.md))
                             .foregroundStyle(DesignColor.textSecondary)
                             .frame(width: 32, height: 32)
+                            .contentShape(Rectangle().inset(by: -6))
                     }
                     .buttonStyle(.plain)
                     .popover(isPresented: $showingQuotaInfo, arrowEdge: .bottom) {
@@ -819,7 +820,7 @@ struct StudioCreateFlowView: View {
             }
             .foregroundStyle(DesignColor.brandPrimary)
             .padding(.horizontal, DesignSpace.s4)
-            .padding(.vertical, DesignSpace.s2 + 2)
+            .padding(.vertical, DesignSpace.s3)
             .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -1074,8 +1075,8 @@ private struct StudioWebeepPickerSheet: View {
                     Text("Tema d'esame")
                         .font(DesignFont.micro)
                         .foregroundStyle(DesignColor.attention)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, DesignSpace.s2)
+                        .padding(.vertical, DesignSpace.s1)
                         .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
             }

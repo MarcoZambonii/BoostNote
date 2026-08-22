@@ -62,6 +62,7 @@ struct NoteCreateSheet: View {
                                         .overlay(
                                             Circle().stroke(option.color, lineWidth: newFolderColor == option ? 2 : 0)
                                         )
+                                        .contentShape(Rectangle().inset(by: -8))
                                 }
                             }
                         }

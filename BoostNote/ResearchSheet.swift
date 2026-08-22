@@ -612,8 +612,8 @@ private struct PaperRow: View {
                             .font(DesignFont.micro)
                             .tracking(0.4)
                             .foregroundStyle(origin.tint)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, DesignSpace.s2)
+                            .padding(.vertical, DesignSpace.s1)
                             .background(origin.tintBackground, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                     if !subtitle.isEmpty {
@@ -651,11 +651,12 @@ private struct PaperRow: View {
                         isPinned ? DesignColor.brandPrimarySubtle : .clear,
                         in: Circle()
                     )
+                    .contentShape(Rectangle().inset(by: -8))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isPinned ? "Togli dai fissati" : "Fissa il paper")
         }
-        .padding(.vertical, DesignSpace.s3 + 2)
+        .padding(.vertical, DesignSpace.s4)
         .padding(.horizontal, DesignSpace.s1)
     }
 }
@@ -669,7 +670,7 @@ private struct PaperActionStyle: ButtonStyle {
             .font(DesignFont.action)
             .foregroundStyle(isEnabled ? DesignColor.brandPrimary : DesignColor.textTertiary)
             .padding(.horizontal, DesignSpace.s3)
-            .padding(.vertical, 6)
+            .padding(.vertical, DesignSpace.s2)
             .background(
                 isEnabled ? DesignColor.brandPrimarySubtle : DesignColor.surfaceSunken,
                 in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)

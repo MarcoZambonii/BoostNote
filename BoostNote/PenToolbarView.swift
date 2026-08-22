@@ -373,7 +373,7 @@ struct PenToolbarView: View {
                                 .fill(inkColors[tool] ?? tool.defaultColor)
                                 .frame(width: 14, height: 14)
                         }
-                        .padding(.vertical, 5)
+                        .padding(.vertical, DesignSpace.s1)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -644,7 +644,7 @@ private struct MagicActionPickerView: View {
                                 Spacer()
                             }
                             .padding(.horizontal, DesignSpace.s3)
-                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .padding(.vertical, DesignSpace.s3)
                             .background(
                                 current == action ? action.backgroundColor : Color.clear,
                                 in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
@@ -669,7 +669,7 @@ private struct MagicActionPickerView: View {
                                 Spacer()
                             }
                             .padding(.horizontal, DesignSpace.s3)
-                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .padding(.vertical, DesignSpace.s3)
                         }
                         .buttonStyle(.plain)
                     }

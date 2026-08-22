@@ -489,8 +489,8 @@ struct NoteEditorView: View {
                     Text("Aggiungi")
                         .font(DesignFont.action)
                         .foregroundStyle(DesignColor.textPrimary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
+                        .padding(.horizontal, DesignSpace.s3)
+                        .padding(.vertical, DesignSpace.s1)
                         .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
@@ -514,7 +514,7 @@ struct NoteEditorView: View {
                         .foregroundStyle(DesignColor.textSecondary)
                         .frame(width: 28, height: 28)
                         .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
-                        .contentShape(Rectangle().inset(by: -6))
+                        .contentShape(Rectangle().inset(by: -8))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Sposta il pannello a \(panelSide.opposite.label)")
@@ -575,8 +575,8 @@ struct NoteEditorView: View {
                 }
             }
             .padding(.leading, DesignSpace.s3)
-            .padding(.trailing, DesignSpace.s2 + 2)
-            .padding(.vertical, DesignSpace.s2 + 2)
+            .padding(.trailing, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s3)
 
             if !isCollapsed {
                 Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
@@ -606,7 +606,7 @@ struct NoteEditorView: View {
                 .stroke(DesignColor.borderSubtle, lineWidth: 1)
         )
         .padding(.horizontal, DesignSpace.s3)
-        .padding(.vertical, DesignSpace.s2 - 2)
+        .padding(.vertical, DesignSpace.s2)
     }
 
     private func cardButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
@@ -618,7 +618,7 @@ struct NoteEditorView: View {
                 .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 // Area sensibile più larga del disegno: 26pt di grafica
                 // sono belli ma sotto il minimo comodo per il dito.
-                .contentShape(Rectangle().inset(by: -7))
+                .contentShape(Rectangle().inset(by: -9))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -839,7 +839,7 @@ struct NoteEditorView: View {
                 HStack(spacing: 8) {
                     backButton
                 }
-                .padding(8)
+                .padding(DesignSpace.s2)
                 .padding(.top, phoneTopInset)
                 .safeAreaPadding(.top)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -847,7 +847,7 @@ struct NoteEditorView: View {
                 // Fissa in alto a destra indipendentemente da dove è
                 // agganciata la barra della penna (che invece si sposta).
                 topRightToolbar
-                    .padding(8)
+                    .padding(DesignSpace.s2)
                     .padding(.top, phoneTopInset)
                     .safeAreaPadding(.top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -877,7 +877,7 @@ struct NoteEditorView: View {
             onInsertPDFFromWebeep: { webeepPickerTarget = .notePages; showingWebeepDocPicker = true },
 
         )
-        .padding(.bottom, 8)
+        .padding(.bottom, DesignSpace.s2)
         // In alto la barra condivide la riga con i controlli agli angoli:
         // si centra nello spazio LIBERO tra il pulsante indietro e la
         // barra a destra, invece che sull'intera larghezza. Centrandola
@@ -903,9 +903,9 @@ struct NoteEditorView: View {
             ForEach(ToolbarDock.allCases, id: \.self) { candidate in
                 dockPlaceholder(candidate)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: candidate.alignment)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
-                    .padding(.top, candidate == .top ? headerRowHeight + 12 : 8)
+                    .padding(.horizontal, DesignSpace.s2)
+                    .padding(.bottom, DesignSpace.s2)
+                    .padding(.top, candidate == .top ? headerRowHeight + DesignSpace.s3 : DesignSpace.s2)
             }
         }
         .opacity(dragPreviewDock != nil ? 1 : 0)
@@ -959,7 +959,7 @@ struct NoteEditorView: View {
             Button(action: drawingController.undo) {
                 Image(systemName: "arrow.uturn.backward")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .disabled(drawingController.pagedContainer != nil && !drawingController.canUndo)
             .opacity(drawingController.pagedContainer != nil && !drawingController.canUndo ? 0.35 : 1)
@@ -968,7 +968,7 @@ struct NoteEditorView: View {
             Button(action: drawingController.redo) {
                 Image(systemName: "arrow.uturn.forward")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .disabled(drawingController.pagedContainer != nil && !drawingController.canRedo)
             .opacity(drawingController.pagedContainer != nil && !drawingController.canRedo ? 0.35 : 1)
@@ -981,7 +981,7 @@ struct NoteEditorView: View {
             } label: {
                 Image(systemName: "square.grid.2x2.fill")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .accessibilityLabel("Strumenti")
             .popover(isPresented: $showingToolsPicker) {
@@ -1002,7 +1002,7 @@ struct NoteEditorView: View {
             } label: {
                 Image(systemName: "magnifyingglass")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .accessibilityLabel("Cerca nella nota")
             .popover(isPresented: $showingSearch) {
@@ -1033,7 +1033,7 @@ struct NoteEditorView: View {
             } label: {
                 Image(systemName: "gearshape")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .accessibilityLabel("Impostazioni e rinomina")
         }

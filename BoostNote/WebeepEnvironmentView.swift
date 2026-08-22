@@ -126,14 +126,14 @@ struct WebeepEnvironmentView: View {
                                 .font(DesignFont.cardTitle)
                         }
                         .foregroundStyle(DesignColor.textPrimary)
-                        .padding(.horizontal, DesignSpace.s3 + 2)
+                        .padding(.horizontal, DesignSpace.s4)
                         .frame(height: 36)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).stroke(DesignColor.borderDefault, lineWidth: 1))
                         .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
                     }
-                    .padding(.top, 16)
-                    .padding(.leading, 16)
+                    .padding(.top, DesignSpace.s4)
+                    .padding(.leading, DesignSpace.s4)
                 }
             }
         }
@@ -188,7 +188,7 @@ struct WebeepEnvironmentView: View {
                 }
             }
         }
-        .padding(.horizontal, DesignSpace.s6 + 4)
+        .padding(.horizontal, DesignSpace.s6)
         .frame(height: 56)
         .background(DesignColor.surfacePage)
         .overlay(alignment: .bottom) {
@@ -323,7 +323,7 @@ struct WebeepEnvironmentView: View {
                     Label(WebeepService.stripMultilang(name), systemImage: "folder")
                         .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
-                        .padding(.horizontal, DesignSpace.s2 + 6)
+                        .padding(.horizontal, DesignSpace.s4)
                     fileGroupCard(subfolders[name] ?? [])
                         .padding(.leading, DesignSpace.s4)
                 }
@@ -392,7 +392,7 @@ struct WebeepEnvironmentView: View {
             .disabled(isImporting)
             .accessibilityLabel("Aggiungi a una nota")
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
     }
 

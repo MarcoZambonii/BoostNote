@@ -69,9 +69,9 @@ struct ProfileView: View {
                     developmentSection
                     aboutSection
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 20)
+                .padding(.horizontal, DesignSpace.s5)
+                .padding(.top, DesignSpace.s4)
+                .padding(.bottom, DesignSpace.s5)
                 .frame(maxWidth: 560, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
@@ -171,8 +171,8 @@ struct ProfileView: View {
         TextField(placeholder, text: text)
             .textFieldStyle(.plain)
             .font(DesignFont.label)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s2)
             .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
     }
 
@@ -412,7 +412,7 @@ struct ProfileView: View {
                                 .font(isOn ? DesignFont.action : DesignFont.label)
                                 .foregroundStyle(isOn ? DesignColor.brandPrimary : DesignColor.textSecondary)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 6)
+                                .padding(.vertical, DesignSpace.s2)
                                 .background(
                                     isOn ? DesignColor.brandPrimarySubtle : .clear,
                                     in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
@@ -421,7 +421,7 @@ struct ProfileView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(3)
+                .padding(DesignSpace.s1)
                 .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
 
                 if let kind = AIProviderKind(rawValue: aiProviderRaw) {
@@ -580,10 +580,10 @@ struct ProfileView: View {
                 .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
-                .padding(.leading, 2)
+                .padding(.leading, DesignSpace.s1)
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
+                .padding(DesignSpace.s4)
                 .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
         }
     }

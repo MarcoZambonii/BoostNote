@@ -65,13 +65,13 @@ enum FolderColor: String, CaseIterable, Codable {
     // glifo su fondo chiaro. Solo qui: gli strumenti restano accesi.
     var color: Color {
         switch self {
-        case .gray: Color(hex: 0x8A857F)
-        case .blue: Color(hex: 0x6E87D8)
-        case .red: Color(hex: 0xC96A5E)
-        case .green: Color(hex: 0x5E9678)
-        case .orange: Color(hex: 0xC08552)
-        case .purple: Color(hex: 0x8B7FD0)
-        case .teal: Color(hex: 0x5F9EA0)
+        case .gray: DesignColor.folderGray
+        case .blue: DesignColor.folderBlue
+        case .red: DesignColor.folderRed
+        case .green: DesignColor.folderGreen
+        case .orange: DesignColor.folderOrange
+        case .purple: DesignColor.folderPurple
+        case .teal: DesignColor.folderTeal
         }
     }
 }

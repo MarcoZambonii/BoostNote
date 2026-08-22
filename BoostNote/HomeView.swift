@@ -280,8 +280,8 @@ struct HomeView: View {
                 .font(DesignFont.caption)
                 .foregroundStyle(folder.folderColor.color)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, DesignSpace.s2)
+        .padding(.vertical, DesignSpace.s1)
         .background(folder.folderColor.color.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
     }
 
@@ -380,7 +380,7 @@ struct HomeView: View {
                 }
                 .foregroundStyle(tint)
                 .padding(.horizontal, DesignSpace.s4)
-                .padding(.vertical, DesignSpace.s2 + 2)
+                .padding(.vertical, DesignSpace.s3)
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
             .buttonStyle(.plain)
@@ -431,7 +431,7 @@ private struct NoteThumbnail: View {
                         Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
                     }
                 }
-                .padding(9)
+                .padding(DesignSpace.s2)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))

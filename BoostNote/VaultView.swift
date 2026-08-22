@@ -54,7 +54,7 @@ struct VaultView: View {
                         }
                     }
                 }
-                .padding(24)
+                .padding(DesignSpace.s6)
                 .frame(maxWidth: 640, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
@@ -115,8 +115,8 @@ struct VaultView: View {
                         Label("Aggiorna", systemImage: "arrow.clockwise")
                             .font(DesignFont.action)
                             .foregroundStyle(DesignColor.textPrimary)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 7)
+                            .padding(.horizontal, DesignSpace.s3)
+                            .padding(.vertical, DesignSpace.s2)
                             .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
                             .overlay {
                                 RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
@@ -152,16 +152,16 @@ struct VaultView: View {
                         Text("Nota collegata")
                             .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.insight)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, DesignSpace.s2)
+                            .padding(.vertical, DesignSpace.s1)
                             .background(DesignColor.insightBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                     if document.isExamPaper {
                         Text("Tema d'esame")
                             .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.attention)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, DesignSpace.s2)
+                            .padding(.vertical, DesignSpace.s1)
                             .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                 }

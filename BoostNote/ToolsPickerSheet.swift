@@ -76,7 +76,7 @@ struct ToolsPickerSheet: View {
                                     .foregroundStyle(DesignColor.textTertiary)
                             }
                             .padding(.horizontal, DesignSpace.s3)
-                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .padding(.vertical, DesignSpace.s3)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -119,7 +119,7 @@ struct ToolsPickerSheet: View {
                                 Spacer()
                             }
                             .padding(.horizontal, DesignSpace.s3)
-                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .padding(.vertical, DesignSpace.s3)
                             .background(
                                 selectedTool == tool ? DesignColor.brandPrimarySubtle : Color.clear,
                                 in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
@@ -193,7 +193,7 @@ struct ToolsPickerSheet: View {
                 }
                 .frame(width: 64, height: 64)
                 Text("Avvia").font(DesignFont.caption).foregroundStyle(.white)
-                    .padding(.horizontal, DesignSpace.s3).padding(.vertical, 4)
+                    .padding(.horizontal, DesignSpace.s3).padding(.vertical, DesignSpace.s1)
                     .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
 
@@ -266,7 +266,7 @@ struct ToolsPickerSheet: View {
                         Rectangle().fill(DesignColor.borderSubtle).frame(height: 3).frame(width: CGFloat(50 - i * 4))
                     }
                 }
-                .padding(8)
+                .padding(DesignSpace.s2)
                 .frame(width: 60, height: 76)
                 .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm))
                 .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm).stroke(DesignColor.borderDefault))

@@ -232,8 +232,8 @@ struct StudioHomeView: View {
                 Text("\(studies.count)")
                     .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
+                    .padding(.horizontal, DesignSpace.s2)
+                    .padding(.vertical, DesignSpace.s1)
                     .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 Spacer()
                 if let folder {
@@ -246,8 +246,8 @@ struct StudioHomeView: View {
                             Label("\(folder.vaultDocuments.count) nel Vault", systemImage: "archivebox")
                                 .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.brandPrimary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
+                                .padding(.horizontal, DesignSpace.s2)
+                                .padding(.vertical, DesignSpace.s1)
                                 .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                         }
                         .buttonStyle(.plain)
@@ -546,8 +546,8 @@ struct StudioHomeView: View {
                                     }
                                 }
                                 .foregroundStyle(module.status == .failed ? DesignColor.danger : kind.color)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 4)
+                                .padding(.horizontal, DesignSpace.s2)
+                                .padding(.vertical, DesignSpace.s1)
                                 .background(
                                     (module.status == .failed ? DesignColor.danger : kind.color).opacity(0.1),
                                     in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
@@ -568,8 +568,8 @@ struct StudioHomeView: View {
                     }
                     .font(DesignFont.caption)
                     .foregroundStyle(newPages == 0 ? DesignColor.success : DesignColor.attention)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, DesignSpace.s2)
+                    .padding(.vertical, DesignSpace.s1)
                     .background(newPages == 0 ? DesignColor.successBg : DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
             }

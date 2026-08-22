@@ -197,11 +197,12 @@ struct FolderContentsView: View {
                             viewMode == mode ? DesignColor.brandPrimarySubtle : Color.clear,
                             in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                         )
+                        .contentShape(Rectangle().inset(by: -7))
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(2)
+        .padding(DesignSpace.s1)
         .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
     }
 
@@ -220,7 +221,7 @@ struct FolderContentsView: View {
                 .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
         .contentShape(Rectangle())
     }
@@ -240,7 +241,7 @@ struct FolderContentsView: View {
                 .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
         .contentShape(Rectangle())
     }
@@ -301,7 +302,7 @@ struct FolderContentsView: View {
                         Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
                     }
                 }
-                .padding(10)
+                .padding(DesignSpace.s3)
             }
             .frame(height: 90)
             .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm).stroke(DesignColor.borderDefault))

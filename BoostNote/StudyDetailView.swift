@@ -89,7 +89,7 @@ struct StudyDetailView: View {
                         .foregroundStyle(DesignColor.textSecondary)
                 }
             }
-            .padding(.horizontal, DesignSpace.s6 + 4)
+            .padding(.horizontal, DesignSpace.s6)
             .frame(height: 56)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
@@ -171,12 +171,12 @@ struct StudyDetailView: View {
                     .fixedSize()
                     .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.attention)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, DesignSpace.s2)
+                    .padding(.vertical, DesignSpace.s1)
                     .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
     }
 
@@ -466,7 +466,7 @@ struct StudyDetailView: View {
                         .foregroundStyle(kind.color)
                 }
             }
-            .padding(.horizontal, DesignSpace.s6 + 4)
+            .padding(.horizontal, DesignSpace.s6)
             .frame(height: 56)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
@@ -575,8 +575,8 @@ struct CitationDisclosure: View {
                             .font(.system(size: DesignIcon.sm))
                     }
                     .foregroundStyle(tint)
-                    .padding(.horizontal, DesignSpace.s2 + 2)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, DesignSpace.s3)
+                    .padding(.vertical, DesignSpace.s1)
                     .background(tintBackground, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
@@ -628,8 +628,8 @@ struct ReportButton: View {
             }
             .fixedSize()
             .foregroundStyle(isReported ? DesignColor.danger : DesignColor.textTertiary)
-            .padding(.horizontal, DesignSpace.s2 + 2)
-            .padding(.vertical, 4)
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s1)
             .background(isReported ? DesignColor.dangerBg : Color.clear, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -649,8 +649,8 @@ private struct FlowChips: View {
                     .font(DesignFont.caption)
                     .foregroundStyle(item.1)
                     .lineLimit(1)
-                    .padding(.horizontal, DesignSpace.s2 + 2)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, DesignSpace.s3)
+                    .padding(.vertical, DesignSpace.s1)
                     .frame(maxWidth: .infinity)
                     .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
@@ -921,8 +921,8 @@ private struct ExercisesModuleView: View {
                         .font(DesignFont.caption)
                         .foregroundStyle(exercise.origin.color)
                         .lineLimit(1)
-                        .padding(.horizontal, DesignSpace.s2 + 2)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, DesignSpace.s3)
+                        .padding(.vertical, DesignSpace.s1)
                         .background(exercise.origin.color.opacity(0.1), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     Spacer()
                 }
@@ -1055,7 +1055,7 @@ private struct ExercisesModuleView: View {
                             .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.toolExplain)
                             .padding(.horizontal, DesignSpace.s4)
-                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .padding(.vertical, DesignSpace.s3)
                             .background(DesignColor.toolExplainBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                     .buttonStyle(.plain)
@@ -1068,7 +1068,7 @@ private struct ExercisesModuleView: View {
                         .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.brandPrimary)
                         .padding(.horizontal, DesignSpace.s4)
-                        .padding(.vertical, DesignSpace.s2 + 2)
+                        .padding(.vertical, DesignSpace.s3)
                         .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
@@ -1190,7 +1190,7 @@ private struct ExercisesModuleView: View {
                         .font(DesignFont.action)
                         .foregroundStyle(DesignColor.toolWolfram)
                         .padding(.horizontal, DesignSpace.s3)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, DesignSpace.s2)
                         .background(DesignColor.toolWolframBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
@@ -1277,8 +1277,8 @@ private struct ExercisesModuleView: View {
             .font(DesignFont.caption)
             .foregroundStyle(color)
             .lineLimit(1)
-            .padding(.horizontal, DesignSpace.s2 + 2)
-            .padding(.vertical, 4)
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s1)
             .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
     }
 }
@@ -1286,6 +1286,9 @@ private struct ExercisesModuleView: View {
 // MARK: - Punti di ripasso
 // Ogni punto: concetto + domanda di verifica; la risposta si rivela al tocco.
 private struct ReviewPointsModuleView: View {
+    // Colonna del numero del punto: il rientro sotto allinea al testo.
+    private let markerColumn: CGFloat = 26
+
     @Environment(\.modelContext) private var context
     let content: ReviewPointsContent
     let module: StudyModule
@@ -1359,7 +1362,7 @@ private struct ReviewPointsModuleView: View {
                                 selfCheckButton(point: point, correct: false, title: "Da rivedere", icon: "arrow.counterclockwise.circle.fill", color: DesignColor.attention)
                                 Spacer()
                             }
-                            .padding(.leading, 26 + DesignSpace.s3)
+                            .padding(.leading, markerColumn + DesignSpace.s3)
 
                             HStack(spacing: DesignSpace.s2) {
                                 CitationDisclosure(citation: point.quote)
@@ -1381,7 +1384,7 @@ private struct ReviewPointsModuleView: View {
                                     .foregroundStyle(DesignColor.brandPrimary)
                             }
                             .buttonStyle(.plain)
-                            .padding(.leading, 26 + DesignSpace.s3)
+                            .padding(.leading, markerColumn + DesignSpace.s3)
                         }
                     }
         .padding(DesignSpace.s4)
@@ -1398,7 +1401,7 @@ private struct ReviewPointsModuleView: View {
                 .font(DesignFont.action)
                 .foregroundStyle(isSelected ? DesignColor.textOnBrand : color)
                 .padding(.horizontal, DesignSpace.s3)
-                .padding(.vertical, 6)
+                .padding(.vertical, DesignSpace.s2)
                 .background(isSelected ? color : color.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
