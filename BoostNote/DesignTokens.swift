@@ -100,6 +100,59 @@ enum DesignRadius {
     static let pill: CGFloat = 999
 }
 
+// Scala tipografica CHIUSA del design system (tokens/typography.css):
+// dieci ruoli, nessun altro. La regola di scelta sta nel §1 del README
+// del kit; `.fontWeight()` dopo un DesignFont è vietato — il peso lo
+// porta il ruolo. I titoli sono LEGGERI di proposito (la gerarchia la
+// dà la dimensione, non il grassetto): non reintrodurre il semibold.
+enum DesignFont {
+    static let display      = Font.system(size: 30, weight: .ultraLight)
+    static let screenTitle  = Font.system(size: 26, weight: .light)
+    static let sectionTitle = Font.system(size: 20, weight: .light)
+    static let cardTitle    = Font.system(size: 15, weight: .semibold)
+    static let body         = Font.system(size: 15, weight: .regular)
+    static let action       = Font.system(size: 13, weight: .semibold)
+    static let label        = Font.system(size: 13, weight: .medium)
+    static let caption      = Font.system(size: 12, weight: .regular)
+    static let micro        = Font.system(size: 10, weight: .semibold)
+    static let mono         = Font.system(size: 14, weight: .regular, design: .monospaced)
+
+    // unica eccezione alla scala: quadranti numerici degli strumenti
+    // (display della calcolatrice, timer Pomodoro)
+    static func readout(size: CGFloat) -> Font {
+        .system(size: size, weight: .ultraLight, design: .default)
+    }
+
+    // spazio AGGIUNTO fra le righe (.lineSpacing), non line-height
+    static let bodyLineSpacing: CGFloat = 3
+    static let captionLineSpacing: CGFloat = 2
+    static let monoLineSpacing: CGFloat = 2
+}
+
+// `.font(.system(size:))` su un'Image NON è tipografia: è dimensione
+// icona, e i passi sono quattro — nessun altro.
+enum DesignIcon {
+    static let sm: CGFloat = 14
+    static let md: CGFloat = 17
+    static let lg: CGFloat = 20
+    static let xl: CGFloat = 24
+}
+
+// Altezze di controllo (iPad: area di tocco minima 44, sempre).
+enum DesignSize {
+    static let control: CGFloat = 44   // bottoni, campi, righe tappabili
+    static let compact: CGFloat = 38   // SOLO testate di card e pannelli
+    static let touchMin: CGFloat = 44  // area di tocco minima, sempre
+    static let rowMin: CGFloat = 56    // riga di elenco
+}
+
+// Le DUE elevazioni del sistema (tokens/colors.css --elev-popover /
+// --elev-sheet): niente altre ombre, niente blur, niente gradienti.
+extension View {
+    func boostPopoverShadow() -> some View { shadow(color: .black.opacity(0.16), radius: 20, y: 7) }
+    func boostSheetShadow() -> some View { shadow(color: .black.opacity(0.28), radius: 30, y: 12) }
+}
+
 extension Color {
     init(hex: UInt32) {
         let r = Double((hex >> 16) & 0xFF) / 255
@@ -121,7 +174,7 @@ struct BoostButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12.5, weight: .semibold))
+            .font(DesignFont.action)
             .foregroundStyle(ink)
             .padding(.horizontal, 13)
             .padding(.vertical, 7)
@@ -169,12 +222,12 @@ struct BoostSegmented<Value: Hashable>: View {
                     selection = option.value
                 } label: {
                     Text(option.label)
-                        .font(.system(size: 12.5, weight: isOn ? .semibold : .medium))
+                        .font(isOn ? DesignFont.action : DesignFont.label)
                         .foregroundStyle(isOn ? DesignColor.brandPrimary : DesignColor.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
+                        .frame(minHeight: DesignSize.compact)
                         .background(
                             isOn ? DesignColor.brandPrimarySubtle : .clear,
                             in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)

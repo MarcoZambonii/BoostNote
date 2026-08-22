@@ -273,7 +273,7 @@ struct HomeView: View {
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: DesignIcon.sm))
                 .foregroundStyle(DesignColor.textTertiary)
         }
         .padding(.vertical, DesignSpace.s3)
