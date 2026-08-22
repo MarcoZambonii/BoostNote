@@ -143,7 +143,7 @@ struct HomeView: View {
 
     private var greetingBlock: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(greeting)
+            Text("\(greeting) 👋")
                 .font(DesignFont.screenTitle)
                 .foregroundStyle(DesignColor.textPrimary)
                 // Non comprimibile: è ciò che permette a `ViewThatFits` di

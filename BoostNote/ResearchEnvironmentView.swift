@@ -20,7 +20,7 @@ struct ResearchEnvironmentView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Ricerca")
+            Text("Ricerca 🔎")
                 .font(DesignFont.screenTitle)
                 .foregroundStyle(DesignColor.textPrimary)
                 .padding(.horizontal, DesignSpace.s6)

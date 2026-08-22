@@ -810,10 +810,20 @@ private struct MagicActionPickerView: View {
                             onSelect(action)
                         } label: {
                             HStack(spacing: DesignSpace.s3) {
-                                Image(systemName: action.systemImage)
-                                    .font(.system(size: DesignIcon.md))
-                                    .foregroundStyle(current == action ? action.color : DesignColor.textSecondary)
-                                    .frame(width: 22)
+                                // La tessera colorata c'è SEMPRE, come nel
+                                // mock: il colore è l'identità dello
+                                // strumento (Wolfram arancio, LaTeX viola…),
+                                // non un modo di dire "questo è selezionato".
+                                // Grigie finché non le sceglievi, le azioni
+                                // erano cinque righe indistinguibili.
+                                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                                    .fill(action.backgroundColor)
+                                    .frame(width: 30, height: 30)
+                                    .overlay(
+                                        Image(systemName: action.systemImage)
+                                            .font(.system(size: DesignIcon.sm))
+                                            .foregroundStyle(action.color)
+                                    )
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(action.label)
                                         .font(current == action ? DesignFont.cardTitle : DesignFont.body)

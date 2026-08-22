@@ -144,13 +144,9 @@ struct StudioHomeView: View {
 
     private func headerTitle(compactSubtitle: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text("Studio")
-                    .font(DesignFont.screenTitle)
-                    .foregroundStyle(DesignColor.textPrimary)
-                Image(systemName: "graduationcap.fill")
-                    .foregroundStyle(DesignColor.brandPrimary)
-            }
+            Text("Studio 🎓")
+                .font(DesignFont.screenTitle)
+                .foregroundStyle(DesignColor.textPrimary)
             Text(subtitleText)
                 .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textTertiary)

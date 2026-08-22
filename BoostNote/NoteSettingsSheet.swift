@@ -117,7 +117,10 @@ struct NoteSettingsSheet: View {
             .scrollContentBackground(.hidden)
             .background(DesignColor.surfacePage)
         }
-        .presentationDetents([.medium, .large])
+        // Su iPad un detent .medium su un form sheet non lo attacca in
+        // basso: lo lascia sospeso a metà schermo, alto la metà e col
+        // contenuto tagliato a caso. Qui serve il foglio intero.
+        .presentationDetents([.large])
     }
 
     private var pageCount: Int {

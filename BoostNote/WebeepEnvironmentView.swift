@@ -140,31 +140,33 @@ struct WebeepEnvironmentView: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: DesignSpace.s3) {
+        HStack(alignment: .firstTextBaseline, spacing: DesignSpace.s3) {
+            // Stessa testata di Home e Studio: titolone col suo emoji e
+            // una riga di contesto sotto. Prima questa schermata aveva
+            // una barra tutta sua, alta 56 e col titolo da card: era
+            // l'unico posto dell'app che si presentava così.
             if let selectedCourse {
-                Button {
+                BoostButton("Corsi", icon: "chevron.left", tone: .ghost, size: .compact) {
                     self.selectedCourse = nil
                     sections = []
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: DesignIcon.md))
                 }
-                .buttonStyle(.plain)
 
-                Text(WebeepService.stripMultilang(selectedCourse.fullname))
-                    .font(DesignFont.cardTitle)
-                    .foregroundStyle(DesignColor.textPrimary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(WebeepService.stripMultilang(selectedCourse.fullname))
+                        .font(DesignFont.sectionTitle)
+                        .foregroundStyle(DesignColor.textPrimary)
+                        .lineLimit(1)
+                }
             } else {
-                Image(systemName: "building.columns.fill")
-                    .foregroundStyle(DesignColor.brandPrimary)
-                Text("WeBeep")
-                    .font(DesignFont.cardTitle)
-                    .foregroundStyle(DesignColor.textPrimary)
-                if let siteInfo {
-                    Text("· \(siteInfo.fullname)")
-                        .font(DesignFont.label)
-                        .foregroundStyle(DesignColor.textTertiary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("WeBeep 🏛️")
+                        .font(DesignFont.screenTitle)
+                        .foregroundStyle(DesignColor.textPrimary)
+                    if let siteInfo {
+                        Text(siteInfo.fullname)
+                            .font(DesignFont.label)
+                            .foregroundStyle(DesignColor.textTertiary)
+                    }
                 }
             }
             Spacer()
@@ -189,11 +191,9 @@ struct WebeepEnvironmentView: View {
             }
         }
         .padding(.horizontal, DesignSpace.s6)
-        .frame(height: 56)
+        .padding(.top, DesignSpace.s6)
+        .padding(.bottom, DesignSpace.s4)
         .background(DesignColor.surfacePage)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
-        }
     }
 
     private var connectPrompt: some View {
