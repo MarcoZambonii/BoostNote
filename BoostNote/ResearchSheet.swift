@@ -505,21 +505,13 @@ struct ResearchContentView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: DesignSpace.s3) {
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: DesignIcon.xl))
-                .foregroundStyle(DesignColor.textTertiary)
-            Text("Cerca preprint e articoli")
-                .font(DesignFont.cardTitle)
-                .foregroundStyle(DesignColor.textSecondary)
-            Text("I paper che apri o aggiungi a una nota compariranno qui, tra i visti di recente.")
-                .font(DesignFont.caption)
-                .foregroundStyle(DesignColor.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, DesignSpace.s8 * 2)
+        BoostState(
+            kind: .empty,
+            icon: "doc.text.magnifyingglass",
+            title: "Cerca preprint e articoli",
+            message: "I paper che apri o aggiungi a una nota compariranno qui, tra i visti di recente."
+        )
+        .padding(.top, DesignSpace.s8)
     }
 
     private func sectionHeader(_ title: String) -> some View {

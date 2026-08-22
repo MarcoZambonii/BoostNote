@@ -24,7 +24,6 @@ struct StudioHomeView: View {
     @State private var folderSheet: StudyFolderSheetMode?
     @State private var vaultFolder: StudyFolder?
     @State private var renamingStudy: Study?
-    @State private var renameText = ""
 
     // Eliminazioni in attesa di conferma: un Vault si porta via ore di
     // letture pagate in chiamate API, uno studio i suoi moduli generati —
@@ -76,37 +75,38 @@ struct StudioHomeView: View {
         .sheet(item: $vaultFolder) { folder in
             VaultView(folder: folder)
         }
-        .alert("Rinomina studio", isPresented: renameAlertPresented) {
-            TextField("Nome", text: $renameText)
-            Button("Annulla", role: .cancel) { renamingStudy = nil }
-            Button("Salva") { applyRename() }
+        .sheet(item: $renamingStudy) { study in
+            RenameSheet(title: "Rinomina studio", initialName: study.name) { newName in
+                study.name = newName
+                study.updatedAt = .now
+            }
         }
         .alert(
-            "Eliminare il Vault?",
+            Text("Eliminare «\(folderPendingDelete?.name ?? "")»?"),
             isPresented: Binding(
                 get: { folderPendingDelete != nil },
                 set: { if !$0 { folderPendingDelete = nil } }
             ),
             presenting: folderPendingDelete
         ) { folder in
-            Button("Elimina", role: .destructive) { deleteFolder(folder) }
             Button("Annulla", role: .cancel) { folderPendingDelete = nil }
+            Button("Elimina", role: .destructive) { deleteFolder(folder) }
         } message: { folder in
             let documents = folder.vaultDocuments.count
-            return Text("“\(folder.name)” verrà eliminata con \(documents == 1 ? "il documento del Vault e le sue pagine lette" : "i \(documents) documenti del Vault e le loro pagine lette"). Gli studi dentro non vengono eliminati: tornano alla radice.")
+            return Text("\(documents == 1 ? "Il documento del Vault e le sue pagine lette verranno eliminati" : "I \(documents) documenti del Vault e le loro pagine lette verranno eliminati"). Gli studi dentro non vengono eliminati: tornano alla radice.")
         }
         .alert(
-            "Eliminare lo studio?",
+            Text("Eliminare «\(studyPendingDelete?.name ?? "")»?"),
             isPresented: Binding(
                 get: { studyPendingDelete != nil },
                 set: { if !$0 { studyPendingDelete = nil } }
             ),
             presenting: studyPendingDelete
         ) { study in
-            Button("Elimina", role: .destructive) { deleteStudy(study) }
             Button("Annulla", role: .cancel) { studyPendingDelete = nil }
+            Button("Elimina", role: .destructive) { deleteStudy(study) }
         } message: { study in
-            Text("“\(study.name)”, i suoi moduli generati e i tentativi registrati nell'analisi dei progressi verranno eliminati.")
+            Text("I suoi moduli generati e i tentativi registrati nell'analisi dei progressi verranno eliminati.")
         }
     }
 
@@ -208,32 +208,14 @@ struct StudioHomeView: View {
     // Senza Vault non c'è niente da generare: lo stato vuoto porta a
     // creare il primo, non a un flusso di studio che non avrebbe fonti.
     private var emptyState: some View {
-        VStack(spacing: DesignSpace.s3) {
-            Image(systemName: "archivebox")
-                .font(.system(size: DesignIcon.xl))
-                .foregroundStyle(DesignColor.textTertiary)
-            Text("Nessun Vault, per ora")
-                .font(DesignFont.cardTitle)
-                .foregroundStyle(DesignColor.textPrimary)
-            Text("Un Vault per corso: ci metti dentro note, dispense, temi d'esame e file WeBeep. Vengono letti una volta e restano pronti per generare riassunti, esercizi e flashcard senza rileggere niente.")
-                .font(DesignFont.label)
-                .foregroundStyle(DesignColor.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
-            Button {
+        BoostState(
+            kind: .empty,
+            title: "Nessun Vault, per ora",
+            message: "Un Vault per corso: ci metti dentro note, dispense, temi d'esame e file WeBeep. Vengono letti una volta e restano pronti per generare riassunti, esercizi e flashcard senza rileggere niente.",
+            action: AnyView(BoostButton("Crea il primo Vault", icon: "plus", tone: .primary) {
                 folderSheet = .new(parent: nil)
-            } label: {
-                Label("Crea il primo Vault", systemImage: "plus")
-                    .font(DesignFont.cardTitle)
-                    .foregroundStyle(DesignColor.textOnBrand)
-                    .padding(.horizontal, DesignSpace.s5)
-                    .padding(.vertical, DesignSpace.s3)
-                    .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .padding(.top, DesignSpace.s2)
-        }
-        .frame(maxWidth: .infinity)
+            })
+        )
         .padding(.vertical, DesignSpace.s8)
     }
 
@@ -296,10 +278,12 @@ struct StudioHomeView: View {
             }
 
             if studies.isEmpty {
-                Text("Nessuno studio in questa cartella. Dal menu ⋯ apri il Vault del corso: il materiale viene letto una volta e resta pronto per studi, esercizi e ripassi.")
-                    .font(DesignFont.caption)
-                    .foregroundStyle(DesignColor.textTertiary)
-                    .padding(.vertical, DesignSpace.s2)
+                BoostState(
+                    kind: .empty,
+                    title: "Nessuno studio in questa cartella",
+                    message: "Dal menu ⋯ apri il Vault del corso: il materiale viene letto una volta e resta pronto per studi, esercizi e ripassi."
+                )
+                .padding(.vertical, DesignSpace.s2)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: DesignSpace.s4)], spacing: DesignSpace.s4) {
                     ForEach(studies) { study in
@@ -478,32 +462,18 @@ struct StudioHomeView: View {
 
     private func emptyStudiesArea(_ folder: StudyFolder, documents: [VaultDocument]) -> some View {
         let readPages = documents.reduce(0) { $0 + $1.readCount }
-        return VStack(spacing: DesignSpace.s2) {
-            Text("Nessuno studio ancora")
-                .font(DesignFont.cardTitle)
-                .foregroundStyle(DesignColor.textPrimary)
-            Text(readPages > 0
-                 ? "Il Vault è pronto: \(readPages) pagine già lette. Genera il primo studio quando vuoi — il materiale non verrà riletto."
-                 : "Aggiungi il materiale del corso al Vault, oppure crea uno studio partendo dalle note.")
-                .font(DesignFont.caption)
-                .foregroundStyle(DesignColor.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
-            if readPages > 0 {
-                Button {
+        return BoostState(
+            kind: .empty,
+            title: "Nessuno studio ancora",
+            message: readPages > 0
+                ? "Il Vault è pronto: \(readPages) pagine già lette. Genera il primo studio quando vuoi — il materiale non verrà riletto."
+                : "Aggiungi il materiale del corso al Vault, oppure crea uno studio partendo dalle note.",
+            action: readPages > 0
+                ? AnyView(BoostButton("Crea da questo Vault", icon: "plus", size: .compact) {
                     onCreateStudy(folder)
-                } label: {
-                    Label("Crea da questo Vault", systemImage: "plus")
-                        .font(DesignFont.action)
-                        .foregroundStyle(DesignColor.brandPrimary)
-                        .padding(.horizontal, DesignSpace.s4)
-                        .padding(.vertical, DesignSpace.s2 + 2)
-                        .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(maxWidth: .infinity)
+                })
+                : nil
+        )
         .padding(DesignSpace.s4)
         .background(
             RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
@@ -615,7 +585,6 @@ struct StudioHomeView: View {
         .contextMenu {
             Button {
                 renamingStudy = study
-                renameText = study.name
             } label: {
                 Label("Rinomina", systemImage: "pencil")
             }
@@ -646,19 +615,6 @@ struct StudioHomeView: View {
 
     // MARK: - Azioni
 
-    private var renameAlertPresented: Binding<Bool> {
-        Binding(get: { renamingStudy != nil }, set: { if !$0 { renamingStudy = nil } })
-    }
-
-    private func applyRename() {
-        guard let study = renamingStudy else { return }
-        let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty {
-            study.name = trimmed
-            study.updatedAt = .now
-        }
-        renamingStudy = nil
-    }
 
     private func saveFolder(name: String, color: FolderColor, mode: StudyFolderSheetMode) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)

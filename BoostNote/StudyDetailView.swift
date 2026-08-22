@@ -29,11 +29,11 @@ struct StudyDetailView: View {
         .sheet(isPresented: $showingTrustSheet) {
             StudioTrustSheet(study: study)
         }
-        .alert("Eliminare lo studio?", isPresented: $showingDeleteConfirmation) {
-            Button("Elimina", role: .destructive, action: onDelete)
+        .alert(Text("Eliminare «\(study.name)»?"), isPresented: $showingDeleteConfirmation) {
             Button("Annulla", role: .cancel) {}
+            Button("Elimina", role: .destructive, action: onDelete)
         } message: {
-            Text("“\(study.name)”, i suoi moduli generati e i tentativi registrati nell'analisi dei progressi verranno eliminati.")
+            Text("I suoi moduli generati e i tentativi registrati nell'analisi dei progressi verranno eliminati.")
         }
         // L'esito della verifica è scritto una volta sola, alla
         // generazione: senza un ricontrollo, un contenuto marcato "non
@@ -490,7 +490,7 @@ struct StudyDetailView: View {
             case .flashcards:
                 FlashcardsModuleView(content: module.decodeContent(FlashcardsContent.self) ?? FlashcardsContent())
             case nil:
-                ContentUnavailableView("Modulo non riconosciuto", systemImage: "questionmark")
+                BoostState(kind: .error, icon: "questionmark", title: "Modulo non riconosciuto")
             }
         }
     }
@@ -763,7 +763,7 @@ private struct ExercisesModuleView: View {
             progressBar
 
             if exercises.isEmpty {
-                ContentUnavailableView("Nessun esercizio", systemImage: "pencil.slash")
+                BoostState(kind: .empty, icon: "pencil.slash", title: "Nessun esercizio")
             } else if finished {
                 sessionSummary
             } else {
@@ -1448,10 +1448,11 @@ private struct FlashcardsModuleView: View {
         // questa guardia l'indice andava a -1 e il modulo crashava
         // all'apertura. Stesso trattamento del player esercizi.
         if content.cards.isEmpty {
-            ContentUnavailableView(
-                "Nessuna carta",
-                systemImage: "rectangle.on.rectangle.slash",
-                description: Text("Il contenuto di questo modulo non è leggibile: rigeneralo dalla card dello studio.")
+            BoostState(
+                kind: .empty,
+                icon: "rectangle.on.rectangle.angled",
+                title: "Nessuna carta",
+                message: "Il contenuto di questo modulo non è leggibile: rigeneralo dalla card dello studio."
             )
         } else {
             deck

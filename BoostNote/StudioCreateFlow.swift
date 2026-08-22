@@ -1004,7 +1004,7 @@ private struct StudioWebeepPickerSheet: View {
     private var courseList: some View {
         Group {
             if isLoading && courses.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                BoostState(kind: .loading, title: "Carico i corsi…")
             } else {
                 List(courses) { course in
                     Button {
@@ -1030,7 +1030,7 @@ private struct StudioWebeepPickerSheet: View {
     private func fileList(_ course: WebeepCourse) -> some View {
         Group {
             if isLoading {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                BoostState(kind: .loading, title: "Carico i file…")
             } else {
                 List {
                     ForEach(sections) { section in

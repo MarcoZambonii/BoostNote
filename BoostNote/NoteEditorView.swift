@@ -128,7 +128,6 @@ struct NoteEditorView: View {
     // lo riapri. Solo la X su uno strumento lo rimuove davvero.
     @State private var isSidePanelHidden = false
     @State private var showingRename = false
-    @State private var renameText = ""
     @State private var sidePanelDragOffset: CGFloat = 0
     // Lato e larghezza del pannello sopravvivono alla nota: sono una
     // preferenza di postazione (mano con cui si scrive, quanto foglio si
@@ -239,12 +238,9 @@ struct NoteEditorView: View {
                 editorContainerWidth = width
             }
         }
-        .alert("Titolo della nota", isPresented: $showingRename) {
-            TextField("Titolo", text: $renameText)
-            Button("Annulla", role: .cancel) { }
-            Button("Salva") {
-                let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty { note.title = trimmed }
+        .sheet(isPresented: $showingRename) {
+            RenameSheet(title: "Titolo della nota", initialName: note.title) { newName in
+                note.title = newName
             }
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -1025,7 +1021,6 @@ struct NoteEditorView: View {
 
             Menu {
                 Button {
-                    renameText = note.title
                     showingRename = true
                 } label: {
                     Label("Rinomina nota", systemImage: "textformat")

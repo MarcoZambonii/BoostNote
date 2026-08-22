@@ -82,7 +82,6 @@ struct SidebarView: View {
     @State private var noteCreateFolder: Folder?
 
     @State private var renamingNote: Note?
-    @State private var renameText = ""
 
     // Eliminazioni in attesa di conferma: una cartella si porta via a
     // cascata sottocartelle e note, e prima bastava una voce di menu
@@ -141,39 +140,38 @@ struct SidebarView: View {
                 selectedNote = note
             }
         }
-        .alert("Rinomina nota", isPresented: renameAlertPresented) {
-            TextField("Nome", text: $renameText)
-            Button("Annulla", role: .cancel) { renamingNote = nil }
-            Button("Salva") {
-                applyNoteRename()
+        .sheet(item: $renamingNote) { note in
+            RenameSheet(title: "Rinomina nota", initialName: note.title) { newName in
+                note.title = newName
+                note.updatedAt = .now
             }
         }
         .alert(
-            "Eliminare la cartella?",
+            Text("Eliminare «\(folderPendingDelete?.name ?? "")»?"),
             isPresented: Binding(
                 get: { folderPendingDelete != nil },
                 set: { if !$0 { folderPendingDelete = nil } }
             ),
             presenting: folderPendingDelete
         ) { folder in
-            Button("Elimina", role: .destructive) { deleteFolder(folder) }
             Button("Annulla", role: .cancel) { folderPendingDelete = nil }
+            Button("Elimina", role: .destructive) { deleteFolder(folder) }
         } message: { folder in
             let count = noteCount(in: folder)
-            return Text("“\(folder.name)” verrà eliminata con le sue sottocartelle e \(count == 1 ? "la nota che contiene" : "le \(count) note che contiene"). L'operazione non si può annullare.")
+            return Text("Le sue sottocartelle e \(count == 1 ? "la nota che contiene" : "le \(count) note che contiene") verranno eliminate. L'operazione non si può annullare.")
         }
         .alert(
-            "Eliminare la nota?",
+            Text("Eliminare «\(notePendingDelete.map { $0.title.isEmpty ? "Senza titolo" : $0.title } ?? "")»?"),
             isPresented: Binding(
                 get: { notePendingDelete != nil },
                 set: { if !$0 { notePendingDelete = nil } }
             ),
             presenting: notePendingDelete
         ) { note in
-            Button("Elimina", role: .destructive) { deleteNote(note) }
             Button("Annulla", role: .cancel) { notePendingDelete = nil }
+            Button("Elimina", role: .destructive) { deleteNote(note) }
         } message: { note in
-            Text("“\(note.title.isEmpty ? "Senza titolo" : note.title)” e tutte le sue pagine verranno eliminate. L'operazione non si può annullare.")
+            Text("Tutte le sue pagine verranno eliminate. L'operazione non si può annullare.")
         }
     }
 
@@ -427,13 +425,6 @@ struct SidebarView: View {
         }
     }
 
-    private var renameAlertPresented: Binding<Bool> {
-        Binding(
-            get: { renamingNote != nil },
-            set: { if !$0 { renamingNote = nil } }
-        )
-    }
-
     // Albero ricorsivo con DisclosureGroup espliciti al posto di
     // OutlineGroup: identico a vedersi, ma l'espansione è NOSTRA — e
     // quindi il doppio tocco può pilotarla. L'AnyView spezza la
@@ -589,7 +580,6 @@ struct SidebarView: View {
             .contextMenu {
                 Button {
                     renamingNote = note
-                    renameText = note.title
                 } label: {
                     Label("Rinomina", systemImage: "pencil")
                 }
@@ -624,17 +614,6 @@ struct SidebarView: View {
             folder.name = trimmed
             folder.folderColor = color
         }
-    }
-
-    private func applyNoteRename() {
-        let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, let note = renamingNote else {
-            renamingNote = nil
-            return
-        }
-        note.title = trimmed
-        note.updatedAt = .now
-        renamingNote = nil
     }
 
     // L'eliminazione è a CASCATA su tutto il sottoalbero: le selezioni

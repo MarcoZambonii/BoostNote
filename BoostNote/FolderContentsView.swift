@@ -102,9 +102,12 @@ struct FolderContentsView: View {
                         .foregroundStyle(DesignColor.textTertiary)
 
                     if notes.isEmpty {
-                        Text("Nessuna nota qui ancora.")
-                            .font(DesignFont.label)
-                            .foregroundStyle(DesignColor.textTertiary)
+                        BoostState(
+                            kind: .empty,
+                            icon: "note.text",
+                            title: "Nessuna nota qui ancora",
+                            message: "Creane una o aggiungi un PDF con i pulsanti qui sopra."
+                        )
                     } else {
                         switch viewMode {
                         case .grid:

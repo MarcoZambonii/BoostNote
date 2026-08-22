@@ -43,13 +43,14 @@ struct WebeepEnvironmentView: View {
                 if token == nil {
                     connectPrompt
                 } else if isLoading && courses.isEmpty && selectedCourse == nil {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    BoostState(kind: .loading, title: "Carico i corsi…")
                 } else if let loadError {
                     VStack(spacing: DesignSpace.s3) {
-                        ContentUnavailableView(
-                            "WeBeep non risponde",
-                            systemImage: "wifi.exclamationmark",
-                            description: Text(loadError)
+                        BoostState(
+                            kind: .error,
+                            icon: "wifi.exclamationmark",
+                            title: "WeBeep non risponde",
+                            message: loadError
                         )
                         BoostButton("Riprova", icon: "arrow.clockwise", tone: .primary) {
                             Task {
@@ -179,7 +180,12 @@ struct WebeepEnvironmentView: View {
                 }
             }
             if isLoading {
-                ProgressView()
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Aggiorno…")
+                        .font(DesignFont.caption)
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
             }
         }
         .padding(.horizontal, DesignSpace.s6 + 4)
@@ -211,7 +217,7 @@ struct WebeepEnvironmentView: View {
     private var courseList: some View {
         Group {
             if courses.isEmpty && !isLoading {
-                ContentUnavailableView("Nessun corso trovato", systemImage: "building.columns")
+                BoostState(kind: .empty, icon: "building.columns", title: "Nessun corso trovato")
             } else {
                 ScrollView {
                     LazyVStack(spacing: DesignSpace.s2) {
@@ -259,7 +265,7 @@ struct WebeepEnvironmentView: View {
     private func fileList(for course: WebeepCourse) -> some View {
         Group {
             if sections.allSatisfy({ $0.files.isEmpty }) && !isLoading {
-                ContentUnavailableView("Nessun file trovato", systemImage: "doc")
+                BoostState(kind: .empty, icon: "doc", title: "Nessun file trovato")
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: DesignSpace.s5) {

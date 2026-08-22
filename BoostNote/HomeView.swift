@@ -390,20 +390,12 @@ struct HomeView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: DesignSpace.s3) {
-            Image(systemName: "square.and.pencil")
-                .font(.system(size: DesignIcon.xl))
-                .foregroundStyle(DesignColor.textTertiary)
-            Text("Ancora nessuna nota")
-                .font(DesignFont.cardTitle)
-                .foregroundStyle(DesignColor.textPrimary)
-            Text("Crea una nota o importa un PDF su cui scrivere: i pulsanti sono qui sopra.")
-                .font(DesignFont.label)
-                .foregroundStyle(DesignColor.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-        }
-        .frame(maxWidth: .infinity)
+        BoostState(
+            kind: .empty,
+            icon: "square.and.pencil",
+            title: "Ancora nessuna nota",
+            message: "Crea una nota o aggiungi un PDF su cui scrivere: i pulsanti sono qui sopra."
+        )
         .padding(.vertical, DesignSpace.s8)
     }
 }

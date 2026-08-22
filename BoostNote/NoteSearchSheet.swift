@@ -95,10 +95,11 @@ struct NoteSearchSheet: View {
         if trimmedQuery.isEmpty {
             hint
         } else if results.isEmpty && scanningPage == nil {
-            ContentUnavailableView(
-                "Nessun risultato",
-                systemImage: "magnifyingglass",
-                description: Text("Né nel testo digitato né nella scrittura a mano.")
+            BoostState(
+                kind: .empty,
+                icon: "magnifyingglass",
+                title: "Nessun risultato",
+                message: "Né nel testo digitato né nella scrittura a mano."
             )
         } else {
             ScrollView {

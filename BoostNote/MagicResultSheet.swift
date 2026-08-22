@@ -122,7 +122,8 @@ struct MagicResultSheet: View {
                             case .failure:
                                 EmptyView()
                             default:
-                                ProgressView().frame(height: 80)
+                                BoostState(kind: .loading, title: "Scarico il grafico…")
+                                    .frame(height: 80)
                             }
                         }
                         .frame(maxWidth: .infinity)

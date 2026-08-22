@@ -46,7 +46,6 @@ struct ProfileView: View {
     enum ArchivePickerTarget { case folder, restore }
     @State private var archivePickerTarget: ArchivePickerTarget = .folder
     @State private var showingArchivePicker = false
-    @State private var archiveMessage: String?
 
     @State private var webeepToken: String? = WebeepService.savedToken
     @State private var webeepSiteInfo: WebeepSiteInfo?
@@ -263,17 +262,12 @@ struct ProfileView: View {
                     HStack(spacing: DesignSpace.s3) {
                         toneButton("Archivia tutte adesso", icon: "arrow.up.doc") {
                             let count = NoteArchiveService.archiveAll(in: modelContext)
-                            archiveMessage = "In archiviazione: \(count) note."
+                            BoostToastCenter.shared.show("In archiviazione: \(count) note.")
                         }
                         toneButton("Ripristina da pacchetto", icon: "arrow.down.doc") {
                             archivePickerTarget = .restore
                             showingArchivePicker = true
                         }
-                    }
-                    if let archiveMessage {
-                        Text(archiveMessage)
-                            .font(DesignFont.caption)
-                            .foregroundStyle(DesignColor.textSecondary)
                     }
                 } else {
                     Text("Scegli una cartella su OneDrive (1TB gratuito con l'account Polimi, dall'app File) o su qualunque altro provider: ogni nota chiusa ci lascerà una copia ripristinabile. Il database dell'app resta sul dispositivo — nella cartella vanno solo copie.")
@@ -303,9 +297,9 @@ struct ProfileView: View {
                 if NoteArchiveService.setFolder(first) {
                     archiveConfigured = true
                     let count = NoteArchiveService.archiveAll(in: modelContext)
-                    archiveMessage = "Prima archiviazione: \(count) note in coda."
+                    BoostToastCenter.shared.show("Prima archiviazione: \(count) note in coda.")
                 } else {
-                    archiveMessage = "Non riesco a memorizzare l'accesso alla cartella."
+                    BoostToastCenter.shared.show("Non riesco a memorizzare l'accesso alla cartella.", role: .danger)
                 }
             case .restore:
                 var restored = 0
@@ -322,7 +316,7 @@ struct ProfileView: View {
                 var parts = ["Ripristinate \(restored) note."]
                 if failed > 0 { parts.append("\(failed) pacchetti illeggibili.") }
                 if skipped > 0 { parts.append("\(skipped) file ignorati (non .boostnote).") }
-                archiveMessage = parts.joined(separator: " ")
+                BoostToastCenter.shared.show(parts.joined(separator: " "), role: failed > 0 ? .attention : .success)
             }
         }
     }

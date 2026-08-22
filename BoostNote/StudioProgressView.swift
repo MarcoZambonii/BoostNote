@@ -52,10 +52,11 @@ struct StudioProgressView: View {
             }
 
             if attempts.isEmpty {
-                ContentUnavailableView(
-                    "Ancora nessun dato",
-                    systemImage: "chart.bar.xaxis",
-                    description: Text("Svolgi qualche esercizio in uno studio: ogni autovalutazione finisce qui.")
+                BoostState(
+                    kind: .empty,
+                    icon: "chart.bar",
+                    title: "Ancora nessun dato",
+                    message: "Svolgi qualche esercizio in uno studio: ogni autovalutazione finisce qui."
                 )
             } else {
                 ScrollView {

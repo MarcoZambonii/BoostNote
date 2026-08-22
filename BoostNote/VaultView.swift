@@ -73,20 +73,20 @@ struct VaultView: View {
             importPDFs(result)
         }
         .alert(
-            "Rimuovere dal Vault?",
+            Text("Eliminare «\(documentPendingDelete?.title ?? "")»?"),
             isPresented: Binding(
                 get: { documentPendingDelete != nil },
                 set: { if !$0 { documentPendingDelete = nil } }
             ),
             presenting: documentPendingDelete
         ) { document in
-            Button("Rimuovi", role: .destructive) {
+            Button("Annulla", role: .cancel) { documentPendingDelete = nil }
+            Button("Elimina", role: .destructive) {
                 documentPendingDelete = nil
                 context.delete(document)
             }
-            Button("Annulla", role: .cancel) { documentPendingDelete = nil }
         } message: { document in
-            Text("“\(document.title)” e le sue \(document.pages.count) pagine lette verranno rimossi dal Vault. Gli studi già generati non vengono toccati.")
+            Text("Le sue \(document.pages.count) pagine lette verranno eliminate dal Vault. Gli studi già generati non vengono toccati.")
         }
     }
 
@@ -280,20 +280,11 @@ struct VaultView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: DesignSpace.s2) {
-            Image(systemName: "archivebox")
-                .font(.system(size: DesignIcon.xl))
-                .foregroundStyle(DesignColor.textTertiary)
-            Text("Il Vault è vuoto")
-                .font(DesignFont.cardTitle)
-                .foregroundStyle(DesignColor.textPrimary)
-            Text("Metti qui tutto il materiale del corso: note, dispense, temi d'esame, file WeBeep. Verrà letto una volta e resterà pronto per studi, esercizi e ripassi.")
-                .font(DesignFont.caption)
-                .foregroundStyle(DesignColor.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
-        }
-        .frame(maxWidth: .infinity)
+        BoostState(
+            kind: .empty,
+            title: "Il Vault è vuoto",
+            message: "Metti qui tutto il materiale del corso: note, dispense, temi d'esame, file WeBeep. Verrà letto una volta e resterà pronto per studi, esercizi e ripassi."
+        )
         .padding(.vertical, DesignSpace.s6)
     }
 
