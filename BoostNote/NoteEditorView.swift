@@ -953,11 +953,11 @@ struct NoteEditorView: View {
                 .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textPrimary)
                 .frame(width: headerRowHeight, height: headerRowHeight)
-                // Stessa superficie della barra fissa qui a destra:
-                // bianca, squadrata, stessa ombra. Il cerchio era
-                // l'unica forma del genere in tutta l'app.
-                .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1))
+                // Stessa superficie della barra fissa e della barra della
+                // penna: bianca, stesso raggio, stessa ombra. Il cerchio
+                // era l'unica forma del genere in tutta l'app.
+                .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1))
                 .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
         }
         .buttonStyle(.plain)
@@ -1064,9 +1064,10 @@ struct NoteEditorView: View {
         .padding(.horizontal, DesignSpace.s2)
         .frame(height: headerRowHeight)
         // Bianca come il tasto indietro e la barra della penna: le tre
-        // superfici sospese sul foglio hanno la stessa ricetta.
-        .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1))
+        // superfici sospese sul foglio hanno la stessa ricetta, raggio
+        // compreso (lg, come la barra della penna nel mock).
+        .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1))
         .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
     }
 

@@ -2814,9 +2814,16 @@ struct PagedNoteCanvasView: UIViewRepresentable {
             guard let box = gesture.view?.superview as? MediaBoxView, let mediaID = box.mediaID else { return }
             let translation = gesture.translation(in: box)
             switch gesture.state {
+            case .began:
+                // Proporzioni di partenza: si tengono per tutta la
+                // trascinata, così l'immagine non si schiaccia e non
+                // restano bande vuote nel riquadro.
+                box.resizeAspect = box.frame.height > 0 ? box.frame.width / box.frame.height : 1
             case .changed:
-                box.frame.size.width = max(box.frame.width + translation.x, 60)
-                box.frame.size.height = max(box.frame.height + translation.y, 30)
+                let aspect = box.resizeAspect ?? 1
+                let width = max(box.frame.width + translation.x, 60)
+                box.frame.size.width = width
+                box.frame.size.height = max(width / max(aspect, 0.01), 30)
                 gesture.setTranslation(.zero, in: box)
             case .ended, .cancelled:
                 guard let item = parent.media.first(where: { $0.persistentModelID == mediaID }) else { return }
