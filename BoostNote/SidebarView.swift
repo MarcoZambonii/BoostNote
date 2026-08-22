@@ -51,6 +51,11 @@ struct SidebarView: View {
     @Binding var showingStudioProgress: Bool
     var onCreateStudy: () -> Void
     var onOpenProfile: () -> Void
+    // Il Profilo è un FOGLIO, non un popover: appeso alla riga in fondo
+    // alla colonna il popover usciva schiacciato, e comunque il pannello
+    // è troppo denso per un pop-up con la punta. Dentro c'è la testata
+    // read di BoostSheet, con la ✕.
+    @Binding var showingProfile: Bool
 
     @Query(filter: #Predicate<Folder> { $0.parent == nil }, sort: \Folder.name)
     private var rootFolders: [Folder]
@@ -78,7 +83,12 @@ struct SidebarView: View {
     @State private var noteCreateFolder: Folder?
 
     @State private var renamingNote: Note?
-    @State private var renameText = ""
+
+    // Eliminazioni in attesa di conferma: una cartella si porta via a
+    // cascata sottocartelle e note, e prima bastava una voce di menu
+    // senza nessuna domanda.
+    @State private var folderPendingDelete: Folder?
+    @State private var notePendingDelete: Note?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -91,23 +101,30 @@ struct SidebarView: View {
             // ed erano governati da quattro icone indistinguibili.
             folderListHeader
 
-            List(selection: $selectedNote) {
-                let rootItems = rootFolders.map(SidebarItem.folder) + unfiledNotes.map(SidebarItem.note)
-                ForEach(rootItems) { item in
-                    sidebarNode(item)
+            // Albero disegnato a mano invece che con List+DisclosureGroup:
+            // il design vuole la riga senza freccetta di sistema e le note
+            // rientrate dietro una GUIDA VERTICALE, due cose che con la
+            // List si possono solo approssimare.
+            ScrollView {
+                VStack(spacing: 0) {
+                    let rootItems = rootFolders.map(SidebarItem.folder) + unfiledNotes.map(SidebarItem.note)
+                    ForEach(rootItems) { item in
+                        sidebarNode(item)
+                    }
                 }
+                .padding(.horizontal, DesignSpace.s4)
+                .padding(.bottom, DesignSpace.s3)
             }
             .id(outlineResetID)
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .environment(\.defaultMinListRowHeight, 34)
 
             footer
         }
-        .background(DesignColor.surfaceSunken)
-        // Un filo di bordo sul lato del contenuto: stacca la barra dal
-        // foglio bianco della pagina (mock utente 2026-08-16 — prima i
-        // due grigi si fondevano e la barra "galleggiava" senza confine).
+        // Il fondo IGNORA la safe area: fermandosi sotto la barra di stato
+        // lasciava vedere il grigio di sistema sopra e ai lati, e la
+        // colonna sembrava una scheda appoggiata sopra la pagina invece di
+        // essere il bordo sinistro della pagina stessa.
+        .background(DesignColor.surfacePage.ignoresSafeArea())
+        // Un filo di bordo sul lato del contenuto: separa senza staccare.
         .overlay(alignment: .trailing) {
             Rectangle()
                 .fill(DesignColor.borderSubtle)
@@ -124,27 +141,58 @@ struct SidebarView: View {
                 selectedNote = note
             }
         }
-        .alert("Rinomina nota", isPresented: renameAlertPresented) {
-            TextField("Nome", text: $renameText)
-            Button("Annulla", role: .cancel) { renamingNote = nil }
-            Button("Salva") {
-                applyNoteRename()
+        .sheet(item: $renamingNote) { note in
+            RenameSheet(title: "Rinomina nota", initialName: note.title) { newName in
+                note.title = newName
+                note.updatedAt = .now
             }
         }
+        .alert(
+            Text("Eliminare «\(folderPendingDelete?.name ?? "")»?"),
+            isPresented: Binding(
+                get: { folderPendingDelete != nil },
+                set: { if !$0 { folderPendingDelete = nil } }
+            ),
+            presenting: folderPendingDelete
+        ) { folder in
+            Button("Annulla", role: .cancel) { folderPendingDelete = nil }
+            Button("Elimina", role: .destructive) { deleteFolder(folder) }
+        } message: { folder in
+            let count = noteCount(in: folder)
+            return Text("Le sue sottocartelle e \(count == 1 ? "la nota che contiene" : "le \(count) note che contiene") verranno eliminate. L'operazione non si può annullare.")
+        }
+        .alert(
+            Text("Eliminare «\(notePendingDelete.map { $0.title.isEmpty ? "Senza titolo" : $0.title } ?? "")»?"),
+            isPresented: Binding(
+                get: { notePendingDelete != nil },
+                set: { if !$0 { notePendingDelete = nil } }
+            ),
+            presenting: notePendingDelete
+        ) { note in
+            Button("Annulla", role: .cancel) { notePendingDelete = nil }
+            Button("Elimina", role: .destructive) { deleteNote(note) }
+        } message: { note in
+            Text("Tutte le sue pagine verranno eliminate. L'operazione non si può annullare.")
+        }
     }
+
+    // Il marchio: atomo di brand del kit (Wordmark in App.jsx, pesi
+    // 200/600), fuori dalla scala tipografica per definizione.
+    private static let wordmarkLight = Font.system(size: 22, weight: .ultraLight)
+    private static let wordmarkStrong = Font.system(size: 22, weight: .semibold)
 
     private var header: some View {
         HStack(spacing: 0) {
             Text("Boost")
-                .fontWeight(.ultraLight)
+                .font(Self.wordmarkLight)
             Text("Note")
-                .fontWeight(.semibold)
+                .font(Self.wordmarkStrong)
         }
-        .font(.system(size: 21))
         .foregroundStyle(DesignColor.textPrimary)
-        .padding(.horizontal, DesignSpace.s5)
-        .padding(.top, DesignSpace.s5 + 2)
-        .padding(.bottom, DesignSpace.s3 + 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DesignSpace.s6)
+        .padding(.top, DesignSpace.s8)
+        .padding(.bottom, DesignSpace.s6)
     }
 
     // Riga fissa sopra all'elenco delle cartelle: etichetta "Cartelle" e,
@@ -152,47 +200,58 @@ struct SidebarView: View {
     // comprimi tutto). È anche il punto dove trascinare
     // una nota per toglierla dalla cartella in cui si trova.
     private var folderListHeader: some View {
-        HStack(spacing: DesignSpace.s3) {
+        HStack(spacing: DesignSpace.s2) {
             Text("Cartelle")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DesignColor.textPrimary)
+                .font(DesignFont.micro)
+                .tracking(1.4)
+                .textCase(.uppercase)
+                .foregroundStyle(DesignColor.textTertiary)
 
             if dropTargetingRoot {
                 Text("· rilascia per togliere dalla cartella")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.brandPrimary)
+                    .lineLimit(1)
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            Button {
-                noteCreateFolder = nil
-                showingNoteCreate = true
+            // UN SOLO bottone dove prima ce n'erano tre: le altre due
+            // azioni (nuova cartella, comprimi tutto) vivono nel suo menu.
+            // Tre icone affiancate erano indistinguibili a colpo d'occhio.
+            Menu {
+                Button {
+                    noteCreateFolder = nil
+                    showingNoteCreate = true
+                } label: {
+                    Label("Nuova nota", systemImage: "note.text.badge.plus")
+                }
+                Button {
+                    folderSheetMode = .new(parent: nil)
+                } label: {
+                    Label("Nuova cartella", systemImage: "folder.badge.plus")
+                }
+                Divider()
+                Button {
+                    expandedFolders.removeAll()
+                    outlineResetID = UUID()
+                } label: {
+                    Label("Comprimi tutto", systemImage: "rectangle.compress.vertical")
+                }
             } label: {
-                Image(systemName: "note.text.badge.plus")
+                Image(systemName: "plus")
+                    .font(.system(size: DesignIcon.sm))
+                    .foregroundStyle(DesignColor.textSecondary)
+                    .frame(width: 22, height: 22)
+                    .overlay {
+                        Circle().strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+                    }
+                    .contentShape(Rectangle().inset(by: -11))
             }
-            .accessibilityLabel("Nuova nota")
-
-            Button {
-                folderSheetMode = .new(parent: nil)
-            } label: {
-                Image(systemName: "folder.badge.plus")
-            }
-            .accessibilityLabel("Nuova cartella")
-
-            Button {
-                expandedFolders.removeAll()
-                outlineResetID = UUID()
-            } label: {
-                Image(systemName: "rectangle.compress.vertical")
-            }
-            .accessibilityLabel("Comprimi tutte le cartelle")
+            .accessibilityLabel("Nuovo documento")
         }
-        .buttonStyle(.plain)
-        .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(DesignColor.textSecondary)
-        .padding(.horizontal, DesignSpace.s3 + 2)
-        .padding(.vertical, DesignSpace.s2)
+        .padding(.horizontal, DesignSpace.s6)
+        .padding(.bottom, DesignSpace.s3)
         .background(
             dropTargetingRoot ? DesignColor.brandPrimarySubtle : Color.clear,
             in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
@@ -205,10 +264,14 @@ struct SidebarView: View {
         }
     }
 
+    // NIENTE TILE: l'attivo si dice con una barra di accento sul bordo
+    // sinistro della colonna e col colore, non con un rettangolo pieno.
+    // È la stessa grammatica del resto della barra — tipografia, filo,
+    // accento — e sotto una nota aperta non lascia macchie di colore.
     private var navSection: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 0) {
             ForEach(AppEnvironment.navItems, id: \.self) { env in
-                Button {
+                navRow(icon: env.systemImage, label: env.label, isActive: environment == env) {
                     environment = env
                     if env == .home {
                         selectedNote = nil
@@ -222,54 +285,46 @@ struct SidebarView: View {
                         selectedStudyModule = nil
                         showingStudioProgress = false
                     }
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: env.systemImage)
-                            .font(.system(size: 15))
-                            .frame(width: 20)
-                        Text(env.label)
-                            .font(.system(size: 14, weight: .medium))
-                        Spacer()
-                    }
-                    .foregroundStyle(environment == env ? DesignColor.brandPrimary : DesignColor.textPrimary)
-                    .padding(.vertical, DesignSpace.s2)
-                    .padding(.horizontal, DesignSpace.s2 + 2)
-                    .background(
-                        environment == env ? DesignColor.brandPrimarySubtle : Color.clear,
-                        in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                    )
                 }
-                .buttonStyle(.plain)
             }
 
-            Button {
+            navRow(icon: "building.columns", label: "WeBeep", isActive: environment == .webeep, dot: isWebeepConnected ? DesignColor.success : DesignColor.danger) {
                 environment = .webeep
                 selectedNote = nil
                 selectedFolder = nil
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "building.columns.fill")
-                        .font(.system(size: 15))
-                        .frame(width: 20)
-                    Text("WeBeep")
-                        .font(.system(size: 14, weight: .medium))
-                    Spacer()
-                    Circle()
-                        .fill(isWebeepConnected ? DesignColor.success : DesignColor.danger)
-                        .frame(width: 8, height: 8)
-                }
-                .foregroundStyle(environment == .webeep ? DesignColor.brandPrimary : DesignColor.textPrimary)
-                .padding(.vertical, DesignSpace.s2)
-                .padding(.horizontal, DesignSpace.s2 + 2)
-                .background(
-                    environment == .webeep ? DesignColor.brandPrimarySubtle : Color.clear,
-                    in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                )
             }
-            .buttonStyle(.plain)
         }
-        .padding(.horizontal, DesignSpace.s3 - 2)
-        .padding(.bottom, DesignSpace.s3)
+        .padding(.bottom, DesignSpace.s6)
+    }
+
+    private func navRow(icon: String, label: String, isActive: Bool, dot: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: DesignIcon.md))
+                    .foregroundStyle(isActive ? DesignColor.brandPrimary : DesignColor.textSecondary)
+                    .frame(width: 18)
+                Text(label)
+                    .font(isActive ? DesignFont.cardTitle : DesignFont.body)
+                    .foregroundStyle(isActive ? DesignColor.brandPrimary : DesignColor.textPrimary)
+                Spacer(minLength: 0)
+                if let dot {
+                    Circle().fill(dot).frame(width: 6, height: 6)
+                }
+            }
+            .padding(.vertical, DesignSpace.s2)
+            .padding(.horizontal, DesignSpace.s6)
+            .contentShape(Rectangle())
+            .overlay(alignment: .leading) {
+                if isActive {
+                    UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0, bottomTrailingRadius: 3, topTrailingRadius: 3, style: .continuous)
+                        .fill(DesignColor.brandPrimary)
+                        .frame(width: 3)
+                        .padding(.vertical, DesignSpace.s2)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // Menu "Nuovo documento": scegli tra cartella o nota.
@@ -299,33 +354,70 @@ struct SidebarView: View {
         WebeepService.savedToken != nil
     }
 
-    private var footer: some View {
-        HStack(spacing: DesignSpace.s3) {
-            Button(action: onOpenProfile) {
-                HStack(spacing: 8) {
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(DesignColor.textSecondary)
-                    Text("Profilo")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(DesignColor.textPrimary)
-                    Spacer()
-                }
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, DesignSpace.s4)
-        .padding(.vertical, DesignSpace.s3)
-        .overlay(alignment: .top) {
-            Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
-        }
+    // Stessa grammatica della colonna: nessun tile campito, un cerchio a
+    // filo con le iniziali e due righe di testo. Tutta la riga apre il
+    // profilo.
+    @AppStorage("profileName") private var profileName = ""
+    @AppStorage("profileSurname") private var profileSurname = ""
+
+    private var initials: String {
+        let letters = [profileName, profileSurname]
+            .compactMap { $0.trimmingCharacters(in: .whitespaces).first }
+            .map(String.init)
+        return letters.joined().uppercased()
     }
 
-    private var renameAlertPresented: Binding<Bool> {
-        Binding(
-            get: { renamingNote != nil },
-            set: { if !$0 { renamingNote = nil } }
-        )
+    private var footer: some View {
+        Button(action: onOpenProfile) {
+            HStack(spacing: 12) {
+                Group {
+                    // Senza nome nel profilo le iniziali non esistono: un
+                    // "?" dentro il cerchio sembrerebbe un errore, la
+                    // sagoma no.
+                    if initials.isEmpty {
+                        Image(systemName: "person")
+                            .font(.system(size: DesignIcon.md))
+                    } else {
+                        Text(initials)
+                            .font(DesignFont.micro)
+                            .tracking(0.3)
+                    }
+                }
+                    .foregroundStyle(DesignColor.brandPrimary)
+                    .frame(width: 32, height: 32)
+                    .overlay {
+                        Circle().strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+                    }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(profileName.isEmpty ? "Profilo" : profileName)
+                        .font(DesignFont.cardTitle)
+                        .foregroundStyle(DesignColor.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text("Profilo e impostazioni")
+                        .font(DesignFont.caption)
+                        .foregroundStyle(DesignColor.textTertiary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: DesignIcon.sm))
+                    .foregroundStyle(DesignColor.textTertiary)
+            }
+            .padding(.horizontal, DesignSpace.s5)
+            // Stessa altezza della barra in fondo alle sheet: affiancate
+            // sullo stesso schermo, due fasce a quote diverse si notano.
+            .frame(height: DesignSize.bottomBar)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) {
+            Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
+        }
+
     }
 
     // Albero ricorsivo con DisclosureGroup espliciti al posto di
@@ -334,20 +426,27 @@ struct SidebarView: View {
     // ricorsione infinita del type-checker.
     @ViewBuilder
     private func sidebarNode(_ item: SidebarItem) -> some View {
-        switch item {
-        case .note:
+        VStack(spacing: 0) {
             row(for: item)
-        case .folder(let folder):
-            if let children = item.children {
-                DisclosureGroup(isExpanded: expansionBinding(folder)) {
+            if case .folder(let folder) = item,
+               let children = item.children,
+               expandedFolders.contains(folder.persistentModelID) {
+                // GUIDA VERTICALE al posto della freccetta: dice dove
+                // finisce il contenuto della cartella meglio di un
+                // triangolo, e non ruba spazio al nome.
+                VStack(spacing: 0) {
                     ForEach(children) { child in
                         AnyView(sidebarNode(child))
                     }
-                } label: {
-                    row(for: item)
                 }
-            } else {
-                row(for: item)
+                .padding(.leading, DesignSpace.s1)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(DesignColor.borderDefault)
+                        .frame(width: 1.5)
+                }
+                .padding(.leading, DesignSpace.s4)
+                .padding(.bottom, DesignSpace.s1)
             }
         }
     }
@@ -379,58 +478,47 @@ struct SidebarView: View {
     private func row(for item: SidebarItem) -> some View {
         switch item {
         case .folder(let folder):
+            let isTarget = dropTargetFolderID == folder.persistentModelID
             HStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    // Tessera MORBIDA (mock utente 2026-08-16, secondo
-                    // giro): tinta al 15% con il glifo nel colore — la
-                    // versione piena era troppo accesa accanto al resto
-                    // del documento. Niente conteggio elementi: non è
-                    // un'informazione utile (sua richiesta esplicita).
-                    RoundedRectangle(cornerRadius: DesignRadius.sm + 1, style: .continuous)
-                        .fill(folder.folderColor.color.opacity(0.15))
-                        .frame(width: 28, height: 28)
-                        .overlay(
-                            Image(systemName: "folder.fill")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(folder.folderColor.color)
-                        )
-                    Text(folder.name)
-                        .font(.system(size: 14, weight: selectedFolder == folder ? .semibold : .medium))
-                        .foregroundStyle(selectedFolder == folder ? DesignColor.brandPrimary : DesignColor.textPrimary)
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
-                // L'ordine conta: il doppio tocco va dichiarato PRIMA del
-                // singolo, così SwiftUI aspetta a decidere. Due tocchi =
-                // apri/chiudi la tendina; uno = apri la cartella.
-                .onTapGesture(count: 2) {
-                    toggleExpansion(folder)
-                }
-                .onTapGesture {
-                    selectedNote = nil
-                    selectedFolder = folder
-                }
+                // L'unico elemento PIENO della colonna: il quadratino del
+                // colore del corso. Tutto il resto è linea e tipografia,
+                // quindi qui basta poco per identificare la cartella.
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                    .fill(folder.folderColor.color)
+                    .frame(width: 9, height: 9)
+                    .padding(.horizontal, DesignSpace.s1)
 
-                newDocumentMenu(folder: folder) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 15))
-                        .foregroundStyle(DesignColor.textTertiary)
-                }
-                .accessibilityLabel("Nuovo documento in \(folder.name)")
+                Text(folder.name)
+                    .font(DesignFont.body)
+                    .foregroundStyle(selectedFolder == folder ? DesignColor.brandPrimary : DesignColor.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Spacer(minLength: 4)
+
+                Text("\(folder.notes.count)")
+                    .font(DesignFont.caption.monospacedDigit())
+                    .foregroundStyle(DesignColor.textTertiary)
             }
-            .padding(.vertical, DesignSpace.s2 + 1)
-            .padding(.horizontal, DesignSpace.s2 + 2)
-            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
-            .listRowSeparator(.hidden)
+            .padding(.vertical, DesignSpace.s2)
+            .padding(.horizontal, DesignSpace.s3)
             .background(
-                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                    .fill(
-                        dropTargetFolderID == folder.persistentModelID
-                            ? DesignColor.brandPrimarySubtle
-                            : (selectedFolder == folder ? DesignColor.brandPrimarySubtle.opacity(0.6) : Color.clear)
-                    )
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                    .fill(isTarget ? DesignColor.brandPrimarySubtle
+                          : (selectedFolder == folder ? DesignColor.brandPrimarySubtle.opacity(0.6) : Color.clear))
             )
-            .listRowBackground(Color.clear)
+            .contentShape(Rectangle())
+            // L'ordine conta: il doppio tocco va dichiarato PRIMA del
+            // singolo, così SwiftUI aspetta a decidere. Due tocchi =
+            // apri/chiudi la tendina; uno = apri la cartella.
+            .onTapGesture(count: 2) {
+                toggleExpansion(folder)
+            }
+            .onTapGesture {
+                selectedNote = nil
+                selectedFolder = folder
+                toggleExpansion(folder)
+            }
             .dropDestination(for: String.self) { items, _ in
                 handleNoteDropStrings(items, into: folder)
                 return true
@@ -456,7 +544,7 @@ struct SidebarView: View {
                 }
                 Divider()
                 Button(role: .destructive) {
-                    deleteFolder(folder)
+                    folderPendingDelete = folder
                 } label: {
                     Label("Elimina cartella", systemImage: "trash")
                 }
@@ -464,41 +552,34 @@ struct SidebarView: View {
 
         case .note(let note):
             let isSelected = selectedNote == note
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
-                    .fill(DesignColor.surfacePage)
-                    .frame(width: 26, height: 26)
-                    .overlay(
-                        Image(systemName: "note.text")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.textSecondary)
-                    )
+            HStack(spacing: 8) {
+                Image(systemName: note.isWhiteboard ? "scribble.variable" : "note.text")
+                    .font(.system(size: DesignIcon.sm))
+                    .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.textTertiary)
                 Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                    .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                    .font(DesignFont.label)
+                    .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.textPrimary)
                     .lineLimit(1)
-                Spacer()
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
             }
-            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.textPrimary)
-            .padding(.vertical, DesignSpace.s2 + 1)
-            .padding(.horizontal, DesignSpace.s2 + 2)
+            .padding(.vertical, DesignSpace.s2)
+            .padding(.horizontal, DesignSpace.s3)
             .background(
-                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     .fill(isSelected ? DesignColor.brandPrimarySubtle : Color.clear)
             )
-            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
-            .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
-            .tag(note)
+            .contentShape(Rectangle())
+            .onTapGesture { selectedNote = note }
             .draggable(note.id.uuidString)
             .contextMenu {
                 Button {
                     renamingNote = note
-                    renameText = note.title
                 } label: {
                     Label("Rinomina", systemImage: "pencil")
                 }
                 Button(role: .destructive) {
-                    deleteNote(note)
+                    notePendingDelete = note
                 } label: {
                     Label("Elimina nota", systemImage: "trash")
                 }
@@ -530,25 +611,36 @@ struct SidebarView: View {
         }
     }
 
-    private func applyNoteRename() {
-        let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, let note = renamingNote else {
-            renamingNote = nil
-            return
-        }
-        note.title = trimmed
-        note.updatedAt = .now
-        renamingNote = nil
-    }
-
+    // L'eliminazione è a CASCATA su tutto il sottoalbero: le selezioni
+    // vanno azzerate per ogni nota e cartella discendente, non solo per
+    // le figlie dirette — prima una nota aperta da una SOTTOcartella
+    // lasciava l'editor su un @Model eliminato.
     private func deleteFolder(_ folder: Folder) {
-        if let selectedNote, folder.notes.contains(selectedNote) {
+        folderPendingDelete = nil
+        var noteIDs: Set<PersistentIdentifier> = []
+        var folderIDs: Set<PersistentIdentifier> = []
+        collectSubtree(of: folder, notes: &noteIDs, folders: &folderIDs)
+        if let selectedNote, noteIDs.contains(selectedNote.persistentModelID) {
             self.selectedNote = nil
+        }
+        if let selectedFolder, folderIDs.contains(selectedFolder.persistentModelID) {
+            self.selectedFolder = nil
         }
         context.delete(folder)
     }
 
+    private func collectSubtree(of folder: Folder, notes: inout Set<PersistentIdentifier>, folders: inout Set<PersistentIdentifier>) {
+        folders.insert(folder.persistentModelID)
+        for note in folder.notes { notes.insert(note.persistentModelID) }
+        for child in folder.children { collectSubtree(of: child, notes: &notes, folders: &folders) }
+    }
+
+    private func noteCount(in folder: Folder) -> Int {
+        folder.notes.count + folder.children.reduce(0) { $0 + noteCount(in: $1) }
+    }
+
     private func deleteNote(_ note: Note) {
+        notePendingDelete = nil
         if selectedNote == note { selectedNote = nil }
         context.delete(note)
     }
@@ -582,17 +674,29 @@ struct FolderEditSheet: View {
         return false
     }
 
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: isNew ? "Nuova cartella" : "Modifica cartella",
+            mode: .commit(verb: isNew ? "Crea" : "Salva", enabled: canSave),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                onSave(name, color, mode)
+                dismiss()
+            }
+        ) {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 VStack(alignment: .leading, spacing: DesignSpace.s2) {
                     HStack(spacing: DesignSpace.s3) {
                         Image(systemName: "folder.fill")
-                            .font(.system(size: 22))
+                            .font(.system(size: DesignIcon.lg))
                             .foregroundStyle(color.color)
                         TextField("Nome cartella", text: $name)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 16, weight: .medium))
+                            .font(DesignFont.body)
                     }
                     .padding(DesignSpace.s3)
                     .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
@@ -600,7 +704,7 @@ struct FolderEditSheet: View {
 
                 VStack(alignment: .leading, spacing: DesignSpace.s2) {
                     Text("COLORE")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.micro)
                         .tracking(0.6)
                         .foregroundStyle(DesignColor.textTertiary)
 
@@ -610,7 +714,7 @@ struct FolderEditSheet: View {
                                 color = option
                             } label: {
                                 Image(systemName: "folder.fill")
-                                    .font(.system(size: 18))
+                                    .font(.system(size: DesignIcon.lg))
                                     .foregroundStyle(option.color)
                                     .frame(width: 38, height: 38)
                                     .background(
@@ -619,6 +723,7 @@ struct FolderEditSheet: View {
                                     .overlay(
                                         Circle().stroke(option.color, lineWidth: color == option ? 2 : 0)
                                     )
+                                    .contentShape(Rectangle().inset(by: -3))
                             }
                         }
                     }
@@ -627,22 +732,8 @@ struct FolderEditSheet: View {
                 Spacer()
             }
             .padding(DesignSpace.s5)
-            .navigationTitle(isNew ? "Nuova cartella" : "Modifica cartella")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isNew ? "Crea" : "Salva") {
-                        onSave(name, color, mode)
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.height(420)])
     }
 }
 

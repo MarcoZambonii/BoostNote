@@ -12,20 +12,44 @@ struct ServiceFailure: Error {
     let message: String
 }
 
+// Continuation che si riprende UNA volta sola, qualunque cosa succeda.
+//
+// Serve ai wrapper di Vision: `handler.perform` è sincrono e può LANCIARE
+// senza aver mai chiamato il completion della richiesta — con il vecchio
+// `try?` la continuation restava sospesa per sempre e chi aspettava
+// (estrazione materiali, penna magica) si appendeva senza uscita. Ma può
+// anche succedere il contrario: completion chiamato CON errore e perform
+// che rilancia lo stesso errore — riprendere due volte è un crash. Le due
+// chiamate avvengono in sequenza sullo stesso thread, quindi basta il
+// flag, senza lock.
+final class OneShotContinuation<T>: @unchecked Sendable {
+    private var continuation: CheckedContinuation<T, Never>?
+
+    init(_ continuation: CheckedContinuation<T, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ value: T) {
+        continuation?.resume(returning: value)
+        continuation = nil
+    }
+}
+
 enum MagicPenService {
     static func recognizeText(in image: UIImage) async -> String? {
         guard let cgImage = image.cgImage else { return nil }
         return await withCheckedContinuation { continuation in
+            let resume = OneShotContinuation(continuation)
             let request = VNRecognizeTextRequest { request, _ in
                 guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    continuation.resume(returning: nil)
+                    resume.resume(nil)
                     return
                 }
                 let text = observations
                     .compactMap { $0.topCandidates(1).first?.string }
                     .joined(separator: " ")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                continuation.resume(returning: text.isEmpty ? nil : text)
+                resume.resume(text.isEmpty ? nil : text)
             }
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = false
@@ -37,7 +61,11 @@ enum MagicPenService {
 
             DispatchQueue.global(qos: .userInitiated).async {
                 let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                try? handler.perform([request])
+                do {
+                    try handler.perform([request])
+                } catch {
+                    resume.resume(nil)
+                }
             }
         }
     }

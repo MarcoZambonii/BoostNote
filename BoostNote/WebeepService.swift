@@ -43,22 +43,22 @@ enum WebeepService {
         return simpleParts.count >= 2 ? simpleParts[1] : nil
     }
 
-    static func siteInfo(token: String) async -> WebeepSiteInfo? {
-        await call(function: "core_webservice_get_site_info", token: token, params: [:])
+    static func siteInfo(token: String) async throws -> WebeepSiteInfo {
+        try await call(function: "core_webservice_get_site_info", token: token, params: [:])
     }
 
-    static func courses(token: String, userID: Int) async -> [WebeepCourse] {
+    static func courses(token: String, userID: Int) async throws -> [WebeepCourse] {
         let params = ["userid": String(userID)]
-        return (await call(function: "core_enrol_get_users_courses", token: token, params: params)) ?? []
+        return try await call(function: "core_enrol_get_users_courses", token: token, params: params)
     }
 
     // Struttura reale del corso (sezioni Moodle con i rispettivi file),
     // per mostrare i materiali raggruppati come su WeBeep invece che in
     // un'unica lista piatta.
-    static func contents(token: String, courseID: Int) async -> [WebeepSection] {
+    static func contents(token: String, courseID: Int) async throws -> [WebeepSection] {
         let params = ["courseid": String(courseID)]
-        let sections: [WebeepSection]? = await call(function: "core_course_get_contents", token: token, params: params)
-        return (sections ?? []).filter { section in
+        let sections: [WebeepSection] = try await call(function: "core_course_get_contents", token: token, params: params)
+        return sections.filter { section in
             !(section.modules ?? []).flatMap { $0.contents ?? [] }.isEmpty
         }
     }
@@ -120,7 +120,19 @@ enum WebeepService {
         return chosen.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func call<T: Decodable>(function: String, token: String, params: [String: String]) async -> T? {
+    // La risposta di errore di Moodle: HTTP 200 con un oggetto
+    // {exception, errorcode, message}. È l'UNICO caso in cui si può dire
+    // "token non valido" — tutto il resto (rete giù, JSON in una forma
+    // nuova) NON autorizza a buttare il token: prima ogni fallimento
+    // veniva inghiottito da un try? e i chiamanti disconnettevano WeBeep
+    // anche per un timeout in metropolitana.
+    private struct MoodleException: Decodable {
+        var exception: String?
+        var errorcode: String?
+        var message: String?
+    }
+
+    private static func call<T: Decodable>(function: String, token: String, params: [String: String]) async throws -> T {
         var components = URLComponents(string: "\(baseURL)/webservice/rest/server.php")
         var items = [
             URLQueryItem(name: "wstoken", value: token),
@@ -129,10 +141,38 @@ enum WebeepService {
         ]
         items += params.map { URLQueryItem(name: $0.key, value: $0.value) }
         components?.queryItems = items
-        guard let url = components?.url else { return nil }
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
-        return try? JSONDecoder().decode(T.self, from: data)
+        guard let url = components?.url else { throw WebeepServiceError.badResponse }
+
+        let data: Data
+        do {
+            (data, _) = try await URLSession.shared.data(from: url)
+        } catch {
+            throw WebeepServiceError.network(error.localizedDescription)
+        }
+        if let value = try? JSONDecoder().decode(T.self, from: data) {
+            return value
+        }
+        // Non è il tipo atteso: forse è l'oggetto-errore di Moodle. Il
+        // guard su exception/errorcode evita che un JSON qualunque (che
+        // decodifica in un MoodleException tutto-nil) passi per errore.
+        if let moodleError = try? JSONDecoder().decode(MoodleException.self, from: data),
+           moodleError.exception != nil || moodleError.errorcode != nil {
+            if moodleError.errorcode == "invalidtoken" {
+                throw WebeepServiceError.invalidToken
+            }
+            throw WebeepServiceError.badResponse
+        }
+        throw WebeepServiceError.badResponse
     }
+}
+
+// Errori delle Web Services Moodle, distinti per ciò che il chiamante
+// deve farne: solo `.invalidToken` giustifica un signOut; `.network` e
+// `.badResponse` sono transitori e il token va CONSERVATO.
+enum WebeepServiceError: Error {
+    case network(String)
+    case invalidToken
+    case badResponse
 }
 
 enum WebeepDownloadError: Error {

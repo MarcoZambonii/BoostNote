@@ -5,9 +5,11 @@ import WebKit
 // (TikZJax, offline) e riferisce l'SVG al chiamante perché lo persista
 // nel payload — dalla volta dopo si mostra e basta, zero ricompilazioni.
 //
-// Contratto onesto: se il TeX non compila, la vista SPARISCE (onFailed
-// permette al chiamante di segnarlo e non ritentare) — mai una figura
-// rotta accanto a una traccia giusta.
+// Contratto onesto: se il TeX non compila, la figura non si mostra —
+// mai un disegno rotto accanto a una traccia giusta — ma la mancanza si
+// DICE (onFailed permette al chiamante di segnarla e non ritentare):
+// una traccia che parla di un disegno assente, senza spiegazioni, è
+// peggio di una figura mancante e basta.
 struct TikZFigureView: View {
     let tikz: String
     // SVG già compilato in passato, se c'è nel payload.
@@ -17,6 +19,10 @@ struct TikZFigureView: View {
 
     @State private var svg: String?
     @State private var failed = false
+    // Il TeX non compila: fallimento DEFINITIVO e del contenuto, quindi
+    // si dice. Diverso da `failed` da solo, che copre anche il motore
+    // non pronto (transitorio, si ritenta e non si annuncia).
+    @State private var sourceIsBroken = false
     @State private var height: CGFloat = 120
 
     var body: some View {
@@ -25,11 +31,19 @@ struct TikZFigureView: View {
                 SVGWebView(svg: svg, height: $height)
                     .frame(height: height)
                     .frame(maxWidth: .infinity)
+            } else if sourceIsBroken {
+                // Il fallimento silenzioso era indistinguibile da "qui
+                // una figura non serviva": la traccia parlava di un
+                // disegno che non arrivava mai, senza dire perché.
+                Label("La figura di questa traccia non è compilabile: disegnala tu prima di risolvere.", systemImage: "scribble.variable")
+                    .font(DesignFont.caption)
+                    .foregroundStyle(DesignColor.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if !failed {
                 HStack(spacing: DesignSpace.s2) {
                     ProgressView().controlSize(.small)
                     Text("Preparo la figura…")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 .frame(maxWidth: .infinity)
@@ -37,9 +51,23 @@ struct TikZFigureView: View {
             }
         }
         .task(id: tikz) {
+            // AZZERAMENTO OBBLIGATORIO. SwiftUI può riusare questa vista
+            // per un ALTRO esercizio (stessa posizione nella gerarchia):
+            // senza questa riga il vecchio `svg` resta, e siccome il
+            // corpo lo mostra per primo, l'esercizio nuovo si vede
+            // addosso la figura del precedente finché la sua non è
+            // pronta — o per sempre, se la sua non compila.
+            svg = nil
+            failed = false
+            sourceIsBroken = false
             if let cachedSVG {
                 // Vuoto = fallita in passato: niente spinner, niente retry.
-                if cachedSVG.isEmpty { failed = true } else { svg = cachedSVG }
+                if cachedSVG.isEmpty {
+                    failed = true
+                    sourceIsBroken = true
+                } else {
+                    svg = cachedSVG
+                }
                 return
             }
             switch await TikZCompiler.shared.compile(tikz) {
@@ -50,6 +78,7 @@ struct TikZFigureView: View {
                 // Il TeX non compila: esito del CONTENUTO, si ricorda nel
                 // payload e non si ritenta più.
                 failed = true
+                sourceIsBroken = true
                 onFailed()
             case .unavailable:
                 // Motore non pronto (webview caduta, processo web morto,

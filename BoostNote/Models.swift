@@ -65,13 +65,13 @@ enum FolderColor: String, CaseIterable, Codable {
     // glifo su fondo chiaro. Solo qui: gli strumenti restano accesi.
     var color: Color {
         switch self {
-        case .gray: Color(hex: 0x8A857F)
-        case .blue: Color(hex: 0x6E87D8)
-        case .red: Color(hex: 0xC96A5E)
-        case .green: Color(hex: 0x5E9678)
-        case .orange: Color(hex: 0xC08552)
-        case .purple: Color(hex: 0x8B7FD0)
-        case .teal: Color(hex: 0x5F9EA0)
+        case .gray: DesignColor.folderGray
+        case .blue: DesignColor.folderBlue
+        case .red: DesignColor.folderRed
+        case .green: DesignColor.folderGreen
+        case .orange: DesignColor.folderOrange
+        case .purple: DesignColor.folderPurple
+        case .teal: DesignColor.folderTeal
         }
     }
 }
@@ -357,12 +357,24 @@ extension Note {
                 attach(page, in: context)
                 created.append(page)
             }
+            finishLegacyMigration()
             return created
         }
 
         let page = NotePage(order: 0, drawingData: drawingData)
         attach(page, in: context)
+        finishLegacyMigration()
         return [page]
+    }
+
+    // La migrazione è COMPIUTA solo quando i campi legacy si svuotano:
+    // lasciarli pieni faceva credere alle Impostazioni foglio che la nota
+    // avesse ancora uno "sfondo PDF" da rimuovere — un banner perpetuo su
+    // ogni nota migrata, e un pulsante che azzerava il campo sbagliato
+    // (il PDF vero ormai vive nelle pagine).
+    private func finishLegacyMigration() {
+        drawingData = nil
+        pdfBackgroundData = nil
     }
 
     // Aggiunge una pagina per ciascuna pagina del PDF in coda alle pagine

@@ -15,6 +15,16 @@ enum DeviceLayout {
 // I colori erano definiti in OKLCH: qui sono approssimati in sRGB, dato
 // che SwiftUI non offre un init OKLCH diretto su tutte le versioni iOS.
 enum DesignColor {
+    // Palette delle cartelle (la scelta dell'utente sta nel modello,
+    // il valore cromatico sta qui con gli altri).
+    static let folderGray = Color(hex: 0x8A857F)
+    static let folderBlue = Color(hex: 0x6E87D8)
+    static let folderRed = Color(hex: 0xC96A5E)
+    static let folderGreen = Color(hex: 0x5E9678)
+    static let folderOrange = Color(hex: 0xC08552)
+    static let folderPurple = Color(hex: 0x8B7FD0)
+    static let folderTeal = Color(hex: 0x5F9EA0)
+
     // Neutrali (grigio caldo)
     static let gray900 = Color(hex: 0x1C1B1A)
     static let gray800 = Color(hex: 0x302E2C)
@@ -100,11 +110,113 @@ enum DesignRadius {
     static let pill: CGFloat = 999
 }
 
+// Scala tipografica CHIUSA del design system (tokens/typography.css):
+// dieci ruoli, nessun altro. La regola di scelta sta nel §1 del README
+// del kit; `.fontWeight()` dopo un DesignFont è vietato — il peso lo
+// porta il ruolo. I tre titoli erano ultraLight/light nel kit: sono
+// stati portati a bold su richiesta dell'utente (2026-08-22), che li
+// vuole leggibili come titoli e non come didascalie grandi.
+enum DesignFont {
+    static let display      = Font.system(size: 30, weight: .bold)
+    static let screenTitle  = Font.system(size: 26, weight: .bold)
+    static let sectionTitle = Font.system(size: 20, weight: .bold)
+    static let cardTitle    = Font.system(size: 15, weight: .semibold)
+    static let body         = Font.system(size: 15, weight: .regular)
+    static let action       = Font.system(size: 13, weight: .semibold)
+    static let label        = Font.system(size: 13, weight: .medium)
+    static let caption      = Font.system(size: 12, weight: .regular)
+    static let micro        = Font.system(size: 10, weight: .semibold)
+    static let mono         = Font.system(size: 14, weight: .regular, design: .monospaced)
+
+    // unica eccezione alla scala: quadranti numerici degli strumenti
+    // (display della calcolatrice, timer Pomodoro)
+    static func readout(size: CGFloat) -> Font {
+        .system(size: size, weight: .ultraLight, design: .default)
+    }
+
+    // spazio AGGIUNTO fra le righe (.lineSpacing), non line-height
+    static let bodyLineSpacing: CGFloat = 3
+    static let captionLineSpacing: CGFloat = 2
+    static let monoLineSpacing: CGFloat = 2
+}
+
+// `.system(size:)` su un'Image NON è tipografia: è dimensione
+// icona, e i passi sono quattro — nessun altro.
+enum DesignIcon {
+    static let sm: CGFloat = 14
+    static let md: CGFloat = 17
+    static let lg: CGFloat = 20
+    static let xl: CGFloat = 24
+}
+
+// Altezze di controllo (iPad: area di tocco minima 44, sempre).
+enum DesignSize {
+    static let control: CGFloat = 44   // bottoni, campi, righe tappabili
+    static let compact: CGFloat = 38   // SOLO testate di card e pannelli
+    static let touchMin: CGFloat = 44  // area di tocco minima, sempre
+    static let rowMin: CGFloat = 56    // riga di elenco
+    // Fasce in fondo a una colonna o a una sheet (footer del Profilo,
+    // barra di conferma): stessa altezza, così stanno sulla stessa
+    // linea quando si vedono affiancate.
+    static let bottomBar: CGFloat = 60
+}
+
+// Le DUE elevazioni del sistema (tokens/colors.css --elev-popover /
+// --elev-sheet): niente altre ombre, niente blur, niente gradienti.
+extension View {
+    func boostPopoverShadow() -> some View { shadow(color: .black.opacity(0.16), radius: 20, y: 7) }
+    func boostSheetShadow() -> some View { shadow(color: .black.opacity(0.28), radius: 30, y: 12) }
+}
+
 extension Color {
     init(hex: UInt32) {
         let r = Double((hex >> 16) & 0xFF) / 255
         let g = Double((hex >> 8) & 0xFF) / 255
         let b = Double(hex & 0xFF) / 255
         self.init(.sRGB, red: r, green: g, blue: b, opacity: 1)
+    }
+}
+
+
+// Il vecchio BoostButtonStyle è stato ASSORBITO da BoostButton
+// (BoostComponents.swift): a ~30 pt di altezza stava sotto il minimo di
+// tocco iPad, e le facce ora le disegna il componente coi token.
+
+// Selettore a segmenti dell'app: fondo `surface-page`, opzione scelta su
+// `brand-primary-subtle` col testo in brand. Sostituisce
+// .pickerStyle(.segmented), che porta il grigio e il raggio di iOS e
+// accanto ai blocchi da 14 sembra di un'altra app.
+struct BoostSegmented<Value: Hashable>: View {
+    let options: [(value: Value, label: String)]
+    @Binding var selection: Value
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.value) { option in
+                let isOn = selection == option.value
+                Button {
+                    selection = option.value
+                } label: {
+                    Text(option.label)
+                        .font(isOn ? DesignFont.action : DesignFont.label)
+                        .foregroundStyle(isOn ? DesignColor.brandPrimary : DesignColor.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: DesignSize.compact)
+                        .background(
+                            isOn ? DesignColor.brandPrimarySubtle : .clear,
+                            in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                .strokeBorder(DesignColor.borderSubtle, lineWidth: 1)
+        }
     }
 }

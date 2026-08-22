@@ -65,8 +65,10 @@ enum VaultIndexService {
                 chunk.characterCount = pack.characters
                 if !chunk.isIndexed { toIndex.append(chunk) }
             } else {
-                let chunk = VaultChunk(pageStart: pack.pageStart, pageEnd: pack.pageEnd, fingerprint: fingerprint, characterCount: pack.characters, document: document)
+                // Aggancio dal lato genitore (vedi VaultIngestionService).
+                let chunk = VaultChunk(pageStart: pack.pageStart, pageEnd: pack.pageEnd, fingerprint: fingerprint, characterCount: pack.characters, document: nil)
                 context.insert(chunk)
+                document.chunks.append(chunk)
                 toIndex.append(chunk)
             }
         }
@@ -128,6 +130,9 @@ enum VaultIndexService {
               !dto.topics.isEmpty else {
             return false
         }
+        // Il chunk può essere stato eliminato (documento tolto dal Vault)
+        // mentre la chiamata era in volo: niente scritture su un morto.
+        guard !chunk.isDeleted else { return false }
         // Il prompt è una preghiera, questa è la garanzia: ciò che il
         // modello scrive viene comunque riportato all'etichetta esistente
         // quando è una variante della stessa (accenti, plurali, sigle).
@@ -164,6 +169,7 @@ enum VaultIndexService {
 
         var indexed = 0
         for chunk in toIndex {
+            guard !document.isDeleted else { return indexed }
             if await indexChunk(chunk, knownTopics: known) {
                 indexed += 1
                 for topic in chunk.topics where seen.insert(TopicKey.key(topic)).inserted {

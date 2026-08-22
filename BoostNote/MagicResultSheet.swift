@@ -33,22 +33,26 @@ struct MagicResultSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Penna magica",
+            mode: .read,
+            onDismiss: { dismiss() }
+        ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSpace.s4) {
                     Label(result.action.label, systemImage: result.action.systemImage)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(result.action.color)
 
                     if result.recognizedText != nil {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 4) {
                                 Text("RICONOSCIUTO")
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(DesignFont.micro)
                                     .foregroundStyle(DesignColor.textTertiary)
                                 if let via = result.recognizedVia {
                                     Text("· \(via)")
-                                        .font(.system(size: 11, weight: .medium))
+                                        .font(DesignFont.caption)
                                         .foregroundStyle(DesignColor.textTertiary)
                                 }
                             }
@@ -56,7 +60,7 @@ struct MagicResultSheet: View {
                             // sbagliato qualcosa, si corregge qui e si
                             // riesegue, senza dover riscrivere sul foglio.
                             TextField("Testo riconosciuto", text: $editedText, axis: .vertical)
-                                .font(.system(size: 14, design: .monospaced))
+                                .font(DesignFont.mono)
                                 .foregroundStyle(DesignColor.textPrimary)
                                 .textFieldStyle(.plain)
                                 .autocorrectionDisabled()
@@ -69,21 +73,16 @@ struct MagicResultSheet: View {
 
                         if editedText.trimmingCharacters(in: .whitespacesAndNewlines) != (result.recognizedText ?? ""),
                            !editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Button {
+                            BoostButton("Riesegui col testo corretto", icon: "arrow.clockwise", fullWidth: true) {
                                 onRetry(editedText.trimmingCharacters(in: .whitespacesAndNewlines))
                                 dismiss()
-                            } label: {
-                                Label("Riesegui col testo corretto", systemImage: "arrow.clockwise")
-                                    .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.bordered)
-                            .tint(result.action.color)
                         }
                     }
 
                     if let errorMessage = result.errorMessage {
                         Text(errorMessage)
-                            .font(.system(size: 14))
+                            .font(DesignFont.body)
                             .foregroundStyle(DesignColor.danger)
                     }
 
@@ -123,7 +122,8 @@ struct MagicResultSheet: View {
                             case .failure:
                                 EmptyView()
                             default:
-                                ProgressView().frame(height: 80)
+                                BoostState(kind: .loading, title: "Scarico il grafico…")
+                                    .frame(height: 80)
                             }
                         }
                         .frame(maxWidth: .infinity)
@@ -140,54 +140,33 @@ struct MagicResultSheet: View {
                             // (re-interrogabile). I widget sul foglio non
                             // esistono più.
                             if result.action == .draw {
-                                Button {
+                                BoostButton("Apri nel pannello Grafici", icon: "sidebar.right", tone: .primary, fullWidth: true) {
                                     onInsert(true)
                                     dismiss()
-                                } label: {
-                                    Label("Apri nel pannello Grafici", systemImage: "sidebar.right")
-                                        .frame(maxWidth: .infinity)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(result.action.color)
                             } else {
-                                Button {
+                                BoostButton(insertLabel, icon: "plus", tone: .primary, fullWidth: true) {
                                     onInsert(false)
                                     dismiss()
-                                } label: {
-                                    Label(insertLabel, systemImage: "plus.circle.fill")
-                                        .frame(maxWidth: .infinity)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(result.action.color)
 
                                 // Il foglio riceve la formula composta:
                                 // chi vuole il sorgente (per Overleaf, per
                                 // un'altra app) se lo porta via da qui.
                                 if result.action == .latex, let resultText = result.resultText {
-                                    Button {
+                                    BoostButton(didCopy ? "Codice LaTeX copiato" : "Copia il codice LaTeX",
+                                                icon: didCopy ? "checkmark.circle.fill" : "doc.on.doc",
+                                                fullWidth: true) {
                                         UIPasteboard.general.string = resultText
                                         withAnimation { didCopy = true }
-                                    } label: {
-                                        Label(
-                                            didCopy ? "Codice LaTeX copiato" : "Copia il codice LaTeX",
-                                            systemImage: didCopy ? "checkmark" : "doc.on.doc"
-                                        )
-                                        .frame(maxWidth: .infinity)
                                     }
-                                    .buttonStyle(.bordered)
-                                    .tint(result.action.color)
                                 }
 
                                 if result.action == .wolfram {
-                                    Button {
+                                    BoostButton("Apri nel pannello", icon: "sidebar.right", fullWidth: true) {
                                         onInsert(true)
                                         dismiss()
-                                    } label: {
-                                        Label("Apri nel pannello", systemImage: "sidebar.right")
-                                            .frame(maxWidth: .infinity)
                                     }
-                                    .buttonStyle(.bordered)
-                                    .tint(result.action.color)
                                 }
                             }
                         }
@@ -195,13 +174,6 @@ struct MagicResultSheet: View {
                     }
                 }
                 .padding(DesignSpace.s5)
-            }
-            .navigationTitle("Penna magica")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Chiudi") { dismiss() }
-                }
             }
         }
         .presentationDetents([.medium, .large])

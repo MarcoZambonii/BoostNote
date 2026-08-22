@@ -51,11 +51,17 @@ struct RootView: View {
                     .background(DesignColor.surfacePage)
             }
         }
+        // Il Profilo è un foglio a tutta altezza: la testata con la ✕
+        // gliela dà BoostSheet, lo stack serve alle pagine di Sviluppo
+        // che si spingono da dentro.
         .sheet(isPresented: $showingProfile) {
-            NavigationStack {
-                ProfileView()
+            BoostSheet(title: "Profilo", mode: .read, onDismiss: { showingProfile = false }) {
+                NavigationStack { ProfileView() }
             }
         }
+        // I toast di esito (import falliti, ripristini, segnalazioni)
+        // compaiono sopra qualunque schermata, editor compreso.
+        .boostToastHost()
         // Nella nota niente ora/batteria: il modificatore DEVE stare qui
         // alla radice — dentro il detail della NavigationSplitView la
         // preferenza non risale fino al view controller che comanda la
@@ -66,16 +72,22 @@ struct RootView: View {
         .task {
             migrateSubjectsToFolders()
             retireWhiteboards()
+            reconcileInterruptedGenerations()
         }
         // Pacchetto .boostnote aperto da Files: si ripristina e la nota
         // si apre subito, così il ripristino si vede invece di essere
-        // solo "avvenuto".
+        // solo "avvenuto". Se il pacchetto non è leggibile va DETTO:
+        // prima il try? faceva finire l'apertura nel nulla.
         .onChange(of: archiveOpenRequest.url) { _, url in
             guard let url else { return }
             archiveOpenRequest.url = nil
-            if let note = try? NoteArchiveService.restore(from: url, in: context) {
+            do {
+                let note = try NoteArchiveService.restore(from: url, in: context)
                 environment = .home
                 selectedNote = note
+            } catch {
+                BoostToastCenter.shared.show((error as? LocalizedError)?.errorDescription
+                    ?? "Il pacchetto non è leggibile.", role: .danger)
             }
         }
         .onChange(of: selectedNote) { _, newValue in
@@ -96,8 +108,16 @@ struct RootView: View {
         }
     }
 
+    // HStack e non NavigationSplitView: su iPadOS 26 la split view
+    // disegna la colonna come un pannello STACCATO — angoli tondi, ombra,
+    // un filo di sfondo tutto attorno — e la barra sembra appoggiata
+    // sopra la pagina invece di esserne il bordo sinistro. Di quella vista
+    // qui non si usava più niente: il pulsante di sistema era già tolto,
+    // la selezione la governano i binding dell'app, e la nota aperta vive
+    // in un livello sopra. Restano larghezza fissa e filo di separazione,
+    // che è esattamente ciò che chiede il design.
     private var splitView: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        HStack(spacing: 0) {
             SidebarView(
                 environment: $environment,
                 selectedNote: $selectedNote,
@@ -111,17 +131,13 @@ struct RootView: View {
                     showingStudioProgress = false
                     showingStudioCreate = true
                 },
-                onOpenProfile: { showingProfile = true }
+                onOpenProfile: { showingProfile = true },
+                showingProfile: $showingProfile
             )
-            // Nessuna schermata usa il pulsante di sistema per aprire/chiudere
-            // la sidebar: la navigazione passa dai controlli propri dell'app
-            // (righe della sidebar, pulsante indietro nella nota, ecc.). Il
-            // modificatore va sulla colonna sidebar stessa, non sull'intera
-            // NavigationSplitView: lì non sopprimeva il pulsante di sistema.
-            .toolbar(removing: .sidebarToggle)
-        } detail: {
+            .frame(width: 300)
+
             detail
-                .toolbar(removing: .sidebarToggle)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -145,7 +161,8 @@ struct RootView: View {
                     showingStudioCreate = true
                     pushIfNeeded(.environment(.studio))
                 },
-                onOpenProfile: { showingProfile = true }
+                onOpenProfile: { showingProfile = true },
+                showingProfile: $showingProfile
             )
             // La sidebar ha già la sua intestazione "BoostNote": la barra
             // di navigazione vuota sopra sarebbe solo spazio perso.
@@ -227,9 +244,16 @@ struct RootView: View {
         )
     }
 
+    // Se la destinazione è GIÀ nello stack si torna lì, invece di
+    // impilarne una seconda copia: alternando Home e una cartella il
+    // percorso accumulava duplicati ([home, cartella, home, ...]) e il
+    // back di sistema ripercorreva stati già visitati.
     private func pushIfNeeded(_ destination: CompactDestination) {
-        guard compactPath.last != destination else { return }
-        compactPath.append(destination)
+        if let index = compactPath.lastIndex(of: destination) {
+            compactPath = Array(compactPath.prefix(through: index))
+        } else {
+            compactPath.append(destination)
+        }
     }
 
     @ViewBuilder
@@ -288,6 +312,23 @@ struct RootView: View {
             // Il template a crocette era il segno distintivo della
             // lavagna: sulla nota a pagine torna il default.
             if note.template == .cross { note.template = .blank }
+        }
+    }
+
+    // Un modulo rimasto in `.generating` all'avvio è un orfano: la
+    // generazione che l'aveva in mano è morta con il processo (kill,
+    // crash), nessuno lo riprenderà — lo stato è persistito e la card
+    // mostrava lo spinner per sempre, con un "Annulla" che non annullava
+    // niente. Al lancio non c'è nessuna generazione in corso per
+    // definizione, quindi tutti i `.generating` diventano falliti con il
+    // motivo vero.
+    private func reconcileInterruptedGenerations() {
+        let generating = StudyModuleStatus.generating.rawValue
+        let descriptor = FetchDescriptor<StudyModule>(predicate: #Predicate { $0.statusRaw == generating })
+        guard let stuck = try? context.fetch(descriptor), !stuck.isEmpty else { return }
+        for module in stuck {
+            module.status = .failed
+            module.generationError = "La generazione è stata interrotta dalla chiusura dell'app. Tocca la freccia circolare per riprovare."
         }
     }
 

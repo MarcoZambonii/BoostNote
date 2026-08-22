@@ -72,6 +72,8 @@ struct NoteEditorView: View {
     // con la penna.
     @State private var inkColors: [PenTool: Color] = [:]
     @State private var inkWidths: [PenTool: CGFloat] = [:]
+    // Penna a pressione o a spessore costante, per strumento.
+    @State private var pressureEnabled: [PenTool: Bool] = [:]
     @State private var eraserType: PKEraserTool.EraserType = .bitmap
     @State private var eraserWidth: CGFloat = 30
 
@@ -114,6 +116,9 @@ struct NoteEditorView: View {
     @State private var documentPreviewName: String = ""
 
     @State private var showingToolsPicker = false
+    // Strumenti ridotti alla sola intestazione: restano nella pila e non
+    // perdono lo stato, ma smettono di occupare il pannello.
+    @State private var collapsedTools: Set<String> = []
     // TUTTI gli strumenti vivono nel pannello laterale persistente (non
     // più widget flottanti sul foglio): resta aperto mentre si scrive e
     // si chiude con un pulsante esplicito.
@@ -125,7 +130,6 @@ struct NoteEditorView: View {
     // lo riapri. Solo la X su uno strumento lo rimuove davvero.
     @State private var isSidePanelHidden = false
     @State private var showingRename = false
-    @State private var renameText = ""
     @State private var sidePanelDragOffset: CGFloat = 0
     // Lato e larghezza del pannello sopravvivono alla nota: sono una
     // preferenza di postazione (mano con cui si scrive, quanto foglio si
@@ -159,13 +163,26 @@ struct NoteEditorView: View {
     // scorrimento continuo del foglio — non pagine reali separate.
     private var pageHeight: CGFloat { note.pageSize.height }
 
-    // Colore/spessore dello strumento a inchiostro attualmente attivo.
+    // La penna salvata attualmente in mano, se se n'è presa una. È uno
+    // STRUMENTO A SÉ: finché è attiva detta lei colore, spessore e
+    // pressione, e la penna "di base" resta esattamente com'era. Prima
+    // sceglierne una sovrascriveva la configurazione della penna, cioè
+    // per usare una penna salvata si perdeva la propria.
+    @State private var activePinnedPen: PinnedPen?
+
     private var activeColor: Color {
-        inkColors[selectedTool] ?? selectedTool.defaultColor
+        if let pen = activePinnedPen, pen.tool == selectedTool { return pen.color }
+        return inkColors[selectedTool] ?? selectedTool.defaultColor
     }
 
     private var activeInkWidth: CGFloat {
-        inkWidths[selectedTool] ?? selectedTool.defaultWidth
+        if let pen = activePinnedPen, pen.tool == selectedTool { return CGFloat(pen.width) }
+        return inkWidths[selectedTool] ?? selectedTool.defaultWidth
+    }
+
+    private var activePressure: Bool {
+        if let pen = activePinnedPen, pen.tool == selectedTool { return pen.pressure }
+        return pressureEnabled[selectedTool] ?? true
     }
 
     // Strumenti aperti su QUESTA nota.
@@ -236,12 +253,9 @@ struct NoteEditorView: View {
                 editorContainerWidth = width
             }
         }
-        .alert("Titolo della nota", isPresented: $showingRename) {
-            TextField("Titolo", text: $renameText)
-            Button("Annulla", role: .cancel) { }
-            Button("Salva") {
-                let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty { note.title = trimmed }
+        .sheet(isPresented: $showingRename) {
+            RenameSheet(title: "Titolo della nota", initialName: note.title) { newName in
+                note.title = newName
             }
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -298,7 +312,10 @@ struct NoteEditorView: View {
             guard case .success(let url) = result else { return }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { return }
+            guard let data = try? Data(contentsOf: url) else {
+                BoostToastCenter.shared.show("Non riesco a leggere \"\(url.lastPathComponent)\": se sta su un cloud, aprilo prima nell'app File.", role: .danger)
+                return
+            }
             switch pdfPickerTarget {
             case .notePages:
                 // Import diretto come pagine in coda alla nota aperta: si
@@ -422,7 +439,7 @@ struct NoteEditorView: View {
                 Rectangle()
                     .fill(DesignColor.borderDefault)
                     .frame(width: 1)
-                Capsule()
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     .fill(DesignColor.textTertiary.opacity(liveResizeWidth == nil ? 0.35 : 0.8))
                     .frame(width: 4, height: 42)
             }
@@ -464,19 +481,39 @@ struct NoteEditorView: View {
                     withAnimation { isSidePanelHidden = true }
                 } label: {
                     Image(systemName: panelSide == .leading ? "chevron.left" : "chevron.right")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DesignIcon.sm))
                         .foregroundStyle(DesignColor.textSecondary)
                         .frame(width: 28, height: 28)
-                        .background(DesignColor.surfacePage, in: Circle())
+                        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                         .contentShape(Rectangle().inset(by: -8))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Nascondi pannello")
 
-                Text(sidePanelTools.count == 1 ? "Strumento" : "\(sidePanelTools.count) strumenti")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DesignColor.textTertiary)
+                Text(sidePanelTools.count == 1 ? "1 strumento" : "\(sidePanelTools.count) strumenti")
+                    .font(DesignFont.caption)
+                    .foregroundStyle(DesignColor.textSecondary)
                 Spacer()
+
+                // La porta per aggiungere uno strumento sta QUI, sopra la
+                // pila: prima era solo nella barra della penna, dove chi
+                // guardava il pannello non la cercava.
+                Button {
+                    showingToolsPicker = true
+                } label: {
+                    Text("Aggiungi")
+                        .font(DesignFont.action)
+                        .foregroundStyle(DesignColor.textPrimary)
+                        .padding(.horizontal, DesignSpace.s3)
+                        .padding(.vertical, DesignSpace.s1)
+                        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                                .strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Aggiungi strumento")
 
                 // Il pannello passa dall'altro lato del foglio: chi scrive
                 // con la destra ci appoggia sopra la mano.
@@ -488,11 +525,11 @@ struct NoteEditorView: View {
                     Image(systemName: panelSide == .leading
                           ? "rectangle.trailinghalf.inset.filled"
                           : "rectangle.leadinghalf.inset.filled")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                         .frame(width: 28, height: 28)
-                        .background(DesignColor.surfacePage, in: Circle())
-                        .contentShape(Rectangle().inset(by: -6))
+                        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                        .contentShape(Rectangle().inset(by: -8))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Sposta il pannello a \(panelSide.opposite.label)")
@@ -525,38 +562,42 @@ struct NoteEditorView: View {
     // semplici divisori non facevano capire dove finiva uno e iniziava
     // l'altro. L'intestazione colorata del tipo fa da appiglio visivo.
     private func sidePanelSection(for tool: NoteTool) -> some View {
-        VStack(spacing: 0) {
+        let isCollapsed = collapsedTools.contains(tool.rawValue)
+        return VStack(spacing: 0) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: tool.systemImage)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(DesignColor.brandPrimary)
                     .frame(width: 26, height: 26)
-                    .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                    .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
                 Text(tool.label)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
-                Spacer()
-                Button {
-                    withAnimation { closeSidePanel(tool) }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(DesignColor.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(DesignColor.surfaceSunken, in: Circle())
-                        // Area sensibile più larga del cerchio: 28pt di
-                        // grafica sono belli ma sotto il minimo comodo per
-                        // il dito, e la chiusura mancava spesso.
-                        .contentShape(Rectangle().inset(by: -8))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+
+                // Due tasti gemelli: riduci e chiudi. Erano uno solo, e
+                // per togliere di mezzo uno strumento senza perderne lo
+                // stato bisognava chiuderlo e riaprirlo.
+                cardButton(isCollapsed ? "chevron.down" : "chevron.up", label: isCollapsed ? "Espandi \(tool.label)" : "Riduci \(tool.label)") {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        if isCollapsed { collapsedTools.remove(tool.rawValue) } else { collapsedTools.insert(tool.rawValue) }
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Rimuovi \(tool.label)")
+                cardButton("xmark", label: "Togli \(tool.label)") {
+                    withAnimation { closeSidePanel(tool) }
+                }
             }
-            .padding(.horizontal, DesignSpace.s3)
-            .padding(.vertical, DesignSpace.s2 + 2)
+            .padding(.leading, DesignSpace.s3)
+            .padding(.trailing, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s3)
 
-            Divider().opacity(0.6)
+            if !isCollapsed {
+                Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
+            }
 
+            if !isCollapsed {
             Group {
                 switch tool {
                 case .calculator: CalculatorContentView()
@@ -571,15 +612,31 @@ struct NoteEditorView: View {
                 }
             }
             .padding(DesignSpace.s3)
+            }
         }
-        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .background(DesignColor.surfacePage)
+        .clipShape(RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous)
                 .stroke(DesignColor.borderSubtle, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
         .padding(.horizontal, DesignSpace.s3)
         .padding(.vertical, DesignSpace.s2)
+    }
+
+    private func cardButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: DesignIcon.sm))
+                .foregroundStyle(DesignColor.textSecondary)
+                .frame(width: 26, height: 26)
+                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                // Area sensibile più larga del disegno: 26pt di grafica
+                // sono belli ma sotto il minimo comodo per il dito.
+                .contentShape(Rectangle().inset(by: -9))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     // Maniglia sul bordo destro quando il pannello è nascosto: si tira
@@ -601,7 +658,7 @@ struct NoteEditorView: View {
             withAnimation { isSidePanelHidden = false }
         } label: {
             Image(systemName: panelSide == .leading ? "chevron.right" : "chevron.left")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DesignIcon.sm))
                 .foregroundStyle(DesignColor.textSecondary)
                 .frame(width: 22, height: 44)
                 .background(.ultraThinMaterial, in: shape)
@@ -646,7 +703,7 @@ struct NoteEditorView: View {
             VStack(spacing: 0) {
                 HStack(spacing: DesignSpace.s2) {
                     Text(documentPreviewName.isEmpty ? "Documento" : documentPreviewName)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DesignFont.label)
                         .foregroundStyle(DesignColor.textSecondary)
                         .lineLimit(1)
                     Spacer()
@@ -664,12 +721,12 @@ struct NoteEditorView: View {
                             Label("Da WeBeep", systemImage: "graduationcap")
                         }
                     }
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DesignFont.action)
                     Button {
                         self.documentPreviewData = nil
                         documentPreviewName = ""
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
+                        Image(systemName: "xmark")
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                 }
@@ -691,10 +748,10 @@ struct NoteEditorView: View {
             VStack(spacing: DesignSpace.s4) {
                 Spacer()
                 Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 32))
+                    .font(.system(size: DesignIcon.xl))
                     .foregroundStyle(DesignColor.textTertiary)
                 Text("Apri un PDF qui per leggerlo a fianco mentre scrivi — resta nel pannello, non entra nella nota.")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, DesignSpace.s5)
@@ -707,7 +764,7 @@ struct NoteEditorView: View {
                         showingPDFPicker = true
                     } label: {
                         Label("Da file", systemImage: "folder")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(.white)
                             .padding(.horizontal, DesignSpace.s4)
                             .padding(.vertical, DesignSpace.s3)
@@ -720,7 +777,7 @@ struct NoteEditorView: View {
                         showingWebeepDocPicker = true
                     } label: {
                         Label("Da WeBeep", systemImage: "graduationcap")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.brandPrimary)
                             .padding(.horizontal, DesignSpace.s4)
                             .padding(.vertical, DesignSpace.s3)
@@ -751,6 +808,7 @@ struct NoteEditorView: View {
                         tool: selectedTool,
                         color: activeColor,
                         inkWidth: activeInkWidth,
+                        pressureSensitiveInk: activePressure,
                         eraserType: eraserType,
                         eraserWidth: eraserWidth,
                         template: note.template,
@@ -797,7 +855,7 @@ struct NoteEditorView: View {
                 HStack(spacing: 8) {
                     backButton
                 }
-                .padding(8)
+                .padding(DesignSpace.s2)
                 .padding(.top, phoneTopInset)
                 .safeAreaPadding(.top)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -805,7 +863,7 @@ struct NoteEditorView: View {
                 // Fissa in alto a destra indipendentemente da dove è
                 // agganciata la barra della penna (che invece si sposta).
                 topRightToolbar
-                    .padding(8)
+                    .padding(DesignSpace.s2)
                     .padding(.top, phoneTopInset)
                     .safeAreaPadding(.top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -823,6 +881,8 @@ struct NoteEditorView: View {
             selectedTool: $selectedTool,
             inkColors: $inkColors,
             inkWidths: $inkWidths,
+            pressureEnabled: $pressureEnabled,
+            activePinnedPen: $activePinnedPen,
             eraserType: $eraserType,
             eraserWidth: $eraserWidth,
             magicAction: $magicAction,
@@ -835,7 +895,7 @@ struct NoteEditorView: View {
             onInsertPDFFromWebeep: { webeepPickerTarget = .notePages; showingWebeepDocPicker = true },
 
         )
-        .padding(.bottom, 8)
+        .padding(.bottom, DesignSpace.s2)
         // In alto la barra condivide la riga con i controlli agli angoli:
         // si centra nello spazio LIBERO tra il pulsante indietro e la
         // barra a destra, invece che sull'intera larghezza. Centrandola
@@ -861,9 +921,9 @@ struct NoteEditorView: View {
             ForEach(ToolbarDock.allCases, id: \.self) { candidate in
                 dockPlaceholder(candidate)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: candidate.alignment)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
-                    .padding(.top, candidate == .top ? headerRowHeight + 12 : 8)
+                    .padding(.horizontal, DesignSpace.s2)
+                    .padding(.bottom, DesignSpace.s2)
+                    .padding(.top, candidate == .top ? headerRowHeight + DesignSpace.s3 : DesignSpace.s2)
             }
         }
         .opacity(dragPreviewDock != nil ? 1 : 0)
@@ -893,12 +953,15 @@ struct NoteEditorView: View {
     private var backButton: some View {
         Button(action: onBack) {
             Image(systemName: "chevron.left")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textPrimary)
                 .frame(width: headerRowHeight, height: headerRowHeight)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().stroke(DesignColor.borderDefault, lineWidth: 1))
-                .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+                // Stessa superficie della barra fissa e della barra della
+                // penna: bianca, stesso raggio, stessa ombra. Il cerchio
+                // era l'unica forma del genere in tutta l'app.
+                .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1))
+                .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Indietro")
@@ -917,7 +980,7 @@ struct NoteEditorView: View {
             Button(action: drawingController.undo) {
                 Image(systemName: "arrow.uturn.backward")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .disabled(drawingController.pagedContainer != nil && !drawingController.canUndo)
             .opacity(drawingController.pagedContainer != nil && !drawingController.canUndo ? 0.35 : 1)
@@ -926,7 +989,7 @@ struct NoteEditorView: View {
             Button(action: drawingController.redo) {
                 Image(systemName: "arrow.uturn.forward")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .disabled(drawingController.pagedContainer != nil && !drawingController.canRedo)
             .opacity(drawingController.pagedContainer != nil && !drawingController.canRedo ? 0.35 : 1)
@@ -939,7 +1002,7 @@ struct NoteEditorView: View {
             } label: {
                 Image(systemName: "square.grid.2x2.fill")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .accessibilityLabel("Strumenti")
             .popover(isPresented: $showingToolsPicker) {
@@ -960,7 +1023,7 @@ struct NoteEditorView: View {
             } label: {
                 Image(systemName: "magnifyingglass")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .accessibilityLabel("Cerca nella nota")
             .popover(isPresented: $showingSearch) {
@@ -979,7 +1042,6 @@ struct NoteEditorView: View {
 
             Menu {
                 Button {
-                    renameText = note.title
                     showingRename = true
                 } label: {
                     Label("Rinomina nota", systemImage: "textformat")
@@ -987,16 +1049,16 @@ struct NoteEditorView: View {
                 Button {
                     showingSettings = true
                 } label: {
-                    Label("Impostazioni foglio", systemImage: "slider.horizontal.3")
+                    Label("Impostazioni foglio", systemImage: "gearshape")
                 }
             } label: {
-                Image(systemName: "slider.horizontal.3")
+                Image(systemName: "gearshape")
                     .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .contentShape(Rectangle().inset(by: -5))
             }
             .accessibilityLabel("Impostazioni e rinomina")
         }
-        .font(.system(size: 15, weight: .medium))
+        .font(.system(size: DesignIcon.md))
         .foregroundStyle(DesignColor.textPrimary)
         .buttonStyle(.plain)
         // Ogni voce diventa un bersaglio quadrato pieno invece della sola
@@ -1004,8 +1066,11 @@ struct NoteEditorView: View {
         // mancare il tocco era la norma.
         .padding(.horizontal, DesignSpace.s2)
         .frame(height: headerRowHeight)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(DesignColor.borderDefault.opacity(0.6), lineWidth: 1))
+        // Bianca come il tasto indietro e la barra della penna: le tre
+        // superfici sospese sul foglio hanno la stessa ricetta, raggio
+        // compreso (lg, come la barra della penna nel mock).
+        .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1))
         .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
     }
 
@@ -1050,19 +1115,24 @@ struct NoteEditorView: View {
             kind = item.kind; data = item.data; sourceText = item.sourceText
         }
 
-        func make(note: Note) -> NoteMedia {
-            NoteMedia(x: x, y: y, width: width, height: height, kind: kind, data: data, sourceText: sourceText, note: note)
+        func make() -> NoteMedia {
+            NoteMedia(x: x, y: y, width: width, height: height, kind: kind, data: data, sourceText: sourceText)
         }
     }
 
+    // L'aggancio dei media passa dal lato GENITORE (media.append), mai
+    // solo da item.note: la mutazione fatta sul solo lato figlio può non
+    // notificare l'osservazione di `media` — trappola documentata su
+    // Note.attach in Models.swift.
     private func recordMediaLifecycle(_ name: String, ref: MediaRef, snapshot: MediaSnapshot, inserted: Bool) {
         let remove = { [context] in
             context.delete(ref.item)
             note.updatedAt = .now
         }
         let restore = { [context] in
-            let reborn = snapshot.make(note: note)
+            let reborn = snapshot.make()
             context.insert(reborn)
+            note.media.append(reborn)
             ref.item = reborn
             note.updatedAt = .now
         }
@@ -1071,8 +1141,9 @@ struct NoteEditorView: View {
 
     private func insertMedia(kind: NoteMediaKind, data: Data) {
         let offset = Double(note.media.count % 6) * 24
-        let item = NoteMedia(x: 60 + offset, y: currentPageTop + offset, kind: kind, data: data, note: note)
+        let item = NoteMedia(x: 60 + offset, y: currentPageTop + offset, kind: kind, data: data)
         context.insert(item)
+        note.media.append(item)
         note.updatedAt = .now
         recordMediaLifecycle("Inserimento", ref: MediaRef(item), snapshot: MediaSnapshot(item), inserted: true)
     }
@@ -1105,7 +1176,14 @@ struct NoteEditorView: View {
     // (diff sugli ID persistenti), il ripeti le ricrea dagli stessi byte.
     private func appendPDFPagesRecorded(_ data: Data) {
         let before = Set(note.pages.map(\.persistentModelID))
-        note.appendPages(fromPDF: data, in: context)
+        guard note.appendPages(fromPDF: data, in: context) else {
+            // È il caso per cui appendPages ritorna un Bool: byte che non
+            // sono un PDF (per esempio una pagina di errore scaricata al
+            // posto del file). Prima veniva ignorato e sembrava che
+            // l'import non facesse niente.
+            BoostToastCenter.shared.show("Il file non è un PDF leggibile.", role: .danger)
+            return
+        }
         note.updatedAt = .now
         let ref = PagesRef()
         ref.pages = note.pages.filter { !before.contains($0.persistentModelID) }
@@ -1127,13 +1205,15 @@ struct NoteEditorView: View {
     private func saveToolPreferences() {
         var colors: [String: String] = [:]
         var widths: [String: Double] = [:]
+        var pressures: [String: Bool] = [:]
         for tool in PenTool.inkTools {
             if let hex = (inkColors[tool] ?? tool.defaultColor).hexString {
                 colors[tool.rawValue] = hex
             }
             widths[tool.rawValue] = Double(inkWidths[tool] ?? tool.defaultWidth)
+            pressures[tool.rawValue] = pressureEnabled[tool] ?? true
         }
-        if let data = try? JSONEncoder().encode(StoredInkSettings(colors: colors, widths: widths)),
+        if let data = try? JSONEncoder().encode(StoredInkSettings(colors: colors, widths: widths, pressures: pressures)),
            let string = String(data: data, encoding: .utf8) {
             storedInkSettings = string
         }
@@ -1159,7 +1239,9 @@ struct NoteEditorView: View {
             // gli intervalli venissero presi da PencilKit): si riporta
             // dentro, altrimenti lo slider mostrerebbe un numero che il
             // tratto non rispetta.
-            let range = tool.widthRange
+            let pressure = stored?.pressures?[tool.rawValue] ?? true
+            pressureEnabled[tool] = pressure
+            let range = tool.widthRange(pressure: pressure)
             let width = stored?.widths[tool.rawValue].map { CGFloat($0) } ?? tool.defaultWidth
             inkWidths[tool] = min(max(width, range.lowerBound), range.upperBound)
         }
@@ -1267,7 +1349,9 @@ struct NoteEditorView: View {
 
         switch action {
         case .wolfram:
-            let appID = UserDefaults.standard.string(forKey: "wolframAlphaAppID") ?? ""
+            // Dal Keychain via AIService, l'unico punto di accesso (era
+            // una lettura a mano di UserDefaults con la chiave duplicata).
+            let appID = AIService.wolframAppID ?? ""
             if appID.isEmpty {
                 result.errorMessage = "Aggiungi la tua chiave Wolfram Alpha nel Profilo per usare questa funzione."
             } else {
@@ -1356,10 +1440,10 @@ struct NoteEditorView: View {
                         data: data,
                         // Il sorgente resta attaccato all'immagine: è ciò
                         // che permette di riaprirla e correggerla.
-                        sourceText: text,
-                        note: note
+                        sourceText: text
                     )
                     context.insert(item)
+                    note.media.append(item)
                     note.updatedAt = .now
                     recordMediaLifecycle("Formula", ref: MediaRef(item), snapshot: MediaSnapshot(item), inserted: true)
                 } else {

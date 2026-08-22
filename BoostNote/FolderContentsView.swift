@@ -37,10 +37,10 @@ struct FolderContentsView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s8) {
                 HStack(spacing: DesignSpace.s3) {
                     Image(systemName: "folder.fill")
-                        .font(.system(size: 24))
+                        .font(.system(size: DesignIcon.xl))
                         .foregroundStyle(folder.folderColor.color)
                     Text(folder.name)
-                        .font(.system(size: 26, weight: .semibold))
+                        .font(DesignFont.screenTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                     Spacer()
                     viewModePicker
@@ -53,7 +53,7 @@ struct FolderContentsView: View {
                     quickActionCard(title: "Nuova sottocartella", subtitle: "Organizza", icon: "folder.badge.plus", color: DesignColor.success) {
                         showingNewFolderSheet = true
                     }
-                    quickActionCard(title: "Importa PDF", subtitle: "In \(folder.name)", icon: "doc.badge.plus", color: DesignColor.toolWolfram) {
+                    quickActionCard(title: "Aggiungi PDF", subtitle: "In \(folder.name)", icon: "doc.badge.plus", color: DesignColor.toolWolfram) {
                         showingPDFImporter = true
                     }
                 }
@@ -61,7 +61,7 @@ struct FolderContentsView: View {
                 if !subfolders.isEmpty {
                     VStack(alignment: .leading, spacing: DesignSpace.s3) {
                         Text("SOTTOCARTELLE")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.6)
                             .foregroundStyle(DesignColor.textTertiary)
 
@@ -97,14 +97,17 @@ struct FolderContentsView: View {
 
                 VStack(alignment: .leading, spacing: DesignSpace.s3) {
                     Text("NOTE")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.micro)
                         .tracking(0.6)
                         .foregroundStyle(DesignColor.textTertiary)
 
                     if notes.isEmpty {
-                        Text("Nessuna nota qui ancora.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(DesignColor.textTertiary)
+                        BoostState(
+                            kind: .empty,
+                            icon: "note.text",
+                            title: "Nessuna nota qui ancora",
+                            message: "Creane una o aggiungi un PDF con i pulsanti qui sopra."
+                        )
                     } else {
                         switch viewMode {
                         case .grid:
@@ -156,16 +159,24 @@ struct FolderContentsView: View {
             }
         }
         // Stesso flusso dell'Importa PDF della Home, ma la nota nasce
-        // dentro QUESTA cartella invece che senza cartella.
+        // dentro QUESTA cartella invece che senza cartella. Come lì, un
+        // file illeggibile o non-PDF va DETTO, non inghiottito.
         .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf]) { result in
             guard case .success(let url) = result else { return }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { return }
+            guard let data = try? Data(contentsOf: url) else {
+                BoostToastCenter.shared.show("Non riesco a leggere \"\(url.lastPathComponent)\": se sta su un cloud, aprilo prima nell'app File.", role: .danger)
+                return
+            }
             let title = url.deletingPathExtension().lastPathComponent
             let note = Note(title: title.isEmpty ? "Nuova nota" : title, folder: folder)
             context.insert(note)
-            note.appendPages(fromPDF: data, in: context)
+            guard note.appendPages(fromPDF: data, in: context) else {
+                context.delete(note)
+                BoostToastCenter.shared.show("\"\(title)\" non è un PDF leggibile.", role: .danger)
+                return
+            }
             selectedFolder = nil
             selectedNote = note
         }
@@ -179,18 +190,19 @@ struct FolderContentsView: View {
                     viewModeRaw = mode.rawValue
                 } label: {
                     Image(systemName: mode.systemImage)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(viewMode == mode ? DesignColor.brandPrimary : DesignColor.textTertiary)
                         .frame(width: 30, height: 30)
                         .background(
                             viewMode == mode ? DesignColor.brandPrimarySubtle : Color.clear,
                             in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                         )
+                        .contentShape(Rectangle().inset(by: -7))
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(2)
+        .padding(DesignSpace.s1)
         .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
     }
 
@@ -198,18 +210,18 @@ struct FolderContentsView: View {
     private func folderListRow(_ subfolder: Folder) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: "folder.fill")
-                .font(.system(size: 15))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(subfolder.folderColor.color)
                 .frame(width: 22)
             Text(subfolder.name)
-                .font(.system(size: 14, weight: .medium))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textPrimary)
             Spacer()
             Text("\(subfolder.notes.count) note")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
         .contentShape(Rectangle())
     }
@@ -218,18 +230,18 @@ struct FolderContentsView: View {
     private func noteListRow(_ note: Note) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: "note.text")
-                .font(.system(size: 15))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textSecondary)
                 .frame(width: 22)
             Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                .font(.system(size: 14, weight: .medium))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textPrimary)
             Spacer()
             Text(note.updatedAt.formatted(date: .abbreviated, time: .omitted))
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
         .contentShape(Rectangle())
     }
@@ -241,13 +253,13 @@ struct FolderContentsView: View {
                 RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
                     .fill(color.opacity(0.12))
                     .frame(width: 36, height: 36)
-                    .overlay(Image(systemName: icon).font(.system(size: 16, weight: .medium)).foregroundStyle(color))
+                    .overlay(Image(systemName: icon).font(.system(size: DesignIcon.md)).foregroundStyle(color))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -262,15 +274,15 @@ struct FolderContentsView: View {
     private func folderCard(_ subfolder: Folder) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: "folder.fill")
-                .font(.system(size: 20))
+                .font(.system(size: DesignIcon.lg))
                 .foregroundStyle(subfolder.folderColor.color)
             VStack(alignment: .leading, spacing: 2) {
                 Text(subfolder.name)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
                 Text("\(subfolder.notes.count) note")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
             }
             Spacer()
@@ -290,13 +302,13 @@ struct FolderContentsView: View {
                         Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
                     }
                 }
-                .padding(10)
+                .padding(DesignSpace.s3)
             }
             .frame(height: 90)
             .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm).stroke(DesignColor.borderDefault))
 
             Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
                 .lineLimit(1)
         }

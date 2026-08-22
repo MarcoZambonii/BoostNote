@@ -39,10 +39,10 @@ struct ToolsPickerSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(DesignColor.textTertiary)
                 TextField("Cerca strumenti", text: $query)
-                    .font(.system(size: 14))
+                    .font(DesignFont.body)
                     .textFieldStyle(.plain)
             }
             .padding(DesignSpace.s3)
@@ -57,26 +57,26 @@ struct ToolsPickerSheet: View {
                         } label: {
                             HStack(spacing: DesignSpace.s3) {
                                 Image(systemName: tool.systemImage)
-                                    .font(.system(size: 16))
+                                    .font(.system(size: DesignIcon.md))
                                     .foregroundStyle(DesignColor.brandPrimary)
                                     .frame(width: 26)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(tool.label)
-                                        .font(.system(size: 15, weight: .medium))
+                                        .font(DesignFont.body)
                                         .foregroundStyle(DesignColor.textPrimary)
                                     Text(tool.toolDescription)
-                                        .font(.system(size: 12))
+                                        .font(DesignFont.caption)
                                         .foregroundStyle(DesignColor.textTertiary)
                                         .lineLimit(2)
                                         .multilineTextAlignment(.leading)
                                 }
                                 Spacer()
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: DesignIcon.sm))
                                     .foregroundStyle(DesignColor.textTertiary)
                             }
                             .padding(.horizontal, DesignSpace.s3)
-                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .padding(.vertical, DesignSpace.s3)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -92,10 +92,10 @@ struct ToolsPickerSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(DesignColor.textTertiary)
                 TextField("Cerca strumenti", text: $query)
-                    .font(.system(size: 14))
+                    .font(DesignFont.body)
                     .textFieldStyle(.plain)
             }
             .padding(DesignSpace.s3)
@@ -110,16 +110,16 @@ struct ToolsPickerSheet: View {
                         } label: {
                             HStack(spacing: DesignSpace.s3) {
                                 Image(systemName: tool.systemImage)
-                                    .font(.system(size: 15))
+                                    .font(.system(size: DesignIcon.md))
                                     .foregroundStyle(selectedTool == tool ? DesignColor.brandPrimary : DesignColor.textSecondary)
                                     .frame(width: 22)
                                 Text(tool.label)
-                                    .font(.system(size: 14, weight: selectedTool == tool ? .semibold : .medium))
+                                    .font(selectedTool == tool ? DesignFont.cardTitle : DesignFont.body)
                                     .foregroundStyle(selectedTool == tool ? DesignColor.brandPrimary : DesignColor.textPrimary)
                                 Spacer()
                             }
                             .padding(.horizontal, DesignSpace.s3)
-                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .padding(.vertical, DesignSpace.s3)
                             .background(
                                 selectedTool == tool ? DesignColor.brandPrimarySubtle : Color.clear,
                                 in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
@@ -140,15 +140,15 @@ struct ToolsPickerSheet: View {
             Spacer(minLength: 0)
 
             Image(systemName: tool.systemImage)
-                .font(.system(size: 28))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(DesignColor.brandPrimary)
 
             VStack(spacing: DesignSpace.s2) {
                 Text(tool.label)
-                    .font(.system(size: 19, weight: .semibold))
+                    .font(DesignFont.sectionTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                 Text(tool.toolDescription)
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textTertiary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 320)
@@ -168,7 +168,7 @@ struct ToolsPickerSheet: View {
                 onSelect(tool)
             } label: {
                 Text("Apri nel pannello")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 44)
@@ -189,12 +189,12 @@ struct ToolsPickerSheet: View {
                 ZStack {
                     Circle().stroke(DesignColor.borderDefault, lineWidth: 4)
                     Circle().trim(from: 0, to: 0.7).stroke(DesignColor.brandPrimary, lineWidth: 4).rotationEffect(.degrees(-90))
-                    Text("25:00").font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundStyle(DesignColor.brandPrimary)
+                    Text("25:00").font(DesignFont.mono).foregroundStyle(DesignColor.brandPrimary)
                 }
                 .frame(width: 64, height: 64)
-                Text("Avvia").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
-                    .padding(.horizontal, DesignSpace.s3).padding(.vertical, 4)
-                    .background(DesignColor.brandPrimary, in: Capsule())
+                Text("Avvia").font(DesignFont.caption).foregroundStyle(.white)
+                    .padding(.horizontal, DesignSpace.s3).padding(.vertical, DesignSpace.s1)
+                    .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
 
         case .todo:
@@ -210,10 +210,10 @@ struct ToolsPickerSheet: View {
 
         case .calculator:
             VStack(spacing: 6) {
-                RoundedRectangle(cornerRadius: 6).fill(DesignColor.surfaceSunken).frame(height: 24)
+                RoundedRectangle(cornerRadius: DesignRadius.sm).fill(DesignColor.surfaceSunken).frame(height: 24)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
                     ForEach(0..<8, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 6).fill(DesignColor.surfaceSunken).frame(height: 18)
+                        RoundedRectangle(cornerRadius: DesignRadius.sm).fill(DesignColor.surfaceSunken).frame(height: 18)
                     }
                 }
             }
@@ -221,7 +221,7 @@ struct ToolsPickerSheet: View {
         case .research:
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 HStack {
-                    Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(DesignColor.textTertiary)
+                    Image(systemName: "magnifyingglass").font(.system(size: DesignIcon.sm)).foregroundStyle(DesignColor.textTertiary)
                     Rectangle().fill(DesignColor.borderDefault).frame(height: 6).frame(width: 100)
                 }
                 ForEach(0..<3, id: \.self) { i in
@@ -252,7 +252,7 @@ struct ToolsPickerSheet: View {
         case .wolfram:
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 HStack {
-                    Text("f(x)").font(.system(size: 12, design: .monospaced)).foregroundStyle(DesignColor.textTertiary)
+                    Text("f(x)").font(DesignFont.mono).foregroundStyle(DesignColor.textTertiary)
                     Rectangle().fill(DesignColor.surfaceSunken).frame(height: 16).frame(width: 140)
                 }
                 Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
@@ -266,10 +266,10 @@ struct ToolsPickerSheet: View {
                         Rectangle().fill(DesignColor.borderSubtle).frame(height: 3).frame(width: CGFloat(50 - i * 4))
                     }
                 }
-                .padding(8)
+                .padding(DesignSpace.s2)
                 .frame(width: 60, height: 76)
-                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(DesignColor.borderDefault))
+                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm))
+                .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm).stroke(DesignColor.borderDefault))
             }
         }
     }

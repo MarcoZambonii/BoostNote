@@ -15,6 +15,9 @@ struct WebeepEnvironmentView: View {
     @State private var sections: [WebeepSection] = []
     @State private var isLoading = false
     @State private var showingAuth = false
+    // WeBeep irraggiungibile (rete, servizio giù): il token resta valido
+    // e si mostra un errore con Riprova, non la schermata di login.
+    @State private var loadError: String?
 
     @State private var pendingFile: WebeepFile?
     // Presentazione separata dai dati: il Binding calcolato che azzerava
@@ -23,7 +26,6 @@ struct WebeepEnvironmentView: View {
     @State private var showingImportChoice = false
     @State private var showingNotePicker = false
     @State private var isImporting = false
-    @State private var importErrorMessage: String?
 
     @State private var quickLookURL: URL?
     @State private var isLoadingPreview = false
@@ -41,7 +43,26 @@ struct WebeepEnvironmentView: View {
                 if token == nil {
                     connectPrompt
                 } else if isLoading && courses.isEmpty && selectedCourse == nil {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    BoostState(kind: .loading, title: "Carico i corsi…")
+                } else if let loadError {
+                    VStack(spacing: DesignSpace.s3) {
+                        BoostState(
+                            kind: .error,
+                            icon: "wifi.exclamationmark",
+                            title: "WeBeep non risponde",
+                            message: loadError
+                        )
+                        BoostButton("Riprova", icon: "arrow.clockwise", tone: .primary) {
+                            Task {
+                                if let course = selectedCourse {
+                                    await loadSections(course)
+                                } else {
+                                    await refresh()
+                                }
+                            }
+                        }
+                        .padding(.bottom, DesignSpace.s6)
+                    }
                 } else if let selectedCourse {
                     fileList(for: selectedCourse)
                 } else {
@@ -84,11 +105,6 @@ struct WebeepEnvironmentView: View {
                 if let file = pendingFile { Task { await importFile(file, target: .existingNote(note)) } }
             }
         }
-        .alert("Import non riuscito", isPresented: Binding(get: { importErrorMessage != nil }, set: { if !$0 { importErrorMessage = nil } })) {
-            Button("OK", role: .cancel) { importErrorMessage = nil }
-        } message: {
-            Text(importErrorMessage ?? "")
-        }
         .sheet(isPresented: Binding(get: { downloadURL != nil }, set: { if !$0 { downloadURL = nil } })) {
             if let downloadURL {
                 ActivityView(items: [downloadURL])
@@ -105,80 +121,95 @@ struct WebeepEnvironmentView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("Indietro")
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.system(size: DesignIcon.md))
+                            Text("File")
+                                .font(DesignFont.cardTitle)
                         }
                         .foregroundStyle(DesignColor.textPrimary)
-                        .padding(.horizontal, DesignSpace.s3 + 2)
+                        .padding(.horizontal, DesignSpace.s4)
                         .frame(height: 36)
-                        .background(.regularMaterial, in: Capsule())
-                        .overlay(Capsule().stroke(DesignColor.borderDefault, lineWidth: 1))
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).stroke(DesignColor.borderDefault, lineWidth: 1))
                         .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
                     }
-                    .padding(.top, 16)
-                    .padding(.leading, 16)
+                    .padding(.top, DesignSpace.s4)
+                    .padding(.leading, DesignSpace.s4)
                 }
             }
         }
     }
 
     private var topBar: some View {
-        HStack(spacing: DesignSpace.s3) {
+        HStack(alignment: .firstTextBaseline, spacing: DesignSpace.s3) {
+            // Stessa testata di Home e Studio: titolone col suo emoji e
+            // una riga di contesto sotto. Prima questa schermata aveva
+            // una barra tutta sua, alta 56 e col titolo da card: era
+            // l'unico posto dell'app che si presentava così.
             if let selectedCourse {
-                Button {
+                BoostButton("Corsi", icon: "chevron.left", tone: .ghost, size: .compact) {
                     self.selectedCourse = nil
                     sections = []
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
                 }
-                .buttonStyle(.plain)
 
-                Text(WebeepService.stripMultilang(selectedCourse.fullname))
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(DesignColor.textPrimary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(WebeepService.stripMultilang(selectedCourse.fullname))
+                        .font(DesignFont.sectionTitle)
+                        .foregroundStyle(DesignColor.textPrimary)
+                        .lineLimit(1)
+                }
             } else {
-                Image(systemName: "building.columns.fill")
-                    .foregroundStyle(DesignColor.brandPrimary)
-                Text("WeBeep")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(DesignColor.textPrimary)
-                if let siteInfo {
-                    Text("· \(siteInfo.fullname)")
-                        .font(.system(size: 13))
-                        .foregroundStyle(DesignColor.textTertiary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("WeBeep 🏛️")
+                        .font(DesignFont.screenTitle)
+                        .foregroundStyle(DesignColor.textPrimary)
+                    if let siteInfo {
+                        Text(siteInfo.fullname)
+                            .font(DesignFont.label)
+                            .foregroundStyle(DesignColor.textTertiary)
+                    }
                 }
             }
             Spacer()
+            if isImporting {
+                // L'import scarica il file: senza questo, dopo il tocco
+                // su "In una nuova nota" non si vedeva succedere niente
+                // (anteprima e download avevano già il loro spinner).
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Importo…")
+                        .font(DesignFont.caption)
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+            }
             if isLoading {
-                ProgressView()
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Aggiorno…")
+                        .font(DesignFont.caption)
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
             }
         }
-        .padding(.horizontal, DesignSpace.s6 + 4)
-        .frame(height: 56)
+        .padding(.horizontal, DesignSpace.s6)
+        .padding(.top, DesignSpace.s6)
+        .padding(.bottom, DesignSpace.s4)
         .background(DesignColor.surfacePage)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
-        }
     }
 
     private var connectPrompt: some View {
         VStack(spacing: DesignSpace.s4) {
             Image(systemName: "building.columns")
-                .font(.system(size: 40))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(DesignColor.textTertiary)
             Text("Collega WeBeep")
-                .font(.system(size: 18, weight: .semibold))
+                .font(DesignFont.sectionTitle)
                 .foregroundStyle(DesignColor.textPrimary)
             Text("Il login avviene sulla vera pagina Polimi in un browser incorporato: l'app non vede mai la password.")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textTertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
-            Button("Accedi con WeBeep") { showingAuth = true }
-                .buttonStyle(.borderedProminent)
+            BoostButton("Accedi con WeBeep", tone: .primary) { showingAuth = true }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -186,7 +217,7 @@ struct WebeepEnvironmentView: View {
     private var courseList: some View {
         Group {
             if courses.isEmpty && !isLoading {
-                ContentUnavailableView("Nessun corso trovato", systemImage: "building.columns")
+                BoostState(kind: .empty, icon: "building.columns", title: "Nessun corso trovato")
             } else {
                 ScrollView {
                     LazyVStack(spacing: DesignSpace.s2) {
@@ -201,18 +232,18 @@ struct WebeepEnvironmentView: View {
                                         .frame(width: 24)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(WebeepService.stripMultilang(course.fullname))
-                                            .font(.system(size: 14, weight: .medium))
+                                            .font(DesignFont.body)
                                             .foregroundStyle(DesignColor.textPrimary)
                                             .multilineTextAlignment(.leading)
                                         if let shortname = course.shortname {
                                             Text(shortname)
-                                                .font(.system(size: 12))
+                                                .font(DesignFont.caption)
                                                 .foregroundStyle(DesignColor.textTertiary)
                                         }
                                     }
                                     Spacer()
                                     Image(systemName: "chevron.right")
-                                        .font(.system(size: 12, weight: .semibold))
+                                        .font(.system(size: DesignIcon.sm))
                                         .foregroundStyle(DesignColor.textTertiary)
                                 }
                                 .padding(DesignSpace.s4)
@@ -234,7 +265,7 @@ struct WebeepEnvironmentView: View {
     private func fileList(for course: WebeepCourse) -> some View {
         Group {
             if sections.allSatisfy({ $0.files.isEmpty }) && !isLoading {
-                ContentUnavailableView("Nessun file trovato", systemImage: "doc")
+                BoostState(kind: .empty, icon: "doc", title: "Nessun file trovato")
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: DesignSpace.s5) {
@@ -242,7 +273,7 @@ struct WebeepEnvironmentView: View {
                             if !section.files.isEmpty {
                                 VStack(alignment: .leading, spacing: DesignSpace.s3) {
                                     Text(WebeepService.stripMultilang(section.name?.isEmpty == false ? section.name! : "Materiali"))
-                                        .font(.system(size: 12, weight: .semibold))
+                                        .font(DesignFont.caption)
                                         .tracking(0.4)
                                         .foregroundStyle(DesignColor.textTertiary)
                                         .padding(.horizontal, DesignSpace.s2)
@@ -278,7 +309,7 @@ struct WebeepEnvironmentView: View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             if isFolder {
                 Label(WebeepService.stripMultilang(module.name?.isEmpty == false ? module.name! : "Cartella"), systemImage: "folder.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textSecondary)
                     .padding(.horizontal, DesignSpace.s2)
             }
@@ -290,9 +321,9 @@ struct WebeepEnvironmentView: View {
             ForEach(subfolderNames, id: \.self) { name in
                 VStack(alignment: .leading, spacing: DesignSpace.s2) {
                     Label(WebeepService.stripMultilang(name), systemImage: "folder")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
-                        .padding(.horizontal, DesignSpace.s2 + 6)
+                        .padding(.horizontal, DesignSpace.s4)
                     fileGroupCard(subfolders[name] ?? [])
                         .padding(.leading, DesignSpace.s4)
                 }
@@ -319,7 +350,7 @@ struct WebeepEnvironmentView: View {
                 .foregroundStyle(DesignColor.brandPrimary)
                 .frame(width: 22)
             Text(WebeepService.stripMultilang(file.filename))
-                .font(.system(size: 14))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textPrimary)
                 .multilineTextAlignment(.leading)
             Spacer()
@@ -354,35 +385,50 @@ struct WebeepEnvironmentView: View {
                 pendingFile = file
                 showingImportChoice = true
             } label: {
-                Image(systemName: "plus.circle")
+                Image(systemName: "plus")
                     .foregroundStyle(isPDF(file) || isImage(file) ? DesignColor.textTertiary : DesignColor.textTertiary.opacity(0.4))
             }
             .buttonStyle(.plain)
+            .disabled(isImporting)
             .accessibilityLabel("Aggiungi a una nota")
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
     }
 
     private func refresh() async {
         guard let token else { return }
         isLoading = true
+        loadError = nil
         defer { isLoading = false }
-        guard let info = await WebeepService.siteInfo(token: token) else {
-            // Token salvato ma non più valido: torna alla schermata di connessione.
+        do {
+            let info = try await WebeepService.siteInfo(token: token)
+            siteInfo = info
+            courses = try await WebeepService.courses(token: token, userID: info.userid)
+        } catch WebeepServiceError.invalidToken {
+            // SOLO quando Moodle dichiara il token morto si torna al
+            // login: prima anche un errore di rete disconnetteva WeBeep
+            // buttando un token valido dal Keychain.
             WebeepService.signOut()
             self.token = nil
-            return
+        } catch {
+            loadError = "Controlla la connessione e riprova: il collegamento a WeBeep resta attivo."
         }
-        siteInfo = info
-        courses = await WebeepService.courses(token: token, userID: info.userid)
     }
 
     private func loadSections(_ course: WebeepCourse) async {
         guard let token else { return }
         isLoading = true
+        loadError = nil
         defer { isLoading = false }
-        sections = await WebeepService.contents(token: token, courseID: course.id)
+        do {
+            sections = try await WebeepService.contents(token: token, courseID: course.id)
+        } catch WebeepServiceError.invalidToken {
+            WebeepService.signOut()
+            self.token = nil
+        } catch {
+            loadError = "Controlla la connessione e riprova: il collegamento a WeBeep resta attivo."
+        }
     }
 
     private func isPDF(_ file: WebeepFile) -> Bool {
@@ -397,7 +443,7 @@ struct WebeepEnvironmentView: View {
 
     private func download(_ file: WebeepFile) async {
         guard let token else {
-            importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
+            BoostToastCenter.shared.show("Non sei collegato a WeBeep: riaccedi e riprova.", role: .danger)
             return
         }
         isDownloading = true
@@ -408,7 +454,7 @@ struct WebeepEnvironmentView: View {
         do {
             data = try await WebeepService.downloadFile(file, token: token)
         } catch {
-            importErrorMessage = "\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)"
+            BoostToastCenter.shared.show("\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)", role: .danger)
             return
         }
         let safeName = WebeepService.stripMultilang(file.filename).replacingOccurrences(of: "/", with: "-")
@@ -417,13 +463,13 @@ struct WebeepEnvironmentView: View {
             try data.write(to: tmpURL, options: .atomic)
             downloadURL = tmpURL
         } catch {
-            importErrorMessage = "Non sono riuscito a salvare \"\(file.filename)\"."
+            BoostToastCenter.shared.show("Non sono riuscito a salvare \"\(file.filename)\".", role: .danger)
         }
     }
 
     private func quickLook(_ file: WebeepFile) async {
         guard let token else {
-            importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
+            BoostToastCenter.shared.show("Non sei collegato a WeBeep: riaccedi e riprova.", role: .danger)
             return
         }
         isLoadingPreview = true
@@ -434,7 +480,7 @@ struct WebeepEnvironmentView: View {
         do {
             data = try await WebeepService.downloadFile(file, token: token)
         } catch {
-            importErrorMessage = "\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)"
+            BoostToastCenter.shared.show("\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)", role: .danger)
             return
         }
         let safeName = WebeepService.stripMultilang(file.filename).replacingOccurrences(of: "/", with: "-")
@@ -443,7 +489,7 @@ struct WebeepEnvironmentView: View {
             try data.write(to: tmpURL, options: .atomic)
             quickLookURL = tmpURL
         } catch {
-            importErrorMessage = "Non sono riuscito ad aprire l'anteprima di \"\(file.filename)\"."
+            BoostToastCenter.shared.show("Non sono riuscito ad aprire l'anteprima di \"\(file.filename)\".", role: .danger)
         }
     }
 
@@ -453,8 +499,9 @@ struct WebeepEnvironmentView: View {
     }
 
     private func importFile(_ file: WebeepFile, target: ImportTarget) async {
+        guard !isImporting else { return }
         guard let token else {
-            importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
+            BoostToastCenter.shared.show("Non sei collegato a WeBeep: riaccedi e riprova.", role: .danger)
             return
         }
         isImporting = true
@@ -464,7 +511,7 @@ struct WebeepEnvironmentView: View {
         do {
             data = try await WebeepService.downloadFile(file, token: token)
         } catch {
-            importErrorMessage = "\"\(WebeepService.stripMultilang(file.filename))\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)"
+            BoostToastCenter.shared.show("\"\(WebeepService.stripMultilang(file.filename))\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)", role: .danger)
             return
         }
 
@@ -484,15 +531,17 @@ struct WebeepEnvironmentView: View {
         if isPDF(file) {
             guard note.appendPages(fromPDF: data, in: context) else {
                 if case .newNote = target { context.delete(note) }
-                importErrorMessage = "\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF leggibile — probabilmente WeBeep ha restituito una pagina di errore invece del file (token scaduto?). Prova a scaricarlo con la freccia per controllare, o a riaccedere a WeBeep."
+                BoostToastCenter.shared.show("\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF leggibile — probabilmente WeBeep ha restituito una pagina di errore invece del file (token scaduto?). Prova a scaricarlo con la freccia per controllare, o a riaccedere a WeBeep.", role: .danger)
                 return
             }
         } else if isImage(file) {
-            let media = NoteMedia(x: 60, y: 60, kind: .image, data: data, note: note)
+            // Aggancio dal lato genitore (media.append): vedi Note.attach.
+            let media = NoteMedia(x: 60, y: 60, kind: .image, data: data)
             context.insert(media)
+            note.media.append(media)
         } else {
             if case .newNote = target { context.delete(note) }
-            importErrorMessage = "\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF né un'immagine: per ora puoi solo scaricarlo o vederne l'anteprima, non aggiungerlo direttamente alla nota."
+            BoostToastCenter.shared.show("\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF né un'immagine: per ora puoi solo scaricarlo o vederne l'anteprima, non aggiungerlo direttamente alla nota.", role: .danger)
             return
         }
         note.updatedAt = .now
@@ -506,29 +555,42 @@ private struct WebeepNotePickerSheet: View {
     @Query(sort: \Note.updatedAt, order: .reverse) private var allNotes: [Note]
     var onSelect: (Note) -> Void
 
+    // Il tocco seleziona, «Aggiungi» conferma: stessa meccanica di ogni
+    // sheet commit (§4), invece dell'esecuzione al tocco.
+    @State private var selectedNoteID: UUID?
+
     var body: some View {
-        NavigationStack {
-            List(allNotes) { note in
-                Button {
+        BoostSheet(
+            title: "Scegli una nota",
+            mode: .commit(verb: "Aggiungi", enabled: selectedNoteID != nil),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                if let note = allNotes.first(where: { $0.id == selectedNoteID }) {
                     onSelect(note)
+                }
+            }
+        ) {
+            List(allNotes) { note in
+                let isSelected = selectedNoteID == note.id
+                Button {
+                    selectedNoteID = isSelected ? nil : note.id
                 } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                            .foregroundStyle(.primary)
-                        if let folder = note.folder {
-                            Text(folder.name)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    HStack(spacing: DesignSpace.s3) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(note.title.isEmpty ? "Senza titolo" : note.title)
+                                .foregroundStyle(.primary)
+                            if let folder = note.folder {
+                                Text(folder.name)
+                                    .font(DesignFont.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("Scegli una nota")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-            }
         }
+        .presentationDetents([.medium])
     }
 }

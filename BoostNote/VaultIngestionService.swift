@@ -32,21 +32,32 @@ enum VaultIngestionService {
     // selettore WeBeep si fa in un tocco) veniva letto solo il primo e
     // gli altri restavano fermi finché qualcos'altro non li risvegliava.
     private static var pendingRerun: Set<UUID> = []
+    // Chi aspetta la fine del giro in corso (ensureFresh): continuation
+    // riprese a fine ciclo, al posto del polling da 300 ms che c'era —
+    // un'attesa senza risvegli a vuoto, e senza un ciclo infinito da
+    // pagare se un giro resta appeso.
+    private static var cycleWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
 
     // MARK: - Aggiunta documenti
 
     @discardableResult
     static func addNote(_ note: Note, to folder: StudyFolder, in context: ModelContext) -> VaultDocument {
-        let document = VaultDocument(title: note.title, kind: .note, folder: folder, noteID: note.id)
+        // Inserimento e aggancio dal lato GENITORE: la mutazione fatta
+        // solo sul lato figlio può non notificare l'osservazione di
+        // `vaultDocuments` (trappola già pagata sulle pagine delle note,
+        // vedi Note.attach).
+        let document = VaultDocument(title: note.title, kind: .note, folder: nil, noteID: note.id)
         context.insert(document)
+        folder.vaultDocuments.append(document)
         startIngestion(for: folder, in: context)
         return document
     }
 
     @discardableResult
     static func addPDF(title: String, data: Data, to folder: StudyFolder, in context: ModelContext) -> VaultDocument {
-        let document = VaultDocument(title: title, kind: .pdf, folder: folder, pdfData: data)
+        let document = VaultDocument(title: title, kind: .pdf, folder: nil, pdfData: data)
         context.insert(document)
+        folder.vaultDocuments.append(document)
         startIngestion(for: folder, in: context)
         return document
     }
@@ -55,6 +66,16 @@ enum VaultIngestionService {
 
     static func isIngesting(_ folderID: UUID) -> Bool {
         runningFolders.contains(folderID)
+    }
+
+    // Chiude un ciclo: libera i flag e sveglia chi aspettava. Chi si
+    // risveglia ricontrolla `runningFolders` (un rerun può essere già
+    // partito) prima di procedere.
+    private static func finishCycle(_ folderID: UUID) {
+        runningFolders.remove(folderID)
+        VaultActivity.shared.ingestingFolders.remove(folderID)
+        let waiters = cycleWaiters.removeValue(forKey: folderID) ?? []
+        waiters.forEach { $0.resume() }
     }
 
     static func startIngestion(for folder: StudyFolder, in context: ModelContext) {
@@ -70,10 +91,16 @@ enum VaultIngestionService {
         VaultActivity.shared.ingestingFolders.insert(folderID)
         Task { @MainActor in
             await ingest(folder: folder, in: context)
-            runningFolders.remove(folderID)
-            VaultActivity.shared.ingestingFolders.remove(folderID)
-            if pendingRerun.remove(folderID) != nil {
+            let rerun = pendingRerun.remove(folderID) != nil
+            if rerun, !folder.isDeleted {
+                // Il rerun parte PRIMA di svegliare i waiter, così chi
+                // aspetta la freschezza rivede il flag alzato e riaspetta.
+                runningFolders.remove(folderID)
                 startIngestion(for: folder, in: context)
+                let waiters = cycleWaiters.removeValue(forKey: folderID) ?? []
+                waiters.forEach { $0.resume() }
+            } else {
+                finishCycle(folderID)
             }
         }
     }
@@ -83,26 +110,37 @@ enum VaultIngestionService {
     // diff degli hash e legge solo il necessario: su un vault già fresco
     // costa una passata di hash e nessuna chiamata.
     static func ensureFresh(for folder: StudyFolder, in context: ModelContext) async {
-        while runningFolders.contains(folder.id) {
-            // Un giro è già in corso: si aspetta che finisca, il
-            // risultato è lo stesso.
-            try? await Task.sleep(for: .milliseconds(300))
-        }
         let folderID = folder.id
+        while runningFolders.contains(folderID) {
+            // Un giro è già in corso: ci si mette in attesa della sua
+            // fine, poi si rifà comunque il proprio giro — quello in
+            // volo può aver fotografato l'elenco documenti prima di
+            // un'aggiunta recente.
+            await withCheckedContinuation { continuation in
+                cycleWaiters[folderID, default: []].append(continuation)
+            }
+        }
+        guard !folder.isDeleted else { return }
         runningFolders.insert(folderID)
         VaultActivity.shared.ingestingFolders.insert(folderID)
         await ingest(folder: folder, in: context)
-        runningFolders.remove(folderID)
-        VaultActivity.shared.ingestingFolders.remove(folderID)
         // Questo giro ha appena riletto tutto: la prenotazione eventuale
         // è già stata onorata di fatto.
         pendingRerun.remove(folderID)
+        finishCycle(folderID)
     }
 
     // MARK: - Il giro di ingestione
 
     private static func ingest(folder: StudyFolder, in context: ModelContext) async {
+        // La cartella o un documento possono essere eliminati MENTRE il
+        // giro è in corso (i punti di await lo permettono): scrivere su
+        // un @Model eliminato è un crash, quindi si ricontrolla a ogni
+        // ripresa dal lavoro in background.
+        guard !folder.isDeleted else { return }
         for document in folder.vaultDocuments {
+            guard !folder.isDeleted else { return }
+            guard !document.isDeleted else { continue }
             let work = syncPages(of: document, in: context)
             guard !work.isEmpty else {
                 // Niente pagine da leggere, ma l'indice può essere
@@ -112,11 +150,12 @@ enum VaultIngestionService {
                 continue
             }
             let results = await processPages(work)
+            guard !document.isDeleted else { continue }
             // Scrittura pagina per pagina sul MainActor: è QUI che la
             // coda diventa ripartibile — ogni pagina salvata è acquisita.
             let pagesByID = Dictionary(uniqueKeysWithValues: document.pages.map { ($0.id, $0) })
             for (pageID, result) in results {
-                guard let page = pagesByID[pageID] else { continue }
+                guard let page = pagesByID[pageID], !page.isDeleted else { continue }
                 switch result {
                 case .success(let text, let via):
                     page.text = text
@@ -195,8 +234,10 @@ enum VaultIngestionService {
                     work.append(PageWork(pageID: page.id, payload: .notePage(drawing: snapshot.drawing, pdf: snapshot.pdf)))
                 }
             } else {
-                let page = VaultPage(index: index, contentHash: hash, document: document)
+                // Aggancio dal lato genitore, come per i documenti.
+                let page = VaultPage(index: index, contentHash: hash, document: nil)
                 context.insert(page)
+                document.pages.append(page)
                 work.append(PageWork(pageID: page.id, payload: .notePage(drawing: snapshot.drawing, pdf: snapshot.pdf)))
             }
         }
@@ -222,8 +263,9 @@ enum VaultIngestionService {
         document.pdfHash = documentHash
         var work: [PageWork] = []
         for index in 0..<pdf.pageCount {
-            let page = VaultPage(index: index, contentHash: "\(documentHash)#\(index)", document: document)
+            let page = VaultPage(index: index, contentHash: "\(documentHash)#\(index)", document: nil)
             context.insert(page)
+            document.pages.append(page)
             work.append(PageWork(pageID: page.id, payload: .pdfPage(container: PDFContainer(document: pdf), index: index)))
         }
         return work

@@ -44,10 +44,21 @@ final class TemplateBackgroundView: UIView {
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
 
+        // La filigrana si allinea alla GRIGLIA DI PIXEL del dispositivo.
+        // Una riga da 1pt che cade a metà pixel viene spalmata
+        // dall'antialiasing su due file: si vede più spessa, più sbiadita
+        // e di spessore diverso da riga a riga — è quello che la faceva
+        // sembrare sporca. Allineata, ogni riga copre pixel interi ed
+        // esce netta, il che permette anche di assottigliarla.
+        let deviceScale = max(contentScaleFactor, 1)
+        func snapped(_ value: CGFloat) -> CGFloat {
+            ((value * deviceScale).rounded() + 0.5) / deviceScale
+        }
+
         if template != .blank {
             let lineColor = UIColor.label.withAlphaComponent(0.12)
             ctx.setStrokeColor(lineColor.cgColor)
-            ctx.setLineWidth(1)
+            ctx.setLineWidth(0.75)
 
             switch template {
             case .blank:
@@ -56,14 +67,14 @@ final class TemplateBackgroundView: UIView {
             case .grid:
                 var x = rect.minX.truncatingRemainder(dividingBy: step)
                 while x <= rect.maxX {
-                    ctx.move(to: CGPoint(x: x, y: rect.minY))
-                    ctx.addLine(to: CGPoint(x: x, y: rect.maxY))
+                    ctx.move(to: CGPoint(x: snapped(x), y: rect.minY))
+                    ctx.addLine(to: CGPoint(x: snapped(x), y: rect.maxY))
                     x += step
                 }
                 var y = rect.minY.truncatingRemainder(dividingBy: step)
                 while y <= rect.maxY {
-                    ctx.move(to: CGPoint(x: rect.minX, y: y))
-                    ctx.addLine(to: CGPoint(x: rect.maxX, y: y))
+                    ctx.move(to: CGPoint(x: rect.minX, y: snapped(y)))
+                    ctx.addLine(to: CGPoint(x: rect.maxX, y: snapped(y)))
                     y += step
                 }
                 ctx.strokePath()
@@ -72,8 +83,8 @@ final class TemplateBackgroundView: UIView {
                 let rowHeight = step * 1.4
                 var y = rect.minY.truncatingRemainder(dividingBy: rowHeight)
                 while y <= rect.maxY {
-                    ctx.move(to: CGPoint(x: rect.minX, y: y))
-                    ctx.addLine(to: CGPoint(x: rect.maxX, y: y))
+                    ctx.move(to: CGPoint(x: rect.minX, y: snapped(y)))
+                    ctx.addLine(to: CGPoint(x: rect.maxX, y: snapped(y)))
                     y += rowHeight
                 }
                 ctx.strokePath()
@@ -84,10 +95,10 @@ final class TemplateBackgroundView: UIView {
                 while y <= rect.maxY {
                     var x = rect.minX.truncatingRemainder(dividingBy: step)
                     while x <= rect.maxX {
-                        ctx.move(to: CGPoint(x: x - crossSize, y: y))
-                        ctx.addLine(to: CGPoint(x: x + crossSize, y: y))
-                        ctx.move(to: CGPoint(x: x, y: y - crossSize))
-                        ctx.addLine(to: CGPoint(x: x, y: y + crossSize))
+                        ctx.move(to: CGPoint(x: x - crossSize, y: snapped(y)))
+                        ctx.addLine(to: CGPoint(x: x + crossSize, y: snapped(y)))
+                        ctx.move(to: CGPoint(x: snapped(x), y: y - crossSize))
+                        ctx.addLine(to: CGPoint(x: snapped(x), y: y + crossSize))
                         x += step
                     }
                     y += step

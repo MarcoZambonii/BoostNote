@@ -37,16 +37,24 @@ struct ExerciseReportSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Segnala errore",
+            mode: .commit(verb: "Rigenera", enabled: !feedback.isEmpty),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                onRegenerate(feedback)
+                dismiss()
+            }
+        ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSpace.s5) {
                     VStack(alignment: .leading, spacing: DesignSpace.s2) {
                         Text("ESERCIZIO SEGNALATO")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.6)
                             .foregroundStyle(DesignColor.textTertiary)
                         Text(exercisePrompt)
-                            .font(.system(size: 13))
+                            .font(DesignFont.label)
                             .foregroundStyle(DesignColor.textSecondary)
                             .lineLimit(4)
                             .padding(DesignSpace.s3)
@@ -56,7 +64,7 @@ struct ExerciseReportSheet: View {
 
                     VStack(alignment: .leading, spacing: DesignSpace.s2) {
                         Text("COSA NON VA?")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.6)
                             .foregroundStyle(DesignColor.textTertiary)
                         ForEach(Self.reasons, id: \.self) { reason in
@@ -67,7 +75,7 @@ struct ExerciseReportSheet: View {
                                     Image(systemName: selectedReason == reason ? "largecircle.fill.circle" : "circle")
                                         .foregroundStyle(selectedReason == reason ? DesignColor.brandPrimary : DesignColor.borderDefault)
                                     Text(reason)
-                                        .font(.system(size: 14))
+                                        .font(DesignFont.body)
                                         .foregroundStyle(DesignColor.textPrimary)
                                     Spacer()
                                 }
@@ -79,53 +87,28 @@ struct ExerciseReportSheet: View {
 
                     VStack(alignment: .leading, spacing: DesignSpace.s2) {
                         Text("DETTAGLI (FACOLTATIVI)")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.6)
                             .foregroundStyle(DesignColor.textTertiary)
                         TextField("Es. il segno del secondo passaggio è invertito", text: $details, axis: .vertical)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 14))
+                            .font(DesignFont.body)
                             .lineLimit(3...6)
                             .padding(DesignSpace.s3)
                             .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
                         Text("Più sei preciso, più è probabile che l'esercizio rigenerato non ripeta l'errore.")
-                            .font(.system(size: 11))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                     }
 
                     VStack(spacing: DesignSpace.s3) {
-                        Button {
-                            onRegenerate(feedback)
-                            dismiss()
-                        } label: {
-                            HStack(spacing: DesignSpace.s2) {
-                                Image(systemName: "arrow.clockwise")
-                                Text("Rigenera con questa correzione")
-                            }
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(DesignColor.textOnBrand)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, DesignSpace.s3)
-                            .background(
-                                feedback.isEmpty ? DesignColor.gray300 : DesignColor.brandPrimary,
-                                in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(feedback.isEmpty)
-
-                        Button {
+                        BoostButton("Segnala e basta", tone: .ghost, fullWidth: true) {
                             onReportOnly(feedback)
                             dismiss()
-                        } label: {
-                            Text("Segnala e basta")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(DesignColor.textSecondary)
                         }
-                        .buttonStyle(.plain)
 
-                        Text("Rigenerare usa una chiamata al modello e sostituisce solo questo esercizio: gli altri restano com'erano.")
-                            .font(.system(size: 11))
+                        Text("«Rigenera» usa una chiamata al modello e sostituisce solo questo esercizio: gli altri restano com'erano. «Segnala e basta» lo marca soltanto.")
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                             .multilineTextAlignment(.center)
                     }
@@ -135,13 +118,6 @@ struct ExerciseReportSheet: View {
                 .frame(maxWidth: .infinity)
             }
             .background(DesignColor.surfacePage)
-            .navigationTitle("Segnala errore")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-            }
         }
         .presentationDetents([.large])
     }

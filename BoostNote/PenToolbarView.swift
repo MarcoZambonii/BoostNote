@@ -58,14 +58,44 @@ enum ToolbarDock: String, CaseIterable {
     }
 }
 
+// Una penna salvata dall'utente: strumento, colore, spessore e
+// pressione tenuti insieme. Riprenderla costa un tocco invece di
+// rifare ogni volta la stessa configurazione.
+struct PinnedPen: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var toolRaw: String
+    var colorHex: String
+    var width: Double
+    var pressure: Bool
+
+    var tool: PenTool { PenTool(rawValue: toolRaw) ?? .pen }
+    var color: Color { Color(hexString: colorHex) ?? .black }
+
+    // Due penne sono "la stessa" quando coincide la configurazione, non
+    // l'id: serve a capire se quella in mano è già appuntata in barra.
+    func matchesConfiguration(of other: PinnedPen) -> Bool {
+        toolRaw == other.toolRaw
+            && colorHex.caseInsensitiveCompare(other.colorHex) == .orderedSame
+            && abs(width - other.width) < 0.05
+            && pressure == other.pressure
+    }
+}
+
 // Barra strumenti "a isola" flottante, in stile Claude Design
-// (PenToolbar.jsx): pillola con ombra, agganciabile ai 4 lati del foglio.
-// Si trascina dalla maniglia a destra e si aggancia magneticamente al
-// bordo più vicino al rilascio, come i pannelli di sistema su iPad.
+// (PenToolbar.jsx): superficie bianca con ombra, agganciabile ai 4 lati
+// del foglio. Si trascina dalla maniglia a destra e si aggancia
+// magneticamente al bordo più vicino al rilascio.
 struct PenToolbarView: View {
     @Binding var selectedTool: PenTool
     @Binding var inkColors: [PenTool: Color]
     @Binding var inkWidths: [PenTool: CGFloat]
+    // Penna a pressione (tratto che varia con la forza) oppure a
+    // spessore costante: è una proprietà della penna quanto il colore.
+    @Binding var pressureEnabled: [PenTool: Bool]
+    // La penna salvata in mano: nil quando si scrive con lo strumento
+    // di base. Le penne salvate NON toccano la configurazione degli
+    // strumenti — sono strumenti loro.
+    @Binding var activePinnedPen: PinnedPen?
     @Binding var eraserType: PKEraserTool.EraserType
     @Binding var eraserWidth: CGFloat
     @Binding var magicAction: MagicAction?
@@ -89,7 +119,109 @@ struct PenToolbarView: View {
     @State private var dragOffset: CGSize = .zero
     @GestureState private var isDragging = false
 
+    // Le penne dell'utente, salvate come JSON: sopravvivono alla nota e
+    // all'app. Sono una scorciatoia, non uno stato del disegno — per
+    // questo vivono qui e non fra le preferenze passate dall'editor.
+    @AppStorage("tool.pinnedPens") private var storedPinnedPens = ""
+
     private var axis: Axis { dock.axis }
+
+    // Massimo sei: oltre, la barra non ci sta più su un iPad in verticale
+    // e le penne si mangerebbero gli strumenti.
+    private static let maxPinnedPens = 6
+
+    var pinnedPens: [PinnedPen] {
+        get {
+            storedPinnedPens.data(using: .utf8)
+                .flatMap { try? JSONDecoder().decode([PinnedPen].self, from: $0) } ?? []
+        }
+        nonmutating set {
+            guard let data = try? JSONEncoder().encode(Array(newValue.prefix(Self.maxPinnedPens))),
+                  let string = String(data: data, encoding: .utf8) else { return }
+            storedPinnedPens = string
+        }
+    }
+
+    // La penna attualmente in mano, com'è configurata adesso: quella
+    // salvata se se n'è presa una, altrimenti lo strumento di base.
+    private func currentPen(for tool: PenTool) -> PinnedPen {
+        if let pen = activePinnedPen, pen.tool == tool { return pen }
+        return PinnedPen(
+            toolRaw: tool.rawValue,
+            colorHex: (inkColors[tool] ?? tool.defaultColor).hexString ?? "#000000",
+            width: Double(inkWidths[tool] ?? tool.defaultWidth),
+            pressure: pressureEnabled[tool] ?? true
+        )
+    }
+
+    private func isPinned(_ pen: PinnedPen) -> Bool {
+        pinnedPens.contains { $0.matchesConfiguration(of: pen) }
+    }
+
+    // Tornare allo strumento di base: qualunque tocco su penna,
+    // evidenziatore, gomma o lasso lascia andare la penna salvata.
+    private func selectBaseTool(_ tool: PenTool) {
+        activePinnedPen = nil
+        selectedTool = tool
+    }
+
+    private func togglePin(for tool: PenTool) {
+        let pen = currentPen(for: tool)
+        if let index = pinnedPens.firstIndex(where: { $0.matchesConfiguration(of: pen) }) {
+            var pens = pinnedPens
+            pens.remove(at: index)
+            pinnedPens = pens
+        } else {
+            pinnedPens = pinnedPens + [pen]
+        }
+    }
+
+    // Prendere in mano una penna salvata NON scrive niente sugli
+    // strumenti: si limita a dire "adesso scrivo con questa". La penna
+    // di base resta col suo colore e il suo spessore, intatta.
+    private func apply(_ pen: PinnedPen) {
+        activePinnedPen = pen
+        selectedTool = pen.tool
+    }
+
+    private func isActive(_ pen: PinnedPen) -> Bool {
+        activePinnedPen?.id == pen.id
+    }
+
+    // Tasto di una penna salvata: il glifo dello strumento con sotto la
+    // riga del suo colore, come nel mock.
+    @ViewBuilder
+    private func pinnedPenButton(_ pen: PinnedPen) -> some View {
+        let active = isActive(pen)
+        Button {
+            apply(pen)
+        } label: {
+            Image(systemName: pen.tool.systemImage)
+                .font(.system(size: DesignIcon.md))
+                .foregroundStyle(active ? pen.color : DesignColor.textPrimary)
+                .frame(width: 34, height: 34)
+                .background(
+                    active ? pen.color.opacity(0.15) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                )
+                .overlay(alignment: .bottom) {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(pen.color)
+                        .frame(width: 12, height: 2.5)
+                        .opacity(active ? 1 : 0.45)
+                        .padding(.bottom, DesignSpace.s1)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(pen.tool.label) salvata")
+        .contextMenu {
+            Button(role: .destructive) {
+                pinnedPens = pinnedPens.filter { $0.id != pen.id }
+            } label: {
+                Label("Togli dalla barra", systemImage: "pin.slash")
+            }
+        }
+    }
 
     var body: some View {
         let layout: AnyLayout = axis == .horizontal
@@ -102,6 +234,10 @@ struct PenToolbarView: View {
                     inkToolButton(tool)
                 }
 
+                ForEach(pinnedPens) { pen in
+                    pinnedPenButton(pen)
+                }
+
                 moreInksButton
 
                 eraserButton
@@ -110,7 +246,7 @@ struct PenToolbarView: View {
 
                 ForEach([PenTool.text, .pointer]) { tool in
                     Button {
-                        selectedTool = tool
+                        selectBaseTool(tool)
                     } label: {
                         toolIcon(tool.systemImage, isSelected: selectedTool == tool)
                     }
@@ -148,26 +284,23 @@ struct PenToolbarView: View {
 
                 dragHandle
             }
-            .padding(axis == .horizontal ? 6 : 8)
+            .padding(3)
         }
         // Barra più compatta: copre meno foglio, che su una nota piena di
         // scrittura è il difetto che si nota di più.
-        .frame(maxWidth: axis == .horizontal ? 560 : 46)
-        .frame(maxHeight: axis == .vertical ? 460 : 46)
-        // ultraThin invece di regular: si legge cosa c'è sotto, così la
-        // barra sembra appoggiata sul foglio invece di bucarlo.
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous))
+        // Stessa altezza della barra fissa in alto a destra e del tasto
+        // indietro: 40. Erano 46 e la differenza si notava.
+        .frame(maxWidth: axis == .horizontal ? 560 : 40)
+        .frame(maxHeight: axis == .vertical ? 460 : 40)
+        // Bianca e squadrata come ogni altra superficie sospesa (barra
+        // fissa, pannelli): la pillola traslucida era l'unico pezzo
+        // d'app con una forma e un materiale tutti suoi.
+        .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous)
-                .stroke(Color.white.opacity(0.55), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous)
+                .strokeBorder(DesignColor.borderDefault, lineWidth: 1)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous)
-                .stroke(DesignColor.borderDefault.opacity(0.5), lineWidth: 1)
-        )
-        // Ombra più morbida e diffusa: prima era un alone netto che
-        // faceva sembrare la barra incollata sopra invece che sospesa.
-        .shadow(color: .black.opacity(isDragging ? 0.18 : 0.10), radius: isDragging ? 24 : 18, y: 6)
+        .shadow(color: .black.opacity(isDragging ? 0.20 : 0.12), radius: isDragging ? 26 : 20, y: 7)
         .scaleEffect(isDragging ? 1.03 : 1)
         .offset(dragOffset)
         .animation(.spring(response: 0.32, dampingFraction: 0.78), value: dragOffset)
@@ -184,8 +317,8 @@ struct PenToolbarView: View {
     // barra, che si aggancia magneticamente al bordo più vicino al rilascio.
     @ViewBuilder
     private var dragHandle: some View {
-        Image(systemName: "circle.grid.3x3.fill")
-            .font(.system(size: 15))
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: DesignIcon.md))
             .foregroundStyle(DesignColor.textTertiary)
             .frame(width: 34, height: 34)
             .contentShape(Rectangle())
@@ -221,12 +354,12 @@ struct PenToolbarView: View {
                         .controlSize(.mini)
                         .tint(magicAction != nil ? magicAction!.color : .white)
                 } else {
-                    Image(systemName: magicAction?.systemImage ?? "wand.and.stars")
-                        .font(.system(size: 15, weight: .semibold))
+                    Image(systemName: magicAction?.systemImage ?? "sparkles")
+                        .font(.system(size: DesignIcon.md))
                 }
                 if axis == .horizontal {
-                    Text(isMagicProcessing ? "Elaborazione…" : (magicAction?.label ?? "Magica"))
-                        .font(.system(size: 13, weight: .semibold))
+                    Text(isMagicProcessing ? "Genero…" : (magicAction?.label ?? "Magica"))
+                        .font(DesignFont.action)
                 }
             }
             .padding(.horizontal, axis == .horizontal ? 14 : 0)
@@ -235,7 +368,7 @@ struct PenToolbarView: View {
             .foregroundStyle(magicAction != nil ? magicAction!.color : .white)
             .background(
                 magicAction != nil ? AnyShapeStyle(magicAction!.backgroundColor) : AnyShapeStyle(DesignColor.brandPrimary),
-                in: Capsule()
+                in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
             )
         }
         .buttonStyle(.plain)
@@ -309,13 +442,13 @@ struct PenToolbarView: View {
     private func inkToolButton(_ tool: PenTool) -> some View {
         let color = colorBinding(for: tool)
         Button {
-            if selectedTool == tool {
+            if selectedTool == tool, activePinnedPen == nil {
                 showingOptionsFor = tool
             } else {
-                selectedTool = tool
+                selectBaseTool(tool)
             }
         } label: {
-            toolIcon(tool.systemImage, isSelected: selectedTool == tool, tint: selectedTool == tool ? color.wrappedValue : nil)
+            toolIcon(tool.systemImage, isSelected: selectedTool == tool, tint: selectedTool == tool ? color.wrappedValue : nil, inkColor: color.wrappedValue)
         }
         .accessibilityLabel(tool.label)
         .popover(isPresented: Binding(
@@ -346,7 +479,7 @@ struct PenToolbarView: View {
         .popover(isPresented: $showingInkPicker) {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 Text("Altri inchiostri")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textTertiary)
 
                 ForEach(secondaryInks) { tool in
@@ -356,15 +489,15 @@ struct PenToolbarView: View {
                     } label: {
                         HStack(spacing: DesignSpace.s3) {
                             Image(systemName: tool.systemImage)
-                                .font(.system(size: 16))
+                                .font(.system(size: DesignIcon.md))
                                 .frame(width: 24)
                                 .foregroundStyle(selectedTool == tool ? DesignColor.brandPrimary : DesignColor.textSecondary)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(tool.label)
-                                    .font(.system(size: 14, weight: .medium))
+                                    .font(DesignFont.body)
                                     .foregroundStyle(DesignColor.textPrimary)
                                 Text(tool.hint)
-                                    .font(.system(size: 11))
+                                    .font(DesignFont.caption)
                                     .foregroundStyle(DesignColor.textTertiary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -373,7 +506,7 @@ struct PenToolbarView: View {
                                 .fill(inkColors[tool] ?? tool.defaultColor)
                                 .frame(width: 14, height: 14)
                         }
-                        .padding(.vertical, 5)
+                        .padding(.vertical, DesignSpace.s1)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -386,24 +519,85 @@ struct PenToolbarView: View {
         }
     }
 
+    // Interruttore della pressione: acceso, il tratto ingrossa dove
+    // premi; spento ha spessore identico ovunque. Solo la penna può
+    // farlo davvero — l'inchiostro a spessore costante di PencilKit
+    // (monoline) non supera i 4 punti, e un evidenziatore da 4 punti
+    // non evidenzia niente.
+    @ViewBuilder
+    private func pressureToggle(for tool: PenTool) -> some View {
+        if tool.supportsConstantWidth {
+            let binding = Binding(
+                get: { pressureEnabled[tool] ?? true },
+                set: { isOn in
+                    pressureEnabled[tool] = isOn
+                    // Spegnendo la pressione l'intervallo si stringe: uno
+                    // spessore da 12 resterebbe scritto nello slider ma
+                    // il tratto uscirebbe da 4.
+                    let range = tool.widthRange(pressure: isOn)
+                    let current = inkWidths[tool] ?? tool.defaultWidth
+                    inkWidths[tool] = min(max(current, range.lowerBound), range.upperBound)
+                }
+            )
+            VStack(alignment: .leading, spacing: DesignSpace.s1) {
+                Toggle(isOn: binding) {
+                    Text("Sensibile alla pressione")
+                        .font(DesignFont.label)
+                        .foregroundStyle(DesignColor.textSecondary)
+                }
+                .tint(DesignColor.brandPrimary)
+
+                Text(binding.wrappedValue
+                     ? "Il tratto ingrossa dove premi."
+                     : "Tratto identico ovunque, fino a 4 punti.")
+                    .font(DesignFont.caption)
+                    .foregroundStyle(DesignColor.textTertiary)
+            }
+        }
+    }
+
+    // Appuntare la penna in barra: la configurazione attuale diventa un
+    // tasto, e un secondo tocco sullo stesso comando la toglie.
+    @ViewBuilder
+    private func pinButton(for tool: PenTool) -> some View {
+        let pen = currentPen(for: tool)
+        let pinned = isPinned(pen)
+        BoostButton(
+            pinned ? "Togli dalla barra" : "Appunta in barra",
+            icon: pinned ? "pin.slash" : "pin",
+            tone: pinned ? .ghost : .secondary,
+            size: .compact,
+            fullWidth: true
+        ) {
+            togglePin(for: tool)
+        }
+        .disabled(!pinned && pinnedPens.count >= Self.maxPinnedPens)
+    }
+
     @ViewBuilder
     private func inkOptions(for tool: PenTool) -> some View {
         let color = colorBinding(for: tool)
         let width = widthBinding(for: tool)
-        let range = tool.widthRange
+        // A pressione spenta l'intervallo si stringe (0,5-4): lo slider
+        // deve mostrare quello vero, non promettere spessori che
+        // PencilKit taglierebbe in silenzio.
+        let range = tool.widthRange(pressure: pressureEnabled[tool] ?? true)
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text(tool.hint)
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             inkOptionsBody(color: color, width: width, widthRange: range)
+            pressureToggle(for: tool)
+            Divider()
+            pinButton(for: tool)
         }
     }
 
     private func inkOptionsBody(color: Binding<Color>, width: Binding<CGFloat>, widthRange: ClosedRange<CGFloat>) -> some View {
         VStack(alignment: .leading, spacing: DesignSpace.s4) {
             Text("Colore")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textTertiary)
 
             HStack(spacing: DesignSpace.s2) {
@@ -429,13 +623,13 @@ struct PenToolbarView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 HStack {
                     Text("Spessore punta")
-                        .font(.system(size: 13))
+                        .font(DesignFont.label)
                         .foregroundStyle(DesignColor.textSecondary)
                     Spacer()
                     // In punti: i millimetri qui confondevano (deciso
                     // dall'utente); restano sul passo dei quadretti.
                     Text(Double(width.wrappedValue).formatted(.number.precision(.fractionLength(0...1))))
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(DesignFont.mono)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 // Passo proporzionale all'intervallo: con `step: 1` fisso
@@ -467,7 +661,7 @@ struct PenToolbarView: View {
             if selectedTool == .eraser {
                 showingEraserOptions = true
             } else {
-                selectedTool = .eraser
+                selectBaseTool(.eraser)
             }
         } label: {
             toolIcon("eraser.fill", isSelected: selectedTool == .eraser)
@@ -484,7 +678,7 @@ struct PenToolbarView: View {
     private var eraserOptions: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s4) {
             Text("Gomma")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textTertiary)
 
             // Una sola gomma, a oggetti. La "Precisa" (parziale) è stata
@@ -493,18 +687,18 @@ struct PenToolbarView: View {
             // dell'utente, senza indagare oltre per ora. Il codice di
             // divisione (InkEraser.split) resta, dormiente.
             Text("Toglie il tratto intero che tocchi.")
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 HStack {
                     Text("Dimensione")
-                        .font(.system(size: 13))
+                        .font(DesignFont.label)
                         .foregroundStyle(DesignColor.textSecondary)
                     Spacer()
                     Text("\(Int(eraserWidth))")
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(DesignFont.mono)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 Slider(value: $eraserWidth, in: 10...80, step: 2)
@@ -531,17 +725,17 @@ struct PenToolbarView: View {
     }
 
     // Il lazo, come la gomma: un tocco lo seleziona, un secondo spiega
-    // cosa ci si può fare. Le operazioni sulla selezione (taglia, copia,
-    // duplica, elimina) le offre PencilKit nel proprio menu quando la
-    // selezione è attiva: non le rifacciamo qui, sarebbe un secondo menu
-    // che dice le stesse cose in un posto diverso.
+    // cosa ci si può fare. Le operazioni sulla selezione (duplica,
+    // copia, taglia, elimina) vivono nella barretta che compare sopra il
+    // recinto — il lasso è NOSTRO (LiveInkCaptureOverlay), PencilKit non
+    // partecipa più: le istruzioni qui sotto descrivono quello vero.
     @ViewBuilder
     private var lassoButton: some View {
         Button {
             if selectedTool == .lasso {
                 showingLassoInfo = true
             } else {
-                selectedTool = .lasso
+                selectBaseTool(.lasso)
             }
         } label: {
             toolIcon(PenTool.lasso.systemImage, isSelected: selectedTool == .lasso)
@@ -550,14 +744,15 @@ struct PenToolbarView: View {
         .popover(isPresented: $showingLassoInfo) {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 Text("Selezione")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textTertiary)
+
                 lassoStep("1", "Cerchia quello che ti interessa.")
-                lassoStep("2", "Trascinalo per spostarlo, o pizzica per ridimensionarlo.")
-                lassoStep("3", "Toccalo di nuovo per taglia, copia, duplica ed elimina.")
+                lassoStep("2", "Trascina la selezione per spostarla.")
+                lassoStep("3", "Usa la barretta sopra la selezione per duplicare, copiare, tagliare o eliminare.")
                 Divider()
-                Text("Funziona su inchiostro e formule, non sulle caselle di testo: quelle si spostano trascinandole direttamente.")
-                    .font(.system(size: 11))
+                Text("Con qualcosa negli appunti, un tocco su un punto vuoto lo incolla lì. Funziona sull'inchiostro, non sulle caselle di testo: quelle si spostano trascinandole direttamente.")
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -570,27 +765,39 @@ struct PenToolbarView: View {
     private func lassoStep(_ number: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: DesignSpace.s2) {
             Text(number)
-                .font(.system(size: 11, weight: .bold))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.brandPrimary)
                 .frame(width: 16, height: 16)
                 .background(DesignColor.brandPrimarySubtle, in: Circle())
             Text(text)
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     @ViewBuilder
-    private func toolIcon(_ systemImage: String, isSelected: Bool, tint: Color? = nil) -> some View {
+    private func toolIcon(_ systemImage: String, isSelected: Bool, tint: Color? = nil, inkColor: Color? = nil) -> some View {
         Image(systemName: systemImage)
-            .font(.system(size: 17, weight: .medium))
+            .font(.system(size: DesignIcon.md))
             .foregroundStyle(isSelected ? (tint ?? DesignColor.brandPrimary) : DesignColor.textPrimary)
             .frame(width: 34, height: 34)
             .background(
                 isSelected ? (tint ?? DesignColor.brandPrimary).opacity(0.15) : Color.clear,
                 in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
             )
+            // Il trattino del colore sotto l'icona: è quello che distingue
+            // penna ed evidenziatore a colpo d'occhio, molto più della
+            // forma del glifo, e dice con che colore si sta scrivendo.
+            .overlay(alignment: .bottom) {
+                if let inkColor {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(inkColor)
+                        .frame(width: 12, height: 2.5)
+                        .opacity(isSelected ? 1 : 0.45)
+                        .padding(.bottom, 2)
+                }
+            }
     }
 }
 
@@ -612,10 +819,10 @@ private struct MagicActionPickerView: View {
         VStack(spacing: 0) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(DesignColor.textTertiary)
                 TextField("Cerca azioni", text: $query)
-                    .font(.system(size: 14))
+                    .font(DesignFont.body)
                     .textFieldStyle(.plain)
             }
             .padding(DesignSpace.s3)
@@ -629,22 +836,32 @@ private struct MagicActionPickerView: View {
                             onSelect(action)
                         } label: {
                             HStack(spacing: DesignSpace.s3) {
-                                Image(systemName: action.systemImage)
-                                    .font(.system(size: 15))
-                                    .foregroundStyle(current == action ? action.color : DesignColor.textSecondary)
-                                    .frame(width: 22)
+                                // La tessera colorata c'è SEMPRE, come nel
+                                // mock: il colore è l'identità dello
+                                // strumento (Wolfram arancio, LaTeX viola…),
+                                // non un modo di dire "questo è selezionato".
+                                // Grigie finché non le sceglievi, le azioni
+                                // erano cinque righe indistinguibili.
+                                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                                    .fill(action.backgroundColor)
+                                    .frame(width: 30, height: 30)
+                                    .overlay(
+                                        Image(systemName: action.systemImage)
+                                            .font(.system(size: DesignIcon.sm))
+                                            .foregroundStyle(action.color)
+                                    )
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(action.label)
-                                        .font(.system(size: 14, weight: current == action ? .semibold : .medium))
+                                        .font(current == action ? DesignFont.cardTitle : DesignFont.body)
                                         .foregroundStyle(current == action ? action.color : DesignColor.textPrimary)
                                     Text(action.subtitle)
-                                        .font(.system(size: 11))
+                                        .font(DesignFont.caption)
                                         .foregroundStyle(DesignColor.textTertiary)
                                 }
                                 Spacer()
                             }
                             .padding(.horizontal, DesignSpace.s3)
-                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .padding(.vertical, DesignSpace.s3)
                             .background(
                                 current == action ? action.backgroundColor : Color.clear,
                                 in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
@@ -660,16 +877,16 @@ private struct MagicActionPickerView: View {
                         } label: {
                             HStack(spacing: DesignSpace.s3) {
                                 Image(systemName: "xmark.circle")
-                                    .font(.system(size: 15))
+                                    .font(.system(size: DesignIcon.md))
                                     .foregroundStyle(DesignColor.danger)
                                     .frame(width: 22)
                                 Text("Disattiva")
-                                    .font(.system(size: 14, weight: .medium))
+                                    .font(DesignFont.body)
                                     .foregroundStyle(DesignColor.danger)
                                 Spacer()
                             }
                             .padding(.horizontal, DesignSpace.s3)
-                            .padding(.vertical, DesignSpace.s2 + 2)
+                            .padding(.vertical, DesignSpace.s3)
                         }
                         .buttonStyle(.plain)
                     }

@@ -14,6 +14,7 @@ struct StudyDetailView: View {
     var onDelete: () -> Void
 
     @State private var showingTrustSheet = false
+    @State private var showingDeleteConfirmation = false
     // Avvisi dei moduli aperti nel dettaglio (vedi infoDisclosure).
     @State private var expandedInfo: Set<UUID> = []
 
@@ -28,13 +29,19 @@ struct StudyDetailView: View {
         .sheet(isPresented: $showingTrustSheet) {
             StudioTrustSheet(study: study)
         }
+        .alert(Text("Eliminare «\(study.name)»?"), isPresented: $showingDeleteConfirmation) {
+            Button("Annulla", role: .cancel) {}
+            Button("Elimina", role: .destructive, action: onDelete)
+        } message: {
+            Text("I suoi moduli generati e i tentativi registrati nell'analisi dei progressi verranno eliminati.")
+        }
         // L'esito della verifica è scritto una volta sola, alla
         // generazione: senza un ricontrollo, un contenuto marcato "non
         // verificato" da un confronto troppo severo resterebbe tale per
-        // sempre. Costa un confronto di stringhe sul contenuto già in
-        // archivio, e riscrive solo se qualcosa cambia davvero.
+        // sempre. Il lavoro pesante gira fuori dal MainActor (vedi
+        // reverifyCitations): qui si aspetta e basta.
         .task(id: study.id) {
-            StudioGenerationService.reverifyCitations(in: study)
+            await StudioGenerationService.reverifyCitations(in: study)
         }
     }
 
@@ -45,7 +52,7 @@ struct StudyDetailView: View {
             HStack(spacing: DesignSpace.s3) {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                 }
                 .buttonStyle(.plain)
@@ -53,10 +60,12 @@ struct StudyDetailView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(study.name)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
-                    Text(study.subjectOrPlaceholder + " · creato il " + study.createdAt.formatted(date: .abbreviated, time: .omitted))
-                        .font(.system(size: 12))
+                    Text([study.subjectIfAny, "creato il " + study.createdAt.formatted(date: .abbreviated, time: .omitted)]
+                        .compactMap { $0 }
+                        .joined(separator: " · "))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 Spacer()
@@ -65,22 +74,24 @@ struct StudyDetailView: View {
                 } label: {
                     Label("Come funziona", systemImage: "info.circle")
                         .fixedSize()
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DesignFont.action)
                         .foregroundStyle(DesignColor.brandPrimary)
                 }
                 .buttonStyle(.plain)
 
                 Menu {
-                    Button(role: .destructive, action: onDelete) {
+                    Button(role: .destructive) {
+                        showingDeleteConfirmation = true
+                    } label: {
                         Label("Elimina studio", systemImage: "trash")
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 17))
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                 }
             }
-            .padding(.horizontal, DesignSpace.s6 + 4)
+            .padding(.horizontal, DesignSpace.s6)
             .frame(height: 56)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
@@ -91,7 +102,7 @@ struct StudyDetailView: View {
                     if !study.materials.isEmpty {
                         VStack(alignment: .leading, spacing: DesignSpace.s2) {
                             Text("MATERIALI")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.micro)
                                 .tracking(0.6)
                                 .foregroundStyle(DesignColor.textTertiary)
                             VStack(spacing: 1) {
@@ -104,7 +115,7 @@ struct StudyDetailView: View {
                     } else if !study.sources.isEmpty {
                         VStack(alignment: .leading, spacing: DesignSpace.s2) {
                             Text("MATERIALI")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.micro)
                                 .tracking(0.6)
                                 .foregroundStyle(DesignColor.textTertiary)
                             FlowChips(items: study.sources.map { source in
@@ -138,21 +149,21 @@ struct StudyDetailView: View {
     private func materialRow(_ material: StudyMaterial) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: material.kind.systemImage)
-                .font(.system(size: 14))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(material.hasText ? DesignColor.brandPrimary : DesignColor.textTertiary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 1) {
                 Text(material.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
                 if let error = material.extractionError {
                     Text(error)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.attention)
                 } else {
                     Text("\(material.extractedText.count) caratteri letti")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -160,14 +171,14 @@ struct StudyDetailView: View {
             if material.isExamPaper {
                 Text("Tema d'esame")
                     .fixedSize()
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.attention)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(DesignColor.attentionBg, in: Capsule())
+                    .padding(.horizontal, DesignSpace.s2)
+                    .padding(.vertical, DesignSpace.s1)
+                    .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
     }
 
@@ -213,7 +224,7 @@ struct StudyDetailView: View {
                 headerRow(module, kind: kind)
                 if expandedInfo.contains(module.id), module.status == .ready, let info = module.generationError {
                     Text(info)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.attention)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -231,12 +242,12 @@ struct StudyDetailView: View {
                         .frame(width: 38, height: 38)
                         .overlay(
                             Image(systemName: kind?.systemImage ?? "questionmark")
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: DesignIcon.md))
                                 .foregroundStyle(kind?.color ?? DesignColor.textSecondary)
                         )
                     VStack(alignment: .leading, spacing: 2) {
                         Text(kind?.label ?? module.kindRaw)
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.textPrimary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
@@ -251,7 +262,7 @@ struct StudyDetailView: View {
                             regenerate(module)
                         } label: {
                             Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.system(size: DesignIcon.md))
                                 .foregroundStyle(DesignColor.textSecondary)
                                 .frame(width: 30, height: 30)
                                 .background(DesignColor.surfacePage, in: Circle())
@@ -261,7 +272,7 @@ struct StudyDetailView: View {
 
                         if module.status == .ready {
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.system(size: DesignIcon.md))
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     }
@@ -273,7 +284,7 @@ struct StudyDetailView: View {
         switch module.status {
         case .pending:
             Text("In coda…")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         case .generating:
             VStack(alignment: .leading, spacing: 4) {
@@ -283,14 +294,14 @@ struct StudyDetailView: View {
                     // gemini-flash-latest (3/5)…"): la stessa attesa,
                     // ma leggibile invece che cieca.
                     Text(GenerationProgress.shared.text[module.id] ?? "Generazione in corso…")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Button("Annulla") {
                         StudioGenerationService.cancelGeneration(for: study.id)
                     }
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DesignFont.action)
                     .foregroundStyle(DesignColor.danger)
                     .buttonStyle(.plain)
                 }
@@ -299,7 +310,7 @@ struct StudyDetailView: View {
                 // scoprire esercizi più semplici a generazione conclusa.
                 if let notice = module.generationError, !notice.isEmpty {
                     Text(notice)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                         .lineLimit(3)
                 }
@@ -307,38 +318,38 @@ struct StudyDetailView: View {
         case .failed:
             VStack(alignment: .leading, spacing: 4) {
                 Text("Generazione non riuscita")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.danger)
                 if let reason = module.generationError {
                     Text(reason)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                         .lineLimit(4)
                 }
                 Text("Tocca la freccia circolare per riprovare.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
             }
         case .ready:
             VStack(alignment: .leading, spacing: 2) {
                 Text(readySummary(module))
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                 // Con quale provider è stato generato questo contenuto.
                 if module.generatedByRaw != "none" && module.generatedByRaw != "mock" {
                     Label("Generato con \(module.generatedByRaw)", systemImage: "sparkles")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.success)
                     // La verifica che scarta è più credibile di una che
                     // approva sempre: si dice quanto ha buttato.
                     if module.discardedCount > 0 {
                         Label("\(module.discardedCount) scartati dalla verifica", systemImage: "checkmark.shield")
-                            .font(.system(size: 11))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                     if !module.reportedIDs.isEmpty {
                         Label("\(module.reportedIDs.count) segnalati da te", systemImage: "flag.fill")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.danger)
                     }
                     // Copertura parziale: la generazione è riuscita ma non
@@ -372,14 +383,14 @@ struct StudyDetailView: View {
             // per riga (visto succedere in orizzontale).
             HStack(alignment: .center, spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(.system(size: DesignIcon.sm))
                 Text(briefInfo(text))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: DesignIcon.sm))
             }
-            .font(.system(size: 11))
+            .font(.system(size: DesignIcon.sm))
             .foregroundStyle(DesignColor.attention)
         }
         .buttonStyle(.plain)
@@ -403,11 +414,17 @@ struct StudyDetailView: View {
             return "\(count) sezioni"
         case .exercises:
             let exercises = module.decodeContent(ExerciseSetContent.self)?.exercises ?? []
-            let practical = exercises.filter { $0.category == .practical }.count
-            return "\(exercises.count) esercizi (\(exercises.count - practical) teorici, \(practical) pratici)"
+            let verified = exercises.filter { $0.verification == .agreed }.count
+            // La ripartizione teorici/pratici non si mostra più: sono
+            // tutti da risolvere. Al suo posto un numero che dice
+            // qualcosa che non si sa già — quanti hanno retto la seconda
+            // risoluzione.
+            return verified == 0
+                ? "\(exercises.count) esercizi"
+                : "\(exercises.count) esercizi, \(verified) verificati"
         case .reviewPoints:
             let count = module.decodeContent(ReviewPointsContent.self)?.points.count ?? 0
-            return "\(count) punti con domanda"
+            return count == 1 ? "1 domanda" : "\(count) domande"
         case .flashcards:
             let count = module.decodeContent(FlashcardsContent.self)?.cards.count ?? 0
             return "\(count) carte"
@@ -430,29 +447,46 @@ struct StudyDetailView: View {
     @ViewBuilder
     private func moduleViewer(_ module: StudyModule) -> some View {
         VStack(spacing: 0) {
+            // La testata dice COSA stai guardando, su due livelli: il
+            // modulo come titolo e lo studio da cui viene sotto. Prima
+            // il nome dello studio faceva da etichetta al tasto indietro
+            // e il modulo era una targhetta colorata spinta a destra: si
+            // leggeva "Analisi decision I … Riassunto" e il titolo vero
+            // della schermata non c'era.
             HStack(spacing: DesignSpace.s3) {
                 Button {
                     openModule = nil
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 14, weight: .semibold))
-                        Text(study.name)
-                            .font(.system(size: 14, weight: .medium))
-                    }
-                    .foregroundStyle(DesignColor.textSecondary)
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: DesignIcon.md))
+                        .foregroundStyle(DesignColor.textSecondary)
+                        .frame(width: DesignSize.touchMin, height: DesignSize.touchMin)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Torna a \(study.name)")
+
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        if let kind = module.kind {
+                            Image(systemName: kind.systemImage)
+                                .font(.system(size: DesignIcon.sm))
+                                .foregroundStyle(kind.color)
+                        }
+                        Text(module.kind?.label ?? "Modulo")
+                            .font(DesignFont.sectionTitle)
+                            .foregroundStyle(DesignColor.textPrimary)
+                    }
+                    Text(study.name)
+                        .font(DesignFont.caption)
+                        .foregroundStyle(DesignColor.textTertiary)
+                        .lineLimit(1)
+                }
 
                 Spacer()
-                if let kind = module.kind {
-                    Label(kind.label, systemImage: kind.systemImage)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(kind.color)
-                }
             }
-            .padding(.horizontal, DesignSpace.s6 + 4)
-            .frame(height: 56)
+            .padding(.horizontal, DesignSpace.s4)
+            .padding(.vertical, DesignSpace.s2)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
             }
@@ -467,11 +501,15 @@ struct StudyDetailView: View {
                     module: module
                 )
             case .reviewPoints:
-                ReviewPointsModuleView(content: module.decodeContent(ReviewPointsContent.self) ?? ReviewPointsContent(), module: module)
+                ReviewPointsModuleView(
+                    content: module.decodeContent(ReviewPointsContent.self) ?? ReviewPointsContent(),
+                    module: module,
+                    study: study
+                )
             case .flashcards:
                 FlashcardsModuleView(content: module.decodeContent(FlashcardsContent.self) ?? FlashcardsContent())
             case nil:
-                ContentUnavailableView("Modulo non riconosciuto", systemImage: "questionmark")
+                BoostState(kind: .error, icon: "questionmark", title: "Modulo non riconosciuto")
             }
         }
     }
@@ -548,34 +586,34 @@ struct CitationDisclosure: View {
                     withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
                 } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: citation.verified ? "checkmark.seal.fill" : (meaning == .inspiration ? "wand.and.stars" : "questionmark.circle"))
-                            .font(.system(size: 11, weight: .semibold))
+                        Image(systemName: citation.verified ? "checkmark.seal.fill" : (meaning == .inspiration ? "sparkles" : "questionmark.circle"))
+                            .font(.system(size: DesignIcon.sm))
                         Text(label)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.caption)
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: DesignIcon.sm))
                     }
                     .foregroundStyle(tint)
-                    .padding(.horizontal, DesignSpace.s2 + 2)
-                    .padding(.vertical, 4)
-                    .background(tintBackground, in: Capsule())
+                    .padding(.horizontal, DesignSpace.s3)
+                    .padding(.vertical, DesignSpace.s1)
+                    .background(tintBackground, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
 
                 if expanded {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(meaning == .inspiration ? "Passaggio di riferimento:" : "Passaggio citato:")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.textTertiary)
-                        StudioRichText(text: citation.text, size: 12)
+                        StudioRichText(text: citation.text, font: DesignFont.caption)
                         if let source = citation.sourceTitle {
                             Text("— \(source)")
-                                .font(.system(size: 11))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                         if !citation.verified || meaning == .inspiration {
                             Text(explanation)
-                                .font(.system(size: 11))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(tint)
                         }
                     }
@@ -603,15 +641,15 @@ struct ReportButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: isReported ? "flag.fill" : "flag")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DesignIcon.sm))
                 Text(isReported ? "Segnalato" : "Segnala errore")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignFont.caption)
             }
             .fixedSize()
             .foregroundStyle(isReported ? DesignColor.danger : DesignColor.textTertiary)
-            .padding(.horizontal, DesignSpace.s2 + 2)
-            .padding(.vertical, 4)
-            .background(isReported ? DesignColor.dangerBg : Color.clear, in: Capsule())
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s1)
+            .background(isReported ? DesignColor.dangerBg : Color.clear, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -627,13 +665,13 @@ private struct FlowChips: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: DesignSpace.s2)], alignment: .leading, spacing: DesignSpace.s2) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 Text(item.0)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DesignFont.caption)
                     .foregroundStyle(item.1)
                     .lineLimit(1)
-                    .padding(.horizontal, DesignSpace.s2 + 2)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, DesignSpace.s3)
+                    .padding(.vertical, DesignSpace.s1)
                     .frame(maxWidth: .infinity)
-                    .background(DesignColor.surfaceSunken, in: Capsule())
+                    .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
         }
     }
@@ -650,7 +688,7 @@ private struct SummaryModuleView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 ForEach(content.sections) { section in
                     VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                        StudioRichText(text: section.title, size: 16, weight: .semibold, color: DesignColor.textPrimary)
+                        StudioRichText(text: section.title, font: DesignFont.cardTitle, color: DesignColor.textPrimary)
                         StudioRichText(text: section.body)
                         HStack(spacing: DesignSpace.s2) {
                             CitationDisclosure(citation: section.quote)
@@ -702,8 +740,10 @@ private struct ExercisesModuleView: View {
 
     // Verifica Wolfram, eseguita su richiesta alla rivelazione della
     // risposta: è un oracolo ESTERNO al modello, quindi vale molto più di
-    // un'autovalutazione dell'AI. Chiave presa dal Profilo (BYOK).
-    @AppStorage("wolframAlphaAppID") private var wolframAppID = ""
+    // un'autovalutazione dell'AI. Chiave dal Keychain via AIService, che
+    // è l'unico punto di accesso (era una @AppStorage in chiaro,
+    // quintuplicata in giro per l'app).
+    private var wolframAppID: String { AIService.wolframAppID ?? "" }
     // Risultati Wolfram PER ESERCIZIO: con un solo valore condiviso, la
     // verifica di un esercizio restava visibile passando al successivo,
     // facendo sembrare verificato un risultato che non lo era.
@@ -711,7 +751,6 @@ private struct ExercisesModuleView: View {
     // rigenerazione mirata che ne può seguire.
     @State private var reportingExercise: StudyExercise?
     @State private var regeneratingID: UUID?
-    @State private var regenerationError: String?
 
     @State private var wolframResults: [UUID: WolframCheck] = [:]
     @State private var wolframCheckingID: UUID?
@@ -724,7 +763,6 @@ private struct ExercisesModuleView: View {
         var detail: [WolframPod] = []
     }
 
-    @State private var categoryFilter: ExerciseCategory?
     @State private var index = 0
     @State private var revealedSteps = 0
     @State private var showAnswer = false
@@ -737,17 +775,14 @@ private struct ExercisesModuleView: View {
     // stesso esercizio se ci si torna sopra.
     @State private var outcomes: [UUID: Bool] = [:]
 
-    private var exercises: [StudyExercise] {
-        guard let categoryFilter else { return content.exercises }
-        return content.exercises.filter { $0.category == categoryFilter }
-    }
+    private var exercises: [StudyExercise] { content.exercises }
 
     var body: some View {
         VStack(spacing: 0) {
-            filterBar
+            progressBar
 
             if exercises.isEmpty {
-                ContentUnavailableView("Nessun esercizio in questa categoria", systemImage: "pencil.slash")
+                BoostState(kind: .empty, icon: "pencil.slash", title: "Nessun esercizio")
             } else if finished {
                 sessionSummary
             } else {
@@ -767,14 +802,6 @@ private struct ExercisesModuleView: View {
                 }
             )
         }
-        .alert("Rigenerazione non riuscita", isPresented: Binding(
-            get: { regenerationError != nil },
-            set: { if !$0 { regenerationError = nil } }
-        )) {
-            Button("OK", role: .cancel) { regenerationError = nil }
-        } message: {
-            Text(regenerationError ?? "")
-        }
     }
 
     private func regenerate(exercise: StudyExercise, feedback: String) async {
@@ -788,7 +815,7 @@ private struct ExercisesModuleView: View {
             context: context
         )
         if let error {
-            regenerationError = error
+            BoostToastCenter.shared.show(error, role: .danger)
         } else {
             // Il contenuto è cambiato sotto ai piedi: si riparte dalla
             // rivelazione chiusa, altrimenti si vedrebbe la soluzione
@@ -799,39 +826,20 @@ private struct ExercisesModuleView: View {
         }
     }
 
-    private var filterBar: some View {
+    // Era una barra di filtri "Tutti / Teorici / Pratici". Su un insieme
+    // di una natura sola erano tre pulsanti che dicevano la stessa cosa:
+    // resta la sola posizione nel set, che invece serve.
+    private var progressBar: some View {
         HStack(spacing: DesignSpace.s2) {
-            filterChip(nil, label: "Tutti (\(content.exercises.count))")
-            ForEach(ExerciseCategory.allCases, id: \.self) { category in
-                let count = content.exercises.filter { $0.category == category }.count
-                filterChip(category, label: "\(category.label) (\(count))")
-            }
             Spacer()
             if !finished && !exercises.isEmpty {
                 Text("\(min(index + 1, exercises.count)) di \(exercises.count)")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textTertiary)
             }
         }
         .padding(.horizontal, DesignSpace.s6)
         .padding(.vertical, DesignSpace.s3)
-    }
-
-    private func filterChip(_ category: ExerciseCategory?, label: String) -> some View {
-        let isSelected = categoryFilter == category
-        return Button {
-            categoryFilter = category
-            restartSession()
-        } label: {
-            Text(label)
-                .fixedSize()
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(isSelected ? DesignColor.textOnBrand : DesignColor.textSecondary)
-                .padding(.horizontal, DesignSpace.s3)
-                .padding(.vertical, 6)
-                .background(isSelected ? DesignColor.brandPrimary : DesignColor.surfaceSunken, in: Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     // Striscia degli esercizi: si salta dove si vuole invece di essere
@@ -847,7 +855,7 @@ private struct ExercisesModuleView: View {
                         goTo(position)
                     } label: {
                         Text("\(position + 1)")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(DesignFont.action)
                             .foregroundStyle(chipForeground(isCurrent: isCurrent, outcome: outcome))
                             .frame(width: 32, height: 32)
                             .background(chipBackground(isCurrent: isCurrent, outcome: outcome), in: Circle())
@@ -894,7 +902,7 @@ private struct ExercisesModuleView: View {
             } label: {
                 Label("Precedente", systemImage: "chevron.left")
                     .fixedSize()
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.action)
                     .foregroundStyle(index > 0 ? DesignColor.textSecondary : DesignColor.textTertiary.opacity(0.5))
             }
             .buttonStyle(.plain)
@@ -908,7 +916,7 @@ private struct ExercisesModuleView: View {
                 Label("Successivo", systemImage: "chevron.right")
                     .fixedSize()
                     .labelStyle(.titleAndIcon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.action)
                     .foregroundStyle(index < exercises.count - 1 ? DesignColor.textSecondary : DesignColor.textTertiary.opacity(0.5))
             }
             .buttonStyle(.plain)
@@ -921,23 +929,25 @@ private struct ExercisesModuleView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 HStack(spacing: DesignSpace.s2) {
-                    chip(exercise.category.label, color: exercise.category == .practical ? DesignColor.attention : DesignColor.brandPrimary)
+                    // Niente più etichetta di categoria: erano tutte
+                    // "Teorico"/"Pratico" su esercizi che ormai sono di
+                    // una natura sola.
                     chip(exercise.difficulty.label, color: exercise.difficulty.color)
                     // Provenienza: "Nuovo" se la traccia è stata scritta
                     // ispirandosi ai materiali, "Nei materiali: X" se era
                     // già lì. Cambia come si affronta l'esercizio.
                     Label(exercise.originLabel, systemImage: exercise.origin.systemImage)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.caption)
                         .foregroundStyle(exercise.origin.color)
                         .lineLimit(1)
-                        .padding(.horizontal, DesignSpace.s2 + 2)
-                        .padding(.vertical, 4)
-                        .background(exercise.origin.color.opacity(0.1), in: Capsule())
+                        .padding(.horizontal, DesignSpace.s3)
+                        .padding(.vertical, DesignSpace.s1)
+                        .background(exercise.origin.color.opacity(0.1), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     Spacer()
                 }
 
                 VStack(alignment: .leading, spacing: DesignSpace.s3) {
-                    StudioRichText(text: exercise.prompt, size: 17, color: DesignColor.textPrimary)
+                    StudioRichText(text: exercise.prompt, font: DesignFont.cardTitle, color: DesignColor.textPrimary)
                     // La figura della traccia, se il modello l'ha scritta:
                     // compilata con TikZJax alla prima apertura, poi
                     // l'SVG vive nel payload. Se il TeX non compila, la
@@ -949,6 +959,16 @@ private struct ExercisesModuleView: View {
                             onCompiled: { svg in persistFigure(svg, for: exercise.id) },
                             onFailed: { persistFigure("", for: exercise.id) }
                         )
+                        // IDENTITÀ LEGATA ALL'ESERCIZIO. Il player mostra
+                        // un esercizio alla volta nella STESSA posizione
+                        // della gerarchia: senza `.id`, passando da uno
+                        // all'altro SwiftUI riusa la vista e con essa il
+                        // suo `@State svg`, cioè la figura di prima resta
+                        // appesa finché la nuova non è compilata — e su
+                        // una figura già in cache può restarci del tutto.
+                        // Con l'id la vista viene ricreata, e lo stato
+                        // muore con lei.
+                        .id(exercise.id)
                     } else if exercise.figureExpected == true {
                         // Assenza DICHIARATA invece che silenziosa: senza
                         // questa riga, "il modello non ha disegnato" e
@@ -957,7 +977,7 @@ private struct ExercisesModuleView: View {
                         // manca qualcosa. La traccia resta risolvibile:
                         // è una nota, non un errore.
                         Label("Per questa traccia servirebbe una figura, ma il modello non l'ha generata: disegnala tu prima di risolvere.", systemImage: "scribble.variable")
-                            .font(.system(size: 12))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -969,13 +989,13 @@ private struct ExercisesModuleView: View {
                 if revealedSteps > 0 {
                     VStack(alignment: .leading, spacing: DesignSpace.s3) {
                         Text("SOLUZIONE GUIDATA")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.6)
                             .foregroundStyle(DesignColor.textTertiary)
                         ForEach(Array(exercise.steps.prefix(revealedSteps).enumerated()), id: \.offset) { stepIndex, step in
                             HStack(alignment: .top, spacing: DesignSpace.s3) {
                                 Text("\(stepIndex + 1)")
-                                    .font(.system(size: 12, weight: .bold))
+                                    .font(DesignFont.micro)
                                     .foregroundStyle(DesignColor.toolExplain)
                                     .frame(width: 22, height: 22)
                                     .background(DesignColor.toolExplainBg, in: Circle())
@@ -988,14 +1008,14 @@ private struct ExercisesModuleView: View {
                 if showAnswer {
                     VStack(alignment: .leading, spacing: DesignSpace.s2) {
                         Text("RISPOSTA")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.6)
                             .foregroundStyle(DesignColor.success)
                         StudioRichText(text: exercise.answer, color: DesignColor.textPrimary)
 
                         if let verification = exercise.verification.label, exercise.verification == .agreed {
                             Label(verification, systemImage: "checkmark.seal.fill")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.success)
                         }
 
@@ -1016,7 +1036,7 @@ private struct ExercisesModuleView: View {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.mini)
                             Text("Rigenero…")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     } else {
@@ -1051,11 +1071,11 @@ private struct ExercisesModuleView: View {
                     } label: {
                         Label(revealedSteps == 0 ? "Soluzione guidata" : "Passo successivo", systemImage: "lightbulb")
                             .fixedSize()
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.toolExplain)
                             .padding(.horizontal, DesignSpace.s4)
-                            .padding(.vertical, DesignSpace.s2 + 2)
-                            .background(DesignColor.toolExplainBg, in: Capsule())
+                            .padding(.vertical, DesignSpace.s3)
+                            .background(DesignColor.toolExplainBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -1064,18 +1084,18 @@ private struct ExercisesModuleView: View {
                 } label: {
                     Label("Mostra risposta", systemImage: "eye")
                         .fixedSize()
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.brandPrimary)
                         .padding(.horizontal, DesignSpace.s4)
-                        .padding(.vertical, DesignSpace.s2 + 2)
-                        .background(DesignColor.brandPrimarySubtle, in: Capsule())
+                        .padding(.vertical, DesignSpace.s3)
+                        .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
         } else {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 Text("Com'è andata?")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
                 HStack(spacing: DesignSpace.s3) {
                     assessButton(correct: false, exercise: exercise)
@@ -1091,7 +1111,7 @@ private struct ExercisesModuleView: View {
         } label: {
             Label(correct ? "Giusto" : "Sbagliato", systemImage: correct ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .fixedSize()
-                .font(.system(size: 15, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(correct ? DesignColor.success : DesignColor.danger)
                 .padding(.horizontal, DesignSpace.s5)
                 .padding(.vertical, DesignSpace.s3)
@@ -1104,17 +1124,15 @@ private struct ExercisesModuleView: View {
         VStack(spacing: DesignSpace.s4) {
             Spacer()
             Image(systemName: sessionCorrect == sessionTotal ? "trophy.fill" : "flag.checkered")
-                .font(.system(size: 40))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(sessionCorrect == sessionTotal ? DesignColor.toolSearch : DesignColor.brandPrimary)
             Text("Sessione completata")
-                .font(.system(size: 20, weight: .semibold))
+                .font(DesignFont.sectionTitle)
                 .foregroundStyle(DesignColor.textPrimary)
             Text("\(sessionCorrect) giusti su \(sessionTotal) — i tentativi sono registrati in Analisi dei progressi.")
-                .font(.system(size: 14))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textSecondary)
-            Button("Ricomincia") { restartSession() }
-                .buttonStyle(.borderedProminent)
-                .tint(DesignColor.brandPrimary)
+            BoostButton("Ricomincia", tone: .primary) { restartSession() }
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -1132,16 +1150,16 @@ private struct ExercisesModuleView: View {
             if let check = wolframResults[exercise.id] {
                 VStack(alignment: .leading, spacing: 4) {
                     Label("Verifica indipendente (Wolfram Alpha)", systemImage: "function")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.toolWolfram)
                     // Solo il risultato che risponde alla domanda: prima
                     // si incollavano tutti i pod, e per esempio accanto
                     // all'integrale definito (quello giusto) compariva
                     // anche l'indefinito, che sembra un'altra risposta.
-                    StudioRichText(text: check.headline, size: 13, weight: .medium, color: DesignColor.textPrimary)
+                    StudioRichText(text: check.headline, font: DesignFont.label, color: DesignColor.textPrimary)
                         .textSelection(.enabled)
                     Text("Confrontalo con la risposta qui sopra: se non coincide, uno dei due è sbagliato.")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
 
                     if !check.detail.isEmpty {
@@ -1149,10 +1167,10 @@ private struct ExercisesModuleView: View {
                             ForEach(check.detail) { pod in
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(pod.title)
-                                        .font(.system(size: 10, weight: .semibold))
+                                        .font(DesignFont.micro)
                                         .foregroundStyle(DesignColor.textTertiary)
                                     Text(pod.text)
-                                        .font(.system(size: 11))
+                                        .font(DesignFont.caption)
                                         .foregroundStyle(DesignColor.textSecondary)
                                 }
                             }
@@ -1165,7 +1183,7 @@ private struct ExercisesModuleView: View {
                             }
                         } label: {
                             Text(expandedWolframIDs.contains(exercise.id) ? "Nascondi gli altri passaggi" : "Mostra gli altri passaggi (\(check.detail.count))")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.toolWolfram)
                         }
                         .buttonStyle(.plain)
@@ -1175,12 +1193,12 @@ private struct ExercisesModuleView: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
                     Text("Calcolo indipendente in corso…")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             } else if wolframAppID.isEmpty {
                 Text("Aggiungi la chiave Wolfram Alpha nel Profilo per verificare questo risultato con un calcolo indipendente.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
             } else {
                 Button {
@@ -1188,11 +1206,11 @@ private struct ExercisesModuleView: View {
                 } label: {
                     Label("Verifica con Wolfram", systemImage: "function")
                         .fixedSize()
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DesignFont.action)
                         .foregroundStyle(DesignColor.toolWolfram)
                         .padding(.horizontal, DesignSpace.s3)
-                        .padding(.vertical, 6)
-                        .background(DesignColor.toolWolframBg, in: Capsule())
+                        .padding(.vertical, DesignSpace.s2)
+                        .background(DesignColor.toolWolframBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -1275,22 +1293,37 @@ private struct ExercisesModuleView: View {
 
     private func chip(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold))
+            .font(DesignFont.caption)
             .foregroundStyle(color)
             .lineLimit(1)
-            .padding(.horizontal, DesignSpace.s2 + 2)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.1), in: Capsule())
+            .padding(.horizontal, DesignSpace.s3)
+            .padding(.vertical, DesignSpace.s1)
+            .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
     }
 }
 
 // MARK: - Punti di ripasso
 // Ogni punto: concetto + domanda di verifica; la risposta si rivela al tocco.
 private struct ReviewPointsModuleView: View {
+    // Colonna del numero del punto: il rientro sotto allinea al testo.
+    private let markerColumn: CGFloat = 26
+
+    @Environment(\.modelContext) private var context
     let content: ReviewPointsContent
     let module: StudyModule
+    let study: Study
 
     @State private var revealedIDs: Set<UUID> = []
+    // Autovalutazione già data in questa sessione, per domanda: serve a
+    // mostrare quale delle due si è scelta e a non contare due volte la
+    // stessa domanda se ci si ripassa sopra.
+    @State private var outcomes: [UUID: Bool] = [:]
+    // Il tentativo REGISTRATO per ogni domanda in questa sessione:
+    // cambiare idea deve sostituirlo, e per sostituirlo bisogna sapere
+    // quale record eliminare — prima si inseriva un secondo tentativo
+    // lasciando il primo, e l'analisi contava doppio.
+    @State private var recordedAttempts: [UUID: ExerciseAttempt] = [:]
+    @State private var startedAt = Date.now
 
     var body: some View {
         ScrollView {
@@ -1313,21 +1346,43 @@ private struct ReviewPointsModuleView: View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
                         HStack(alignment: .top, spacing: DesignSpace.s3) {
                             Text("\(pointIndex + 1)")
-                                .font(.system(size: 13, weight: .bold))
+                                .font(DesignFont.micro)
                                 .foregroundStyle(DesignColor.toolExplain)
                                 .frame(width: 26, height: 26)
                                 .background(DesignColor.toolExplainBg, in: Circle())
                             VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                                StudioRichText(text: point.statement, size: 15, color: DesignColor.textPrimary)
-                                StudioRichText(text: point.question, size: 13)
+                                // PRIMA LA DOMANDA, e prima del resto:
+                                // `statement` è l'enunciato su cui verte,
+                                // e quando questi erano "punti di ripasso"
+                                // stava in cima di diritto — il punto era
+                                // quello, la domanda serviva a controllare
+                                // di averlo capito. Da quando sono
+                                // esercizi il verso è opposto: mostrare
+                                // l'enunciato sopra la domanda ne regala
+                                // la risposta prima ancora che venga
+                                // letta. Ora scende insieme alla
+                                // soluzione.
+                                StudioRichText(text: point.question, font: DesignFont.body, color: DesignColor.textPrimary)
                             }
                         }
 
                         if revealed {
-                            StudioRichText(text: point.answer, size: 13)
+                            StudioRichText(text: point.statement, font: DesignFont.label, color: DesignColor.textPrimary)
+                            StudioRichText(text: point.answer, font: DesignFont.label)
                                 .padding(DesignSpace.s3)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(DesignColor.successBg, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                            // Autovalutazione: è ciò che rende questi
+                            // esercizi e non schede da leggere. Senza, non
+                            // entrano nell'analisi e la teoria resta fuori
+                            // dai progressi come se non l'avessi studiata.
+                            HStack(spacing: DesignSpace.s2) {
+                                selfCheckButton(point: point, correct: true, title: "Sapevo rispondere", icon: "checkmark.circle.fill", color: DesignColor.success)
+                                selfCheckButton(point: point, correct: false, title: "Da rivedere", icon: "arrow.counterclockwise.circle.fill", color: DesignColor.attention)
+                                Spacer()
+                            }
+                            .padding(.leading, markerColumn + DesignSpace.s3)
+
                             HStack(spacing: DesignSpace.s2) {
                                 CitationDisclosure(citation: point.quote)
                                 Spacer()
@@ -1344,15 +1399,59 @@ private struct ReviewPointsModuleView: View {
                                 revealedIDs.insert(point.id)
                             } label: {
                                 Label("Mostra risposta", systemImage: "eye")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(DesignFont.action)
                                     .foregroundStyle(DesignColor.brandPrimary)
                             }
                             .buttonStyle(.plain)
-                            .padding(.leading, 26 + DesignSpace.s3)
+                            .padding(.leading, markerColumn + DesignSpace.s3)
                         }
                     }
         .padding(DesignSpace.s4)
         .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+    }
+
+    private func selfCheckButton(point: ReviewPoint, correct: Bool, title: String, icon: String, color: Color) -> some View {
+        let chosen = outcomes[point.id]
+        let isSelected = chosen == correct
+        return Button {
+            record(correct: correct, point: point)
+        } label: {
+            Label(title, systemImage: icon)
+                .font(DesignFont.action)
+                .foregroundStyle(isSelected ? DesignColor.textOnBrand : color)
+                .padding(.horizontal, DesignSpace.s3)
+                .padding(.vertical, DesignSpace.s2)
+                .background(isSelected ? color : color.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func record(correct: Bool, point: ReviewPoint) {
+        // Cambiare idea SOSTITUISCE il tentativo invece di aggiungerne
+        // uno: il record precedente della stessa domanda si elimina,
+        // altrimenti due tentativi nella stessa sessione gonfiavano i
+        // conteggi dell'analisi (il commento lo prometteva già, il
+        // codice inseriva e basta).
+        if let previous = outcomes[point.id], previous == correct { return }
+        if let previousAttempt = recordedAttempts[point.id] {
+            context.delete(previousAttempt)
+        }
+        let attempt = ExerciseAttempt(
+            isCorrect: correct,
+            durationSeconds: Date.now.timeIntervalSince(startedAt),
+            // Senza argomento il tentativo esiste ma non si somma a
+            // niente: i payload generati prima del campo "topic" finiscono
+            // qui, e "Senza argomento" lo dice invece di nasconderlo.
+            topic: point.topic ?? "Senza argomento",
+            // Un esercizio teorico non ha difficoltà: vedi ExerciseAttempt.
+            difficulty: nil,
+            category: .theoretical,
+            study: study
+        )
+        context.insert(attempt)
+        recordedAttempts[point.id] = attempt
+        outcomes[point.id] = correct
+        startedAt = .now
     }
 }
 
@@ -1366,10 +1465,27 @@ private struct FlashcardsModuleView: View {
     @State private var flipped = false
 
     var body: some View {
+        // Un payload corrotto o di un formato futuro decodifica in un
+        // mazzo VUOTO (il viewer usa `?? FlashcardsContent()`): senza
+        // questa guardia l'indice andava a -1 e il modulo crashava
+        // all'apertura. Stesso trattamento del player esercizi.
+        if content.cards.isEmpty {
+            BoostState(
+                kind: .empty,
+                icon: "rectangle.on.rectangle.angled",
+                title: "Nessuna carta",
+                message: "Il contenuto di questo modulo non è leggibile: rigeneralo dalla card dello studio."
+            )
+        } else {
+            deck
+        }
+    }
+
+    private var deck: some View {
         VStack(spacing: DesignSpace.s6) {
             Spacer()
             Text("\(index + 1) di \(content.cards.count)")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textTertiary)
 
             let card = content.cards[min(index, content.cards.count - 1)]
@@ -1378,8 +1494,9 @@ private struct FlashcardsModuleView: View {
             } label: {
                 StudioRichText(
                     text: flipped ? card.back : card.front,
-                    size: 18,
-                    weight: flipped ? .regular : .semibold,
+                    // 18 → sectionTitle per tabella; il fronte perdeva
+                    // comunque il semibold col ruolo unico.
+                    font: DesignFont.sectionTitle,
                     color: DesignColor.textPrimary
                 )
                     .padding(DesignSpace.s8)
@@ -1398,7 +1515,7 @@ private struct FlashcardsModuleView: View {
             .buttonStyle(.plain)
 
             Text("Tocca la carta per girarla")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
 
             HStack(spacing: 10) {
@@ -1413,13 +1530,14 @@ private struct FlashcardsModuleView: View {
     private func go(_ delta: Int) {
         flipped = false
         let count = content.cards.count
+        guard count > 0 else { return }
         index = (index + delta + count) % count
     }
 
     private func arrowButton(systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textSecondary)
                 .frame(width: 40, height: 40)
                 .background(DesignColor.surfacePage, in: Circle())

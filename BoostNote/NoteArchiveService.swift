@@ -87,8 +87,14 @@ enum NoteArchiveService {
     // Tutto ciò che serve a far RINASCERE la nota, identica e
     // modificabile. Binary plist e non JSON: l'inchiostro è Data binaria
     // e in JSON pagherebbe +33% di base64.
+    //
+    // formatVersion 2 (2026-08-22): aggiunti pageSizeRaw, sidePanelTools
+    // e lastViewedPage — la v1 li perdeva e una nota A3 ripristinata
+    // tornava A4 in silenzio, con media e caselle fuori posto. I campi
+    // nuovi sono OPZIONALI così i pacchetti v1 continuano a decodificarsi
+    // (stessa trappola Codable documentata su StudyExercise).
     struct NotePackage: Codable {
-        var formatVersion = 1
+        var formatVersion = 2
         var id: UUID
         var title: String
         var content: String
@@ -101,6 +107,9 @@ enum NoteArchiveService {
         var todoItemsData: Data?
         var pages: [Page]
         var media: [Media]
+        var pageSizeRaw: String?
+        var sidePanelToolsRaw: String?
+        var lastViewedPage: Int?
 
         struct Page: Codable {
             var order: Int
@@ -133,7 +142,10 @@ enum NoteArchiveService {
             textBoxesData: note.textBoxesData,
             todoItemsData: note.todoItemsData,
             pages: note.sortedPages.map { NotePackage.Page(order: $0.order, drawingData: $0.drawingData, pdfPageData: $0.pdfPageData) },
-            media: note.media.map { NotePackage.Media(x: $0.x, y: $0.y, width: $0.width, height: $0.height, kindRaw: $0.kindRaw, data: $0.data, sourceText: $0.sourceText) }
+            media: note.media.map { NotePackage.Media(x: $0.x, y: $0.y, width: $0.width, height: $0.height, kindRaw: $0.kindRaw, data: $0.data, sourceText: $0.sourceText) },
+            pageSizeRaw: note.pageSizeRaw,
+            sidePanelToolsRaw: note.sidePanelToolsRaw,
+            lastViewedPage: note.lastViewedPage
         )
     }
 
@@ -235,15 +247,27 @@ enum NoteArchiveService {
         note.patternScale = package.patternScale
         note.textBoxesData = package.textBoxesData
         note.todoItemsData = package.todoItemsData
+        // Campi arrivati con la v2: sui pacchetti v1 mancano e restano i
+        // default della nota (A4, pannello vuoto, prima pagina).
+        if let pageSizeRaw = package.pageSizeRaw { note.pageSizeRaw = pageSizeRaw }
+        if let sidePanelToolsRaw = package.sidePanelToolsRaw { note.sidePanelToolsRaw = sidePanelToolsRaw }
+        if let lastViewedPage = package.lastViewedPage { note.lastViewedPage = lastViewedPage }
         context.insert(note)
 
+        // Aggancio dal lato GENITORE (pages.append / media.append), mai
+        // solo impostando il lato figlio: vedi la nota su Note.attach —
+        // la mutazione fatta solo sul figlio può non notificare
+        // l'osservazione del genitore e la nota ripristinata appariva
+        // senza contenuti finché qualcosa non forzava un refresh.
         for page in package.pages {
-            let restored = NotePage(order: page.order, drawingData: page.drawingData, pdfPageData: page.pdfPageData, note: note)
+            let restored = NotePage(order: page.order, drawingData: page.drawingData, pdfPageData: page.pdfPageData)
             context.insert(restored)
+            note.pages.append(restored)
         }
         for media in package.media {
-            let restored = NoteMedia(x: media.x, y: media.y, width: media.width, height: media.height, kind: NoteMediaKind(rawValue: media.kindRaw) ?? .image, data: media.data, sourceText: media.sourceText, note: note)
+            let restored = NoteMedia(x: media.x, y: media.y, width: media.width, height: media.height, kind: NoteMediaKind(rawValue: media.kindRaw) ?? .image, data: media.data, sourceText: media.sourceText)
             context.insert(restored)
+            note.media.append(restored)
         }
         return note
     }

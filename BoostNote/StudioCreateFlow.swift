@@ -50,11 +50,11 @@ struct StudioCreateFlowView: View {
 
     // Opzioni per il modulo esercizi (ignorate dagli altri moduli).
     @State private var difficulty: ExerciseDifficulty? = nil
-    @State private var includeTheoretical = true
-    @State private var includePractical = true
     @State private var verifyExercises = true
-    @State private var theoreticalCount = 1
-    @State private var practicalCount = 1
+    // Un numero solo: gli esercizi sono tutti da risolvere. Erano due
+    // (teorici + pratici) e il default sommava a 2 per argomento: si
+    // parte da lì per non cambiare sotto i piedi quanto esce.
+    @State private var exerciseCount = 2
 
     // Si memorizzano gli argomenti ESCLUSI, non quelli scelti: così
     // aggiungere un documento include automaticamente i suoi argomenti,
@@ -77,40 +77,32 @@ struct StudioCreateFlowView: View {
     @State private var preparation: StudyMaterialPreparation.Progress?
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: DesignSpace.s3) {
-                Button(action: onCancel) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(DesignColor.textSecondary)
+        // Sheet con testata di sola chiusura: qui la conferma NON sta in
+        // alto come verbo. Generare è la fine di un modulo che si
+        // compila dall'alto in basso, e il tasto sta dove si arriva —
+        // in fondo, grande, con accanto il costo in chiamate.
+        // La ✕ resta ferma finché la preparazione dei materiali è in corso.
+        BoostSheet(
+            title: "Crea nuovo studio",
+            mode: .read,
+            onDismiss: {
+                guard preparation == nil else { return }
+                onCancel()
+            }
+        ) {
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DesignSpace.s8) {
+                        nameSection
+                        materialsSection
+                        modulesSection
+                    }
+                    .padding(DesignSpace.s6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Torna a Studio")
-                .disabled(preparation != nil)
 
-                Text("Crea nuovo studio")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(DesignColor.textPrimary)
-                Spacer()
+                generateBar
             }
-            .padding(.horizontal, DesignSpace.s6 + 4)
-            .frame(height: 56)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: DesignSpace.s8) {
-                    nameSection
-                    materialsSection
-                    modulesSection
-                }
-                .padding(DesignSpace.s6)
-                .frame(maxWidth: 720, alignment: .leading)
-                .frame(maxWidth: .infinity)
-            }
-
-            generateBar
         }
         .sheet(isPresented: $showingVaultPicker) {
             VaultSourcePicker(alreadyPicked: Set(sources.compactMap(\.vaultDocumentID))) { picked in
@@ -135,6 +127,7 @@ struct StudioCreateFlowView: View {
         }
         .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
+            var unreadable: [String] = []
             for url in urls {
                 // Il contenuto va letto ORA: l'accesso security-scoped
                 // all'URL scelto dall'utente non sopravvive a questa
@@ -142,7 +135,12 @@ struct StudioCreateFlowView: View {
                 // leggibile.
                 let accessed = url.startAccessingSecurityScopedResource()
                 defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                guard let data = try? Data(contentsOf: url) else { continue }
+                guard let data = try? Data(contentsOf: url) else {
+                    // Va DETTO: prima il file spariva in silenzio e
+                    // sembrava di averlo aggiunto.
+                    unreadable.append(url.lastPathComponent)
+                    continue
+                }
 
                 let title = url.deletingPathExtension().lastPathComponent
                 let source = StudySourceMaterial(
@@ -153,6 +151,9 @@ struct StudioCreateFlowView: View {
                 )
                 pdfPayloads[source.id] = data
                 sources.append(source)
+            }
+            if !unreadable.isEmpty {
+                BoostToastCenter.shared.show("Non riesco a leggere: \(unreadable.joined(separator: ", ")).", role: .danger)
             }
         }
     }
@@ -181,7 +182,7 @@ struct StudioCreateFlowView: View {
     private var nameField: some View {
         TextField("Nome (es. Ripasso Analisi 1 — primo parziale)", text: $name)
             .textFieldStyle(.plain)
-            .font(.system(size: 15, weight: .medium))
+            .font(DesignFont.body)
             .padding(DesignSpace.s3)
             .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
     }
@@ -189,7 +190,7 @@ struct StudioCreateFlowView: View {
     private var subjectField: some View {
         TextField("Materia (es. Analisi 1)", text: $subject)
             .textFieldStyle(.plain)
-            .font(.system(size: 15))
+            .font(DesignFont.body)
             .padding(DesignSpace.s3)
             .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
     }
@@ -205,15 +206,15 @@ struct StudioCreateFlowView: View {
             showingVaultPicker = true
         } label: {
             HStack(spacing: DesignSpace.s2) {
-                Image(systemName: "archivebox.fill")
-                    .font(.system(size: 15, weight: .semibold))
+                Image(systemName: "archivebox")
+                    .font(.system(size: DesignIcon.md))
                 Text("Scegli dal Vault")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
             }
             .foregroundStyle(DesignColor.textOnBrand)
             .padding(.horizontal, DesignSpace.s5)
             .padding(.vertical, DesignSpace.s3)
-            .background(DesignColor.brandPrimary, in: Capsule())
+            .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
 
@@ -231,21 +232,21 @@ struct StudioCreateFlowView: View {
             Button {
                 showingPDFImporter = true
             } label: {
-                Label("Carica PDF", systemImage: "doc.badge.plus")
+                Label("Aggiungi PDF", systemImage: "doc.badge.plus")
             }
             Text("Questi file vengono letti ora e consumano quota. Mettendoli invece nel Vault, la lettura si paga una volta sola.")
         } label: {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: DesignIcon.md))
                 Text("Aggiungi file")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DesignFont.action)
             }
             .foregroundStyle(DesignColor.textSecondary)
             .padding(.horizontal, DesignSpace.s4)
-            .padding(.vertical, DesignSpace.s2 + 2)
+            .padding(.vertical, DesignSpace.s3)
             .background(
-                Capsule().strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -255,7 +256,7 @@ struct StudioCreateFlowView: View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             sectionHeader(number: 2, title: "Scegli i materiali di partenza")
             Text("Il Vault del corso è già letto: sceglierne i documenti non costa nessuna rilettura. Puoi comunque aggiungere un file al volo, ma verrà letto adesso.")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textTertiary)
 
             ViewThatFits(in: .horizontal) {
@@ -315,22 +316,22 @@ struct StudioCreateFlowView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 if let focus = pendingFocusTopics, !focus.isEmpty {
                     Label("Argomenti preselezionati dai tuoi risultati: sono quelli dove sbagli di più. Puoi cambiarli.", systemImage: "target")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.insight)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: DesignSpace.s2) {
                     Text("ARGOMENTI DAL VAULT")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.micro)
                         .tracking(0.6)
                         .foregroundStyle(DesignColor.textTertiary)
                     Text("\(selectedTopics.count)/\(topics.count)")
-                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .font(DesignFont.caption.monospacedDigit())
                         .foregroundStyle(DesignColor.brandPrimary)
                     Spacer()
                     if !excludedTopics.isEmpty {
                         Button("Tutti") { excludedTopics.removeAll() }
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DesignFont.action)
                             .buttonStyle(.plain)
                             .foregroundStyle(DesignColor.brandPrimary)
                     }
@@ -343,7 +344,7 @@ struct StudioCreateFlowView: View {
                 Text(selectedTopics.count == topics.count
                      ? "Tutti gli argomenti del materiale scelto. Toglierne qualcuno concentra la generazione sui rimanenti: meno argomenti, più esercizi per ciascuno."
                      : "La generazione userà solo questi argomenti — e solo le parti di materiale che li trattano.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -381,9 +382,9 @@ struct StudioCreateFlowView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 11))
+                    .font(.system(size: DesignIcon.sm))
                 Text(topic)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DesignFont.action)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
             }
@@ -402,39 +403,39 @@ struct StudioCreateFlowView: View {
     private func sourceRow(_ source: StudySourceMaterial) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: source.kind.systemImage)
-                .font(.system(size: 14))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.brandPrimary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 1) {
                 Text(source.title)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(DesignFont.body)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
                 if let subtitle = source.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
             Spacer()
 
-            // Toggle "tema d'esame": decide se il materiale alimenta gli
-            // esercizi pratici invece della teoria.
+            // Toggle "tema d'esame": decide se il materiale dà la forma
+            // agli esercizi da risolvere invece di alimentare la teoria.
             Button {
                 toggleExamPaper(source)
             } label: {
                 Text("Tema d'esame")
                     .fixedSize()
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignFont.caption)
                     .foregroundStyle(source.isExamPaper ? DesignColor.attention : DesignColor.textTertiary)
-                    .padding(.horizontal, DesignSpace.s2 + 2)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, DesignSpace.s3)
+                    .padding(.vertical, DesignSpace.s1)
                     .background(
                         source.isExamPaper ? DesignColor.attentionBg : DesignColor.surfacePage,
-                        in: Capsule()
+                        in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     )
                     .overlay(
-                        Capsule().stroke(source.isExamPaper ? DesignColor.attention.opacity(0.4) : DesignColor.borderDefault, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).stroke(source.isExamPaper ? DesignColor.attention.opacity(0.4) : DesignColor.borderDefault, lineWidth: 1)
                     )
             }
             .buttonStyle(.plain)
@@ -443,13 +444,13 @@ struct StudioCreateFlowView: View {
                 sources.removeAll { $0.id == source.id }
                 pdfPayloads.removeValue(forKey: source.id)
             } label: {
-                Image(systemName: "xmark.circle.fill")
+                Image(systemName: "xmark")
                     .foregroundStyle(DesignColor.textTertiary)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Rimuovi \(source.title)")
+            .accessibilityLabel("Togli \(source.title)")
         }
-        .padding(.horizontal, DesignSpace.s3 + 2)
+        .padding(.horizontal, DesignSpace.s4)
         .padding(.vertical, DesignSpace.s3)
     }
 
@@ -478,21 +479,21 @@ struct StudioCreateFlowView: View {
                 RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
                     .fill(kind.color.opacity(0.12))
                     .frame(width: 38, height: 38)
-                    .overlay(Image(systemName: kind.systemImage).font(.system(size: 16, weight: .medium)).foregroundStyle(kind.color))
+                    .overlay(Image(systemName: kind.systemImage).font(.system(size: DesignIcon.md)).foregroundStyle(kind.color))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(kind.label)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                     Text(kind.subtitle)
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                         .multilineTextAlignment(.leading)
                 }
                 Spacer()
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
+                    .font(.system(size: DesignIcon.lg))
                     .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
             }
             .padding(DesignSpace.s4)
@@ -511,7 +512,7 @@ struct StudioCreateFlowView: View {
     private var exerciseOptions: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text("OPZIONI ESERCIZI")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
 
@@ -522,30 +523,44 @@ struct StudioCreateFlowView: View {
                 }
             }
 
-            // Un'unica riga per categoria: interruttore + quanti
-            // argomenti coprire. Tenerli separati costringeva a spegnere
-            // in un punto e contare in un altro.
+            // Una riga sola. Prima erano due categorie con due
+            // interruttori e due contatori, ma "teorico" e "pratico"
+            // dicevano da DOVE veniva l'esercizio, non che cosa chiedeva:
+            // l'etichetta non corrispondeva a quello che si leggeva nella
+            // traccia. Ora gli esercizi sono tutti da risolvere e la parte
+            // concettuale sta nei punti di ripasso, quindi qui si sceglie
+            // solo quanta profondità dare a ogni argomento.
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
-                categoryRow(
-                    title: "Teorici",
-                    detail: "Dagli argomenti di note e dispense",
-                    isOn: $includeTheoretical,
-                    count: $theoreticalCount
-                )
-                Divider()
-                categoryRow(
-                    title: "Pratici",
-                    detail: "Dagli argomenti dei temi d'esame",
-                    isOn: $includePractical,
-                    count: $practicalCount
-                )
+                HStack(spacing: DesignSpace.s3) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Quanti esercizi")
+                            .font(DesignFont.body)
+                            .foregroundStyle(DesignColor.textPrimary)
+                        Text("Tracce da risolvere, inventate sui temi d'esame")
+                            .font(DesignFont.caption)
+                            .foregroundStyle(DesignColor.textTertiary)
+                    }
+                    Spacer(minLength: DesignSpace.s3)
+                    HStack(spacing: DesignSpace.s2) {
+                        Text("\(exerciseCount)")
+                            .font(DesignFont.cardTitle)
+                            .foregroundStyle(DesignColor.brandPrimary)
+                            .frame(minWidth: 22)
+                        Text("per argomento")
+                            .font(DesignFont.caption)
+                            .foregroundStyle(DesignColor.textTertiary)
+                        Stepper(value: $exerciseCount, in: 1...3) { EmptyView() }
+                            .labelsHidden()
+                            .fixedSize()
+                    }
+                }
                 Text("Gli **argomenti li individua l'app** leggendo i materiali, e li copre tutti. Questo numero dice quanti esercizi fare **per ciascun argomento**: alzalo per insistere di più su ogni cosa.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
-                if theoreticalCount + practicalCount > 3 {
+                if exerciseCount > 2 {
                     Label("Con molti argomenti nei materiali il totale cresce in fretta: oltre 15 esercizi la generazione riduce da sola il numero per argomento, per coprirli comunque tutti.", systemImage: "info.circle")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.attention)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -555,9 +570,9 @@ struct StudioCreateFlowView: View {
 
             Toggle(isOn: $verifyExercises) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Verifica gli esercizi").font(.system(size: 13, weight: .medium))
+                    Text("Verifica gli esercizi").font(DesignFont.label)
                     Text("Ogni esercizio viene risolto una seconda volta in modo indipendente; se le due soluzioni non coincidono viene scartato. Usa una chiamata in più.")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -568,39 +583,6 @@ struct StudioCreateFlowView: View {
         .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
     }
 
-    private func categoryRow(title: String, detail: String, isOn: Binding<Bool>, count: Binding<Int>) -> some View {
-        HStack(spacing: DesignSpace.s3) {
-            Toggle(isOn: isOn) { EmptyView() }
-                .labelsHidden()
-                .tint(DesignColor.brandPrimary)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isOn.wrappedValue ? DesignColor.textPrimary : DesignColor.textTertiary)
-                Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignColor.textTertiary)
-            }
-
-            Spacer(minLength: DesignSpace.s3)
-
-            HStack(spacing: DesignSpace.s2) {
-                Text("\(count.wrappedValue)")
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .foregroundStyle(isOn.wrappedValue ? DesignColor.brandPrimary : DesignColor.textTertiary)
-                    .frame(minWidth: 22)
-                Text("per argomento")
-                    .font(.system(size: 11))
-                    .foregroundStyle(DesignColor.textTertiary)
-                Stepper(value: count, in: 0...3) { EmptyView() }
-                    .labelsHidden()
-                    .fixedSize()
-            }
-            .opacity(isOn.wrappedValue ? 1 : 0.4)
-            .disabled(!isOn.wrappedValue)
-        }
-    }
 
     private func difficultyChip(_ level: ExerciseDifficulty?, label: String) -> some View {
         let isSelected = difficulty == level
@@ -608,15 +590,15 @@ struct StudioCreateFlowView: View {
             difficulty = level
         } label: {
             Text(label)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.action)
                 .foregroundStyle(isSelected ? DesignColor.textOnBrand : DesignColor.textSecondary)
-                .padding(.horizontal, DesignSpace.s3 + 2)
-                .padding(.vertical, 7)
+                .padding(.horizontal, DesignSpace.s4)
+                .padding(.vertical, DesignSpace.s2)
                 .background(
                     isSelected ? DesignColor.brandPrimary : DesignColor.surfacePage,
-                    in: Capsule()
+                    in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                 )
-                .overlay(Capsule().stroke(isSelected ? Color.clear : DesignColor.borderDefault, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).stroke(isSelected ? Color.clear : DesignColor.borderDefault, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -638,84 +620,80 @@ struct StudioCreateFlowView: View {
     private var canGenerate: Bool { missingRequirements.isEmpty }
 
     private var generateBar: some View {
-        VStack(alignment: .trailing, spacing: DesignSpace.s2) {
-            // L'estrazione (OCR della scrittura a mano, PDF scansionati,
-            // download WeBeep) può durare parecchi secondi: senza questo
-            // sembrerebbe che l'app si sia piantata.
-            if let preparation {
-                HStack(spacing: DesignSpace.s2) {
-                    ProgressView().controlSize(.small)
-                    Text("Leggo i materiali — \(preparation.current) di \(preparation.total): \(preparation.title)\(preparation.detail.map { " (\($0))" } ?? "")")
-                        .font(.system(size: 12))
+        // UNA riga sola: a sinistra cosa sta succedendo (lettura in corso,
+        // cosa manca, quanto costerà), a destra la quota e il tasto.
+        // Impilate su due righe con lo spazio in mezzo, quelle stesse
+        // informazioni facevano una fascia alta il doppio del necessario.
+        HStack(alignment: .center, spacing: DesignSpace.s3) {
+            statusLine
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Il pannello quota vive dietro la ⓘ, come chiesto: non
+            // in faccia, ma a un tocco quando si sta per spendere.
+            if AIService.selectedProvider == .gemini {
+                Button {
+                    showingQuotaInfo = true
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
-                        .lineLimit(1)
-                    Spacer()
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle().inset(by: -6))
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showingQuotaInfo, arrowEdge: .bottom) {
+                    GeminiQuotaPanel()
+                        .padding(DesignSpace.s4)
+                        // 420pt non stanno in un popover su iPhone:
+                        // lì diventa uno sheet a larghezza piena.
+                        .frame(width: DeviceLayout.isPhone ? nil : 420)
+                        .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
+                        .presentationDetents([.medium, .large])
                 }
             }
 
-            if !missingRequirements.isEmpty {
-                Label("Manca ancora: \(missingRequirements.joined(separator: ", ")).", systemImage: "info.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(DesignColor.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+            BoostButton(
+                "Genera studio",
+                icon: "sparkles",
+                tone: .primary,
+                isLoading: preparation != nil
+            ) {
+                createStudy()
             }
-            HStack(spacing: DesignSpace.s3) {
-                Spacer()
-                // Il pannello quota vive dietro la ⓘ, come chiesto: non
-                // in faccia, ma a un tocco quando si sta per spendere.
-                if AIService.selectedProvider == .gemini {
-                    Button {
-                        showingQuotaInfo = true
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 16))
-                            .foregroundStyle(DesignColor.textSecondary)
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showingQuotaInfo, arrowEdge: .bottom) {
-                        GeminiQuotaPanel()
-                            .padding(DesignSpace.s4)
-                            // 420pt non stanno in un popover su iPhone:
-                            // lì diventa uno sheet a larghezza piena.
-                            .frame(width: DeviceLayout.isPhone ? nil : 420)
-                            .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
-                            .presentationDetents([.medium, .large])
-                    }
-                }
-                VStack(alignment: .trailing, spacing: 4) {
-                    Button {
-                        createStudy()
-                    } label: {
-                        HStack(spacing: DesignSpace.s2) {
-                            Image(systemName: "sparkles")
-                            Text("Genera studio")
-                        }
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(DesignColor.textOnBrand)
-                        .padding(.horizontal, DesignSpace.s5)
-                        .padding(.vertical, DesignSpace.s3)
-                        .background(
-                            canGenerate ? DesignColor.brandPrimary : DesignColor.gray300,
-                            in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canGenerate || preparation != nil)
-                    if canGenerate, AIService.selectedProvider == .gemini {
-                        Text(callEstimateLabel)
-                            .font(.system(size: 11))
-                            .foregroundStyle(DesignColor.textTertiary)
-                    }
-                }
-            }
+            .disabled(!canGenerate || preparation != nil)
         }
         .padding(.horizontal, DesignSpace.s6)
-        .padding(.vertical, DesignSpace.s4)
+        .frame(minHeight: DesignSize.bottomBar)
         .background(DesignColor.surfacePage)
         .overlay(alignment: .top) {
             Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
+        }
+    }
+
+    // Una riga sola, quella che conta di più in questo momento.
+    @ViewBuilder
+    private var statusLine: some View {
+        if let preparation {
+            // L'estrazione (OCR della scrittura a mano, PDF scansionati,
+            // download WeBeep) può durare parecchi secondi: senza questo
+            // sembrerebbe che l'app si sia piantata.
+            HStack(spacing: DesignSpace.s2) {
+                ProgressView().controlSize(.small)
+                Text("Leggo i materiali — \(preparation.current) di \(preparation.total): \(preparation.title)\(preparation.detail.map { " (\($0))" } ?? "")")
+                    .font(DesignFont.caption)
+                    .foregroundStyle(DesignColor.textSecondary)
+                    .lineLimit(1)
+            }
+        } else if !missingRequirements.isEmpty {
+            Label("Manca ancora: \(missingRequirements.joined(separator: ", ")).", systemImage: "info.circle")
+                .font(DesignFont.caption)
+                .foregroundStyle(DesignColor.textTertiary)
+                .lineLimit(2)
+        } else if AIService.selectedProvider == .gemini {
+            Text(callEstimateLabel)
+                .font(DesignFont.caption)
+                .foregroundStyle(DesignColor.textTertiary)
+                .lineLimit(1)
         }
     }
 
@@ -749,6 +727,17 @@ struct StudioCreateFlowView: View {
     }
 
     private func createStudy() {
+        // La guardia contro il doppio tocco va messa QUI, in modo
+        // sincrono: `preparation` diventava non-nil solo al primo
+        // onProgress dentro il Task, e nella finestra tra i due tocchi
+        // si creavano DUE studi con doppia preparazione e doppia quota.
+        guard preparation == nil else { return }
+        preparation = StudyMaterialPreparation.Progress(
+            current: 0,
+            total: sources.count,
+            title: "Preparo i materiali…",
+            detail: nil
+        )
         let study = Study(name: name.trimmingCharacters(in: .whitespaces))
         // La "materia" È la cartella: si crea (o si riusa) subito, invece
         // di salvare un campo testo che una migrazione trasformerà in
@@ -771,11 +760,8 @@ struct StudioCreateFlowView: View {
 
         var options = StudyModuleOptions()
         options.difficulty = difficulty
-        options.includeTheoretical = includeTheoretical
-        options.includePractical = includePractical
         options.verifyExercises = verifyExercises
-        options.theoreticalCount = includeTheoretical ? theoreticalCount : 0
-        options.practicalCount = includePractical ? practicalCount : 0
+        options.exerciseCount = exerciseCount
         // Si registrano solo se sono un sottoinsieme vero: "tutti" resta
         // vuoto, così il significato non cambia se domani si aggiunge
         // materiale al Vault.
@@ -783,9 +769,13 @@ struct StudioCreateFlowView: View {
         options.selectedTopics = selectedTopics.count == topics.count ? [] : selectedTopics
 
         // L'ordine dei moduli segue l'ordine di dichiarazione dei tipi.
+        // Aggancio dal lato GENITORE (modules.append): impostare solo
+        // module.study può non notificare l'osservazione di `modules` —
+        // trappola documentata su Note.attach in Models.swift.
         for (index, kind) in StudyModuleKind.allCases.filter({ selectedKinds.contains($0) }).enumerated() {
-            let module = StudyModule(kind: kind, order: index, options: options, study: study)
+            let module = StudyModule(kind: kind, order: index, options: options)
             context.insert(module)
+            study.modules.append(module)
         }
 
         let pickedSources = sources
@@ -826,12 +816,12 @@ struct StudioCreateFlowView: View {
     private func sectionHeader(number: Int, title: String) -> some View {
         HStack(spacing: DesignSpace.s2 + 2) {
             Text("\(number)")
-                .font(.system(size: 13, weight: .bold))
+                .font(DesignFont.micro)
                 .foregroundStyle(DesignColor.textOnBrand)
                 .frame(width: 24, height: 24)
                 .background(DesignColor.brandPrimary, in: Circle())
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
         }
     }
@@ -840,14 +830,14 @@ struct StudioCreateFlowView: View {
         Button(action: action) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: icon)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: DesignIcon.md))
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.cardTitle)
             }
             .foregroundStyle(DesignColor.brandPrimary)
             .padding(.horizontal, DesignSpace.s4)
-            .padding(.vertical, DesignSpace.s2 + 2)
-            .background(DesignColor.brandPrimarySubtle, in: Capsule())
+            .padding(.vertical, DesignSpace.s3)
+            .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -890,51 +880,61 @@ private struct StudioNotePickerSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List(filteredNotes) { note in
-                let isSelected = selectedIDs.contains(note.id)
-                Button {
-                    if isSelected { selectedIDs.remove(note.id) } else { selectedIDs.insert(note.id) }
-                } label: {
-                    HStack(spacing: DesignSpace.s3) {
-                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                                .foregroundStyle(.primary)
-                            if let folder = note.folder {
-                                Text(folder.name)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+        BoostSheet(
+            title: "Scegli le note",
+            mode: .commit(verb: "Aggiungi (\(selectedIDs.count))", enabled: !selectedIDs.isEmpty),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                let picked = allNotes.filter { selectedIDs.contains($0.id) }.map { note in
+                    StudySourceMaterial(
+                        kind: .note,
+                        title: note.title.isEmpty ? "Senza titolo" : note.title,
+                        subtitle: note.folder?.name,
+                        noteID: note.id
+                    )
+                }
+                onAdd(picked)
+                dismiss()
+            }
+        ) {
+            VStack(spacing: 0) {
+                // Campo di ricerca in testa al contenuto: .searchable vuole
+                // una barra di navigazione, che qui non esiste più.
+                HStack(spacing: DesignSpace.s2) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: DesignIcon.sm))
+                        .foregroundStyle(DesignColor.textTertiary)
+                    TextField("Cerca nota", text: $searchText)
+                        .font(DesignFont.body)
+                        .textFieldStyle(.plain)
+                }
+                .padding(DesignSpace.s3)
+                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                .padding(DesignSpace.s3)
+
+                List(filteredNotes) { note in
+                    let isSelected = selectedIDs.contains(note.id)
+                    Button {
+                        if isSelected { selectedIDs.remove(note.id) } else { selectedIDs.insert(note.id) }
+                    } label: {
+                        HStack(spacing: DesignSpace.s3) {
+                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(note.title.isEmpty ? "Senza titolo" : note.title)
+                                    .foregroundStyle(.primary)
+                                if let folder = note.folder {
+                                    Text(folder.name)
+                                        .font(DesignFont.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
                 }
             }
-            .searchable(text: $searchText, prompt: "Cerca nota")
-            .navigationTitle("Scegli le note")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Aggiungi (\(selectedIDs.count))") {
-                        let picked = allNotes.filter { selectedIDs.contains($0.id) }.map { note in
-                            StudySourceMaterial(
-                                kind: .note,
-                                title: note.title.isEmpty ? "Senza titolo" : note.title,
-                                subtitle: note.folder?.name,
-                                noteID: note.id
-                            )
-                        }
-                        onAdd(picked)
-                        dismiss()
-                    }
-                    .disabled(selectedIDs.isEmpty)
-                }
-            }
         }
+        .presentationDetents([.large])
     }
 }
 
@@ -952,60 +952,76 @@ private struct StudioWebeepPickerSheet: View {
     @State private var selectedCourse: WebeepCourse?
     @State private var sections: [WebeepSection] = []
     @State private var isLoading = false
+    @State private var loadError: String?
     @State private var selected: [String: StudySourceMaterial] = [:]  // per fileurl
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Materiali da WeBeep",
+            mode: .commit(verb: "Aggiungi (\(selected.count))", enabled: !selected.isEmpty),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                onAdd(Array(selected.values))
+                dismiss()
+            }
+        ) {
             Group {
                 if token == nil {
-                    VStack(spacing: DesignSpace.s3) {
-                        Image(systemName: "building.columns")
-                            .font(.system(size: 32))
-                            .foregroundStyle(DesignColor.textTertiary)
-                        Text("WeBeep non è collegato")
-                            .font(.system(size: 16, weight: .semibold))
-                        Text("Accedi dall'ambiente WeBeep nella barra laterale, poi torna qui per scegliere i materiali del corso.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(DesignColor.textTertiary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 300)
-                    }
+                    BoostState(
+                        kind: .empty,
+                        icon: "building.columns",
+                        title: "WeBeep non è collegato",
+                        message: "Accedi dall'ambiente WeBeep nella barra laterale, poi torna qui per scegliere i materiali del corso."
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let loadError {
+                    BoostState(
+                        kind: .error,
+                        title: "WeBeep non risponde",
+                        message: loadError,
+                        action: AnyView(BoostButton("Riprova", icon: "arrow.clockwise", tone: .primary) {
+                            Task {
+                                if let course = selectedCourse {
+                                    await loadSections(course)
+                                } else {
+                                    await loadCourses()
+                                }
+                            }
+                        })
+                    )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let course = selectedCourse {
-                    fileList(course)
+                    VStack(spacing: 0) {
+                        // Livello corso: la via del ritorno sta nel
+                        // contenuto, la testata resta della sheet.
+                        HStack(spacing: DesignSpace.s2) {
+                            BoostButton("Corsi", icon: "chevron.left", tone: .ghost, size: .compact) {
+                                selectedCourse = nil
+                                sections = []
+                            }
+                            Text(WebeepService.stripMultilang(course.fullname))
+                                .font(DesignFont.label)
+                                .foregroundStyle(DesignColor.textSecondary)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, DesignSpace.s3)
+                        .padding(.top, DesignSpace.s2)
+                        fileList(course)
+                    }
                 } else {
                     courseList
                 }
             }
-            .navigationTitle(selectedCourse.map { WebeepService.stripMultilang($0.fullname) } ?? "Materiali da WeBeep")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    if selectedCourse != nil {
-                        Button("Corsi") {
-                            selectedCourse = nil
-                            sections = []
-                        }
-                    } else {
-                        Button("Annulla") { dismiss() }
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Aggiungi (\(selected.count))") {
-                        onAdd(Array(selected.values))
-                        dismiss()
-                    }
-                    .disabled(selected.isEmpty)
-                }
-            }
             .task { await loadCourses() }
         }
+        .presentationDetents([.large])
     }
 
     private var courseList: some View {
         Group {
             if isLoading && courses.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                BoostState(kind: .loading, title: "Carico i corsi…")
             } else {
                 List(courses) { course in
                     Button {
@@ -1019,7 +1035,7 @@ private struct StudioWebeepPickerSheet: View {
                                 .foregroundStyle(.primary)
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: DesignIcon.sm))
                                 .foregroundStyle(.tertiary)
                         }
                     }
@@ -1031,7 +1047,7 @@ private struct StudioWebeepPickerSheet: View {
     private func fileList(_ course: WebeepCourse) -> some View {
         Group {
             if isLoading {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                BoostState(kind: .loading, title: "Carico i file…")
             } else {
                 List {
                     ForEach(sections) { section in
@@ -1073,11 +1089,11 @@ private struct StudioWebeepPickerSheet: View {
                 Spacer()
                 if StudioCreateFlowView.looksLikeExamPaper(cleanName) {
                     Text("Tema d'esame")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(DesignFont.micro)
                         .foregroundStyle(DesignColor.attention)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(DesignColor.attentionBg, in: Capsule())
+                        .padding(.horizontal, DesignSpace.s2)
+                        .padding(.vertical, DesignSpace.s1)
+                        .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
             }
         }
@@ -1086,19 +1102,33 @@ private struct StudioWebeepPickerSheet: View {
     private func loadCourses() async {
         guard let token else { return }
         isLoading = true
+        loadError = nil
         defer { isLoading = false }
-        guard let info = await WebeepService.siteInfo(token: token) else {
+        do {
+            let info = try await WebeepService.siteInfo(token: token)
+            courses = try await WebeepService.courses(token: token, userID: info.userid)
+        } catch WebeepServiceError.invalidToken {
+            // Solo il token dichiarato morto da Moodle porta al login:
+            // un errore di rete NON deve buttare un token valido.
             WebeepService.signOut()
             self.token = nil
-            return
+        } catch {
+            loadError = "Controlla la connessione e riprova: il collegamento a WeBeep resta attivo."
         }
-        courses = await WebeepService.courses(token: token, userID: info.userid)
     }
 
     private func loadSections(_ course: WebeepCourse) async {
         guard let token else { return }
         isLoading = true
+        loadError = nil
         defer { isLoading = false }
-        sections = await WebeepService.contents(token: token, courseID: course.id)
+        do {
+            sections = try await WebeepService.contents(token: token, courseID: course.id)
+        } catch WebeepServiceError.invalidToken {
+            WebeepService.signOut()
+            self.token = nil
+        } catch {
+            loadError = "Controlla la connessione e riprova: il collegamento a WeBeep resta attivo."
+        }
     }
 }

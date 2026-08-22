@@ -26,7 +26,7 @@ struct HomeView: View {
     @State private var showingPDFImporter = false
     @State private var showingNewFolderSheet = false
     @State private var showingWebeepPDFPicker = false
-
+    
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: .now)
         let base = hour < 12 ? "Buongiorno" : (hour < 18 ? "Buon pomeriggio" : "Buonasera")
@@ -77,16 +77,26 @@ struct HomeView: View {
             guard case .success(let url) = result else { return }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { return }
+            guard let data = try? Data(contentsOf: url) else {
+                BoostToastCenter.shared.show("Non riesco a leggere \"\(url.lastPathComponent)\": se sta su un cloud, aprilo prima nell'app File.", role: .danger)
+                return
+            }
             importPDFNote(data: data, title: url.deletingPathExtension().lastPathComponent)
         }
     }
 
     // Una nota nuova con il PDF come pagine, qualunque sia la fonte.
+    // `appendPages` ritorna false quando i byte non sono un PDF valido:
+    // ignorarlo (com'era) creava una nota vuota senza spiegazioni — il
+    // motivo per cui quel Bool esiste (vedi Models.swift).
     private func importPDFNote(data: Data, title: String) {
         let note = Note(title: title.isEmpty ? "Nuova nota" : title, folder: nil)
         context.insert(note)
-        note.appendPages(fromPDF: data, in: context)
+        guard note.appendPages(fromPDF: data, in: context) else {
+            context.delete(note)
+            BoostToastCenter.shared.show("\"\(title)\" non è un PDF leggibile.", role: .danger)
+            return
+        }
         selectedNote = note
     }
 
@@ -133,8 +143,8 @@ struct HomeView: View {
 
     private var greetingBlock: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(greeting)
-                .font(.system(size: 26, weight: .semibold))
+            Text("\(greeting) 👋")
+                .font(DesignFont.screenTitle)
                 .foregroundStyle(DesignColor.textPrimary)
                 // Non comprimibile: è ciò che permette a `ViewThatFits` di
                 // accorgersi che la riga singola non entra, invece di farla
@@ -142,7 +152,7 @@ struct HomeView: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
             Text(Date.now.formatted(date: .long, time: .omitted))
-                .font(.system(size: 14))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textTertiary)
         }
     }
@@ -168,7 +178,7 @@ struct HomeView: View {
                     Label("Da WeBeep", systemImage: "graduationcap")
                 }
             } label: {
-                headerActionLabel(title: "Importa PDF", icon: "doc.badge.plus", tint: nil)
+                headerActionLabel(title: "Aggiungi PDF", icon: "doc.badge.plus", tint: nil)
             }
             .buttonStyle(.plain)
         }
@@ -187,7 +197,7 @@ struct HomeView: View {
     @ViewBuilder
     private func headerActionLabel(title: String, icon: String, tint: Color?) -> some View {
         let label = Label(title, systemImage: icon)
-            .font(.system(size: 13, weight: .semibold))
+            .font(DesignFont.action)
             // Mai a capo: se lo spazio manca, il pulsante non si spezza
             // lettera per lettera (successo su iPhone).
             .lineLimit(1)
@@ -213,7 +223,7 @@ struct HomeView: View {
     private var resumeSection: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text("RIPRENDI DA DOVE ERI")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
 
@@ -240,7 +250,7 @@ struct HomeView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
                 HStack(spacing: DesignSpace.s2) {
@@ -248,13 +258,13 @@ struct HomeView: View {
                         folderChip(folder)
                     }
                     Text(relativeTime(note.updatedAt))
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: DesignIcon.sm))
                 .foregroundStyle(DesignColor.textTertiary)
         }
         .padding(.vertical, DesignSpace.s3)
@@ -263,16 +273,16 @@ struct HomeView: View {
 
     private func folderChip(_ folder: Folder) -> some View {
         HStack(spacing: 5) {
-            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                 .fill(folder.folderColor.color)
                 .frame(width: 9, height: 9)
             Text(folder.name)
-                .font(.system(size: 12, weight: .medium))
+                .font(DesignFont.caption)
                 .foregroundStyle(folder.folderColor.color)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(folder.folderColor.color.opacity(0.12), in: Capsule())
+        .padding(.horizontal, DesignSpace.s2)
+        .padding(.vertical, DesignSpace.s1)
+        .background(folder.folderColor.color.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
     }
 
     private func relativeTime(_ date: Date) -> String {
@@ -310,7 +320,7 @@ struct HomeView: View {
         if flashcards != nil || wrong > 0 {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 Text("DA RIPASSARE")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignFont.micro)
                     .tracking(0.6)
                     .foregroundStyle(DesignColor.textTertiary)
 
@@ -348,15 +358,15 @@ struct HomeView: View {
                 .frame(width: 44, height: 44)
                 .overlay(
                     Image(systemName: icon)
-                        .font(.system(size: 17, weight: .medium))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(tint)
                 )
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .lineLimit(1)
             }
@@ -364,14 +374,14 @@ struct HomeView: View {
             Button(action: action) {
                 HStack(spacing: 4) {
                     Text(buttonLabel)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DesignIcon.sm))
                 }
                 .foregroundStyle(tint)
                 .padding(.horizontal, DesignSpace.s4)
-                .padding(.vertical, DesignSpace.s2 + 2)
-                .background(tint.opacity(0.12), in: Capsule())
+                .padding(.vertical, DesignSpace.s3)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
             .buttonStyle(.plain)
         }
@@ -380,20 +390,12 @@ struct HomeView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: DesignSpace.s3) {
-            Image(systemName: "square.and.pencil")
-                .font(.system(size: 34))
-                .foregroundStyle(DesignColor.textTertiary)
-            Text("Ancora nessuna nota")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(DesignColor.textPrimary)
-            Text("Crea una nota o importa un PDF su cui scrivere: i pulsanti sono qui sopra.")
-                .font(.system(size: 13))
-                .foregroundStyle(DesignColor.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-        }
-        .frame(maxWidth: .infinity)
+        BoostState(
+            kind: .empty,
+            icon: "square.and.pencil",
+            title: "Ancora nessuna nota",
+            message: "Crea una nota o aggiungi un PDF su cui scrivere: i pulsanti sono qui sopra."
+        )
         .padding(.vertical, DesignSpace.s8)
     }
 }
@@ -429,7 +431,7 @@ private struct NoteThumbnail: View {
                         Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
                     }
                 }
-                .padding(9)
+                .padding(DesignSpace.s2)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))

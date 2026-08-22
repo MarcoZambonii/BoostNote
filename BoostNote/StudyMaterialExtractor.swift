@@ -289,9 +289,13 @@ enum StudyMaterialExtractor {
     static func recognizeTextWithConfidence(in image: UIImage) async -> (text: String, confidence: Double)? {
         guard let cgImage = image.cgImage else { return nil }
         return await withCheckedContinuation { continuation in
+            // OneShotContinuation: se `perform` lancia senza aver chiamato
+            // il completion, la continuation va comunque ripresa — vedi il
+            // commento in MagicPenService.
+            let resume = OneShotContinuation(continuation)
             let request = VNRecognizeTextRequest { request, _ in
                 guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    continuation.resume(returning: nil)
+                    resume.resume(nil)
                     return
                 }
                 var lines: [String] = []
@@ -306,10 +310,10 @@ enum StudyMaterialExtractor {
                 }
                 let text = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty, totalWeight > 0 else {
-                    continuation.resume(returning: nil)
+                    resume.resume(nil)
                     return
                 }
-                continuation.resume(returning: (text, weightedConfidence / totalWeight))
+                resume.resume((text, weightedConfidence / totalWeight))
             }
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
@@ -318,7 +322,11 @@ enum StudyMaterialExtractor {
 
             DispatchQueue.global(qos: .userInitiated).async {
                 let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                try? handler.perform([request])
+                do {
+                    try handler.perform([request])
+                } catch {
+                    resume.resume(nil)
+                }
             }
         }
     }
@@ -330,16 +338,17 @@ enum StudyMaterialExtractor {
     static func recognizeText(in image: UIImage) async -> String? {
         guard let cgImage = image.cgImage else { return nil }
         return await withCheckedContinuation { continuation in
+            let resume = OneShotContinuation(continuation)
             let request = VNRecognizeTextRequest { request, _ in
                 guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    continuation.resume(returning: nil)
+                    resume.resume(nil)
                     return
                 }
                 let text = observations
                     .compactMap { $0.topCandidates(1).first?.string }
                     .joined(separator: "\n")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                continuation.resume(returning: text.isEmpty ? nil : text)
+                resume.resume(text.isEmpty ? nil : text)
             }
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
@@ -348,7 +357,11 @@ enum StudyMaterialExtractor {
 
             DispatchQueue.global(qos: .userInitiated).async {
                 let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                try? handler.perform([request])
+                do {
+                    try handler.perform([request])
+                } catch {
+                    resume.resume(nil)
+                }
             }
         }
     }

@@ -22,16 +22,25 @@ struct FormulaEditSheet: View {
         _latex = State(initialValue: media.sourceText ?? "")
     }
 
+    private var canSave: Bool {
+        !latex.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isRendering
+    }
+
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Modifica formula",
+            mode: .commit(verb: "Salva", enabled: canSave),
+            onDismiss: { dismiss() },
+            onConfirm: { Task { await save() } }
+        ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSpace.s4) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("CODICE LATEX")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.textTertiary)
                         TextField("Formula", text: $latex, axis: .vertical)
-                            .font(.system(size: 14, design: .monospaced))
+                            .font(DesignFont.mono)
                             .foregroundStyle(DesignColor.textPrimary)
                             .textFieldStyle(.plain)
                             .autocorrectionDisabled()
@@ -44,7 +53,7 @@ struct FormulaEditSheet: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("ANTEPRIMA")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.textTertiary)
                         // Si aggiorna mentre si scrive: l'errore di sintassi
                         // si vede subito, non dopo aver confermato.
@@ -57,42 +66,24 @@ struct FormulaEditSheet: View {
 
                     if let errorMessage {
                         Text(errorMessage)
-                            .font(.system(size: 13))
+                            .font(DesignFont.label)
                             .foregroundStyle(DesignColor.danger)
                     }
 
-                    Button {
-                        Task { await save() }
-                    } label: {
-                        HStack {
-                            if isRendering {
-                                ProgressView().controlSize(.small)
-                            }
-                            Text("Aggiorna la formula sul foglio")
+                    if isRendering {
+                        HStack(spacing: DesignSpace.s2) {
+                            ProgressView().controlSize(.small)
+                            Text("Compongo la formula…")
+                                .font(DesignFont.caption)
+                                .foregroundStyle(DesignColor.textTertiary)
                         }
-                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(DesignColor.toolLatex)
-                    .disabled(isRendering || latex.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                    Button {
+                    BoostButton("Copia il codice LaTeX", icon: "doc.on.doc", fullWidth: true) {
                         UIPasteboard.general.string = latex
-                    } label: {
-                        Label("Copia il codice LaTeX", systemImage: "doc.on.doc")
-                            .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(DesignColor.toolLatex)
                 }
                 .padding(DesignSpace.s5)
-            }
-            .navigationTitle("Modifica formula")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
             }
         }
         .presentationDetents([.medium, .large])

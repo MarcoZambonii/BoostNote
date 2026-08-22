@@ -86,11 +86,20 @@ enum InkRenderer {
     // registra a OGNI costruzione di un disegno, e che martellata
     // centinaia di volte al secondo crollava (riprodotto: crash in
     // -[PKReplicaManager _saveStateImmediately] torturando la gomma).
-    static func draw(_ strokes: [PKStroke], in context: CGContext, scale: CGFloat = 1, clipTo rect: CGRect? = nil) {
+    // Ritorna quanti tratti sono stati DAVVERO ristampati: il filtro è
+    // per rettangolo, quindi un tratto lungo (una sottolineatura, una
+    // diagonale) rientra nel conto anche quando la sua traccia non tocca
+    // la zona. È il numero che dice se il costo cresce con la densità
+    // della pagina.
+    @discardableResult
+    static func draw(_ strokes: [PKStroke], in context: CGContext, scale: CGFloat = 1, clipTo rect: CGRect? = nil) -> Int {
+        var drawn = 0
         for stroke in strokes {
             if let rect, !stroke.renderBounds.intersects(rect) { continue }
             draw(stroke, in: context, scale: scale, clipTo: rect)
+            drawn += 1
         }
+        return drawn
     }
 
     // `clipTo` è in coordinate della VISTA (lo stesso rettangolo che

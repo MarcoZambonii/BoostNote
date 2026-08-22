@@ -549,6 +549,8 @@ final class BoxTextView: UITextView {
 // "chrome" (bordo, x, maniglia di ridimensionamento, matita).
 final class MediaBoxView: UIView {
     var mediaID: PersistentIdentifier?
+    // Proporzioni bloccate durante una trascinata di ridimensionamento.
+    var resizeAspect: CGFloat?
     let contentContainer = UIView()
     let deleteButton = UIButton(type: .system)
     let editButton = UIButton(type: .system)
@@ -567,7 +569,11 @@ final class MediaBoxView: UIView {
         contentContainer.clipsToBounds = true
         contentContainer.layer.borderWidth = 1
         contentContainer.layer.borderColor = UIColor.separator.cgColor
-        contentContainer.backgroundColor = .secondarySystemBackground
+        // NIENTE fondo: le bande grigie ai lati dell'immagine erano il
+        // contenitore che si vedeva dove la figura non arrivava. Ora il
+        // riquadro segue le proporzioni della figura e sotto non c'è
+        // niente da mostrare.
+        contentContainer.backgroundColor = .clear
         addSubview(contentContainer)
 
         // Stessi comandi della casella di testo, stesso stile: "x" neutra
@@ -870,7 +876,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             case .changed:
                 guard let start = circleStartPoint else { return }
                 let rect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y), width: abs(point.x - start.x), height: abs(point.y - start.y))
-                circlePreviewLayer?.path = UIBezierPath(roundedRect: rect, cornerRadius: 12).cgPath
+                circlePreviewLayer?.path = UIBezierPath(roundedRect: rect, cornerRadius: DesignRadius.lg).cgPath
                 canvasView.growIfNeeded(near: rect.maxY)
 
             case .ended, .cancelled:
@@ -1170,9 +1176,16 @@ struct DrawingCanvasView: UIViewRepresentable {
             guard let box = gesture.view?.superview as? MediaBoxView, let mediaID = box.mediaID else { return }
             let translation = gesture.translation(in: box)
             switch gesture.state {
+            case .began:
+                // Proporzioni di partenza: si tengono per tutta la
+                // trascinata, così l'immagine non si schiaccia e non
+                // restano bande vuote nel riquadro.
+                box.resizeAspect = box.frame.height > 0 ? box.frame.width / box.frame.height : 1
             case .changed:
-                box.frame.size.width = max(box.frame.width + translation.x, 60)
-                box.frame.size.height = max(box.frame.height + translation.y, 30)
+                let aspect = box.resizeAspect ?? 1
+                let width = max(box.frame.width + translation.x, 60)
+                box.frame.size.width = width
+                box.frame.size.height = max(width / max(aspect, 0.01), 30)
                 gesture.setTranslation(.zero, in: box)
             case .ended, .cancelled:
                 guard let item = parent.media.first(where: { $0.persistentModelID == mediaID }) else { return }

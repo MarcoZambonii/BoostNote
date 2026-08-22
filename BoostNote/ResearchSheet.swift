@@ -297,7 +297,6 @@ struct ResearchContentView: View {
     @State private var showingImportChoice = false
     @State private var showingNotePicker = false
     @State private var isImporting = false
-    @State private var importErrorMessage: String?
     @State private var recents: [RecentPaper] = RecentPapersStore.load()
     @State private var pinned: [RecentPaper] = PinnedPapersStore.load()
 
@@ -309,7 +308,7 @@ struct ResearchContentView: View {
 
                 if let errorMessage = model.errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                         .padding(.horizontal, DesignSpace.s1)
                 }
@@ -349,11 +348,6 @@ struct ResearchContentView: View {
                 Task { await importPaper(target: .existingNote(note)) }
             }
         }
-        .alert("Import non riuscito", isPresented: Binding(get: { importErrorMessage != nil }, set: { if !$0 { importErrorMessage = nil } })) {
-            Button("OK", role: .cancel) { importErrorMessage = nil }
-        } message: {
-            Text(importErrorMessage ?? "")
-        }
     }
 
     // MARK: - Sottoviste
@@ -365,7 +359,7 @@ struct ResearchContentView: View {
     private var sourceNote: some View {
         HStack(alignment: .center, spacing: DesignSpace.s2) {
             Text("Preprint (arXiv) e articoli di riviste e conferenze (OpenAlex), insieme.")
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -385,11 +379,11 @@ struct ResearchContentView: View {
     private var searchField: some View {
         HStack(spacing: DesignSpace.s2) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textTertiary)
             TextField("Cerca un paper (es. neural networks)", text: $model.query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
+                .font(DesignFont.body)
                 .submitLabel(.search)
                 .onSubmit { Task { await model.search() } }
             if model.isSearching {
@@ -401,8 +395,8 @@ struct ResearchContentView: View {
                     model.results = []
                     model.errorMessage = nil
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
+                    Image(systemName: "xmark")
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 .buttonStyle(.plain)
@@ -466,7 +460,7 @@ struct ResearchContentView: View {
                     RecentPapersStore.clear()
                     recents = []
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(DesignFont.action)
                 .foregroundStyle(DesignColor.textTertiary)
                 .buttonStyle(.plain)
             }
@@ -511,26 +505,18 @@ struct ResearchContentView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: DesignSpace.s3) {
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 30, weight: .light))
-                .foregroundStyle(DesignColor.textTertiary)
-            Text("Cerca preprint e articoli")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(DesignColor.textSecondary)
-            Text("I paper che apri o aggiungi a una nota compariranno qui, tra i visti di recente.")
-                .font(.system(size: 12))
-                .foregroundStyle(DesignColor.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, DesignSpace.s8 * 2)
+        BoostState(
+            kind: .empty,
+            icon: "doc.text.magnifyingglass",
+            title: "Cerca preprint e articoli",
+            message: "I paper che apri o aggiungi a una nota compariranno qui, tra i visti di recente."
+        )
+        .padding(.top, DesignSpace.s8)
     }
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.system(size: 11, weight: .semibold))
+            .font(DesignFont.micro)
             .tracking(0.6)
             .foregroundStyle(DesignColor.textTertiary)
             .padding(.horizontal, DesignSpace.s1)
@@ -552,7 +538,7 @@ struct ResearchContentView: View {
         defer { isImporting = false; pendingPaper = nil }
 
         guard let (data, _) = try? await URLSession.shared.data(from: pdfURL) else {
-            importErrorMessage = "Non sono riuscito a scaricare il PDF di \"\(paper.title)\". Controlla la connessione e riprova."
+            BoostToastCenter.shared.show("Non sono riuscito a scaricare il PDF di \"\(paper.title)\". Controlla la connessione e riprova.", role: .danger)
             return
         }
 
@@ -566,7 +552,7 @@ struct ResearchContentView: View {
         }
         guard note.appendPages(fromPDF: data, in: context) else {
             if case .newNote = target { context.delete(note) }
-            importErrorMessage = "Il PDF di \"\(paper.title)\" non è leggibile. Riprova più tardi."
+            BoostToastCenter.shared.show("Il PDF di \"\(paper.title)\" non è leggibile. Riprova più tardi.", role: .danger)
             return
         }
         note.updatedAt = .now
@@ -607,13 +593,13 @@ private struct PaperRow: View {
                 .frame(width: 36, height: 36)
                 .overlay(
                     Image(systemName: tileIcon)
-                        .font(.system(size: 15))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                 )
 
             VStack(alignment: .leading, spacing: DesignSpace.s1) {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(3)
                 HStack(spacing: DesignSpace.s2) {
@@ -623,16 +609,16 @@ private struct PaperRow: View {
                     // citarlo.
                     if let origin {
                         Text(origin.label.uppercased())
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.4)
                             .foregroundStyle(origin.tint)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(origin.tintBackground, in: Capsule())
+                            .padding(.horizontal, DesignSpace.s2)
+                            .padding(.vertical, DesignSpace.s1)
+                            .background(origin.tintBackground, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                     if !subtitle.isEmpty {
                         Text(subtitle)
-                            .font(.system(size: 12))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                             .lineLimit(2)
                     }
@@ -646,7 +632,7 @@ private struct PaperRow: View {
                         .buttonStyle(PaperActionStyle())
                     }
                     Button(action: onImport) {
-                        Label("Aggiungi a nota", systemImage: "plus.circle")
+                        Label("Aggiungi a nota", systemImage: "plus")
                     }
                     .buttonStyle(PaperActionStyle())
                     .disabled(!canImport)
@@ -658,18 +644,19 @@ private struct PaperRow: View {
 
             Button(action: onTogglePin) {
                 Image(systemName: isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(isPinned ? DesignColor.brandPrimary : DesignColor.textTertiary)
                     .frame(width: 28, height: 28)
                     .background(
                         isPinned ? DesignColor.brandPrimarySubtle : .clear,
                         in: Circle()
                     )
+                    .contentShape(Rectangle().inset(by: -8))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isPinned ? "Togli dai fissati" : "Fissa il paper")
         }
-        .padding(.vertical, DesignSpace.s3 + 2)
+        .padding(.vertical, DesignSpace.s4)
         .padding(.horizontal, DesignSpace.s1)
     }
 }
@@ -680,13 +667,13 @@ private struct PaperActionStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .semibold))
+            .font(DesignFont.action)
             .foregroundStyle(isEnabled ? DesignColor.brandPrimary : DesignColor.textTertiary)
             .padding(.horizontal, DesignSpace.s3)
-            .padding(.vertical, 6)
+            .padding(.vertical, DesignSpace.s2)
             .background(
                 isEnabled ? DesignColor.brandPrimarySubtle : DesignColor.surfaceSunken,
-                in: Capsule()
+                in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
             )
             .opacity(configuration.isPressed ? 0.6 : 1)
     }
@@ -698,30 +685,43 @@ private struct ResearchNotePickerSheet: View {
     @Query(sort: \Note.updatedAt, order: .reverse) private var allNotes: [Note]
     var onSelect: (Note) -> Void
 
+    // Il tocco seleziona, «Aggiungi» conferma: stessa meccanica di ogni
+    // sheet commit (§4), invece dell'esecuzione al tocco.
+    @State private var selectedNoteID: UUID?
+
     var body: some View {
-        NavigationStack {
-            List(allNotes) { note in
-                Button {
+        BoostSheet(
+            title: "Scegli una nota",
+            mode: .commit(verb: "Aggiungi", enabled: selectedNoteID != nil),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                if let note = allNotes.first(where: { $0.id == selectedNoteID }) {
                     onSelect(note)
+                }
+            }
+        ) {
+            List(allNotes) { note in
+                let isSelected = selectedNoteID == note.id
+                Button {
+                    selectedNoteID = isSelected ? nil : note.id
                 } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                            .foregroundStyle(.primary)
-                        if let folder = note.folder {
-                            Text(folder.name)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    HStack(spacing: DesignSpace.s3) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(note.title.isEmpty ? "Senza titolo" : note.title)
+                                .foregroundStyle(.primary)
+                            if let folder = note.folder {
+                                Text(folder.name)
+                                    .font(DesignFont.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("Scegli una nota")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-            }
         }
+        .presentationDetents([.medium])
     }
 }
 

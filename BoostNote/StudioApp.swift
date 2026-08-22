@@ -24,15 +24,36 @@ struct StudioApp: App {
         } catch {
             print("CloudKit non disponibile (\(error)), si continua in locale")
             let local = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
-            // Il database locale è lo stesso store di sempre: se nemmeno
-            // questo si apre, l'app non ha niente da mostrare comunque.
-            return try! ModelContainer(for: schema, configurations: [local])
+            if let container = try? ModelContainer(for: schema, configurations: [local]) {
+                return container
+            }
+            // Nemmeno lo store locale si apre (migrazione fallita, store
+            // corrotto): l'ultima spiaggia è un container in memoria.
+            // I dati su disco restano INTATTI per un aggiornamento che
+            // sappia leggerli; il try! che stava qui crashava al lancio
+            // in loop proprio nello scenario in cui serviva il fallback.
+            print("Store locale non apribile: sessione in memoria, i dati su disco non vengono toccati")
+            let memory = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+            do {
+                return try ModelContainer(for: schema, configurations: [memory])
+            } catch {
+                // Un container in-memory che non si crea non dipende dai
+                // dati: qui non c'è più niente di sensato da tentare.
+                fatalError("Impossibile creare anche il container in memoria: \(error)")
+            }
         }
     }()
 
     var body: some Scene {
         WindowGroup {
             RootView()
+                // ACCENTO UNICO PER TUTTI I CONTROLLI DI SISTEMA.
+                // Interruttori, cursori, indicatori di caricamento, spunte
+                // dei menu e campi di testo prendono il colore dell'app
+                // invece del verde e del blu di iOS: sono l'unica parte
+                // dell'interfaccia che non passa dai nostri componenti, e
+                // senza questo restavano di un'altra tinta.
+                .tint(DesignColor.brandPrimary)
                 // Un .boostnote aperto da Files (o da OneDrive) apre
                 // BoostNote e ripristina la nota: il pacchetto è un
                 // documento NOSTRO, dichiarato in Info.plist con la sua

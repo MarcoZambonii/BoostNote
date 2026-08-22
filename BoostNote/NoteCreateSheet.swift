@@ -22,8 +22,17 @@ struct NoteCreateSheet: View {
         _selectedFolder = State(initialValue: preselectedFolder)
     }
 
+    private var canCreate: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Nuova nota",
+            mode: .commit(verb: "Crea", enabled: canCreate),
+            onDismiss: { dismiss() },
+            onConfirm: { create() }
+        ) {
             Form {
                 Section("Nome") {
                     TextField("Nome nota", text: $name)
@@ -47,12 +56,13 @@ struct NoteCreateSheet: View {
                                     newFolderColor = option
                                 } label: {
                                     Image(systemName: "folder.fill")
-                                        .font(.system(size: 16))
+                                        .font(.system(size: DesignIcon.md))
                                         .foregroundStyle(option.color)
                                         .frame(width: 28, height: 28)
                                         .overlay(
                                             Circle().stroke(option.color, lineWidth: newFolderColor == option ? 2 : 0)
                                         )
+                                        .contentShape(Rectangle().inset(by: -8))
                                 }
                             }
                         }
@@ -60,27 +70,19 @@ struct NoteCreateSheet: View {
                 }
 
                 Section("Pattern foglio") {
-                    Picker("Pattern", selection: $template) {
-                        ForEach(NoteTemplate.allCases) { option in
-                            Text(option.label).tag(option)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    BoostSegmented(
+                        options: NoteTemplate.allCases.map { ($0, $0.label) },
+                        selection: $template
+                    )
                 }
             }
-            .navigationTitle("Nuova nota")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Crea") { create() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
+            // Il fondo grigio di sistema sotto il Form non è di
+            // quest'app: sotto ci va il foglio bianco come nel resto
+            // delle schermate.
+            .scrollContentBackground(.hidden)
+            .background(DesignColor.surfacePage)
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium])
     }
 
     private func create() {

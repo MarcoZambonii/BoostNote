@@ -15,7 +15,11 @@ struct NoteSettingsSheet: View {
     private let thumbColumns = [GridItem(.adaptive(minimum: 90, maximum: 130), spacing: DesignSpace.s3)]
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Impostazioni foglio",
+            mode: .read,
+            onDismiss: { dismiss() }
+        ) {
             Form {
                     Section("Pagine") {
                         if showingAllPages {
@@ -35,7 +39,7 @@ struct NoteSettingsSheet: View {
                                                         .stroke(DesignColor.borderDefault, lineWidth: 1)
                                                 )
                                             Text("\(index + 1)")
-                                                .font(.system(size: 11))
+                                                .font(DesignFont.caption)
                                                 .foregroundStyle(DesignColor.textTertiary)
                                         }
                                     }
@@ -50,7 +54,7 @@ struct NoteSettingsSheet: View {
                                 Label("Vedi tutte le pagine (\(pageCount))", systemImage: "square.grid.2x2")
                             }
                             Text("Le anteprime vengono renderizzate una per una: su note lunghe può volerci qualche istante.")
-                                .font(.caption)
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     }
@@ -71,63 +75,52 @@ struct NoteSettingsSheet: View {
                 }
 
                 Section("Dimensione pagina") {
-                    Picker("Dimensione", selection: $note.pageSize) {
-                        ForEach(PageSize.allCases, id: \.self) { size in
-                            Text(size.label).tag(size)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    BoostSegmented(
+                        options: PageSize.allCases.map { ($0, $0.label) },
+                        selection: $note.pageSize
+                    )
                 }
 
                 Section("Pattern") {
-                    // Finché la nota ha uno sfondo PDF importato, quello
-                    // copre il pattern: cambiarlo qui non aveva alcun
-                    // effetto visibile e non c'era modo di tornare
-                    // indietro. Ora si vede il perché e si può rimuovere.
-                    if note.pdfBackgroundData != nil {
-                        VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                            Text("Questa nota ha un PDF importato come sfondo: il pattern resta nascosto finché non lo rimuovi.")
-                                .font(.caption)
-                                .foregroundStyle(DesignColor.textSecondary)
-                            Button(role: .destructive) {
-                                note.pdfBackgroundData = nil
-                                note.updatedAt = .now
-                            } label: {
-                                Label("Rimuovi sfondo PDF", systemImage: "doc.badge.minus")
-                            }
-                        }
+                    // Il vecchio banner "Rimuovi sfondo PDF" era legato al
+                    // campo LEGACY pdfBackgroundData: dopo la migrazione al
+                    // modello a pagine il PDF vive nelle singole pagine
+                    // (e il campo viene svuotato), quindi il banner mentiva
+                    // — restava acceso per sempre e il pulsante azzerava il
+                    // campo sbagliato. Qui resta solo l'informazione vera.
+                    if note.sortedPages.contains(where: { $0.pdfPageData != nil }) {
+                        Text("Sulle pagine importate da un PDF il pattern resta coperto dal documento: qui scegli quello delle pagine bianche.")
+                            .font(DesignFont.caption)
+                            .foregroundStyle(DesignColor.textSecondary)
                     }
 
-                    Picker("Pattern", selection: $note.template) {
-                        ForEach(NoteTemplate.allCases) { option in
-                            Text(option.label).tag(option)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(note.pdfBackgroundData != nil)
+                    BoostSegmented(
+                        options: NoteTemplate.allCases.map { ($0, $0.label) },
+                        selection: $note.template
+                    )
 
                     if note.template != .blank {
                         VStack(alignment: .leading, spacing: 4) {
                             // In millimetri veri: il passo base del pattern è
                             // 24 pt = 6,35 mm, moltiplicato per la scala.
                             Text("Dimensione pattern — \(RealUnits.mmLabel(fromPoints: 24 * note.patternScale))")
-                                .font(.caption)
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textSecondary)
                             Slider(value: $note.patternScale, in: 0.5...2.0, step: 0.1)
                         }
-                        .disabled(note.pdfBackgroundData != nil)
                     }
                 }
             }
-            .navigationTitle("Impostazioni foglio")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Chiudi") { dismiss() }
-                }
-            }
+            // Il fondo grigio di sistema sotto il Form non è di
+            // quest'app: sotto ci va il foglio bianco come nel resto
+            // delle schermate.
+            .scrollContentBackground(.hidden)
+            .background(DesignColor.surfacePage)
         }
-        .presentationDetents([.medium, .large])
+        // Su iPad un detent .medium su un form sheet non lo attacca in
+        // basso: lo lascia sospeso a metà schermo, alto la metà e col
+        // contenuto tagliato a caso. Qui serve il foglio intero.
+        .presentationDetents([.large])
     }
 
     private var pageCount: Int {
