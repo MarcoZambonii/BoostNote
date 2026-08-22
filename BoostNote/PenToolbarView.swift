@@ -92,6 +92,8 @@ struct PenToolbarView: View {
     // Penna a pressione (tratto che varia con la forza) oppure a
     // spessore costante: è una proprietà della penna quanto il colore.
     @Binding var pressureEnabled: [PenTool: Bool]
+    // Forma del recinto: a mano libera o rettangolo.
+    @Binding var lassoShape: LassoShape
     @Binding var eraserType: PKEraserTool.EraserType
     @Binding var eraserWidth: CGFloat
     @Binding var magicAction: MagicAction?
@@ -233,6 +235,10 @@ struct PenToolbarView: View {
 
                 lassoButton
 
+                if selectedTool == .lasso {
+                    lassoShapeToggle
+                }
+
                 ForEach([PenTool.text, .pointer]) { tool in
                     Button {
                         selectedTool = tool
@@ -273,12 +279,14 @@ struct PenToolbarView: View {
 
                 dragHandle
             }
-            .padding(axis == .horizontal ? 6 : 8)
+            .padding(3)
         }
         // Barra più compatta: copre meno foglio, che su una nota piena di
         // scrittura è il difetto che si nota di più.
-        .frame(maxWidth: axis == .horizontal ? 560 : 46)
-        .frame(maxHeight: axis == .vertical ? 460 : 46)
+        // Stessa altezza della barra fissa in alto a destra e del tasto
+        // indietro: 40. Erano 46 e la differenza si notava.
+        .frame(maxWidth: axis == .horizontal ? 560 : 40)
+        .frame(maxHeight: axis == .vertical ? 460 : 40)
         // Bianca e squadrata come ogni altra superficie sospesa (barra
         // fissa, pannelli): la pillola traslucida era l'unico pezzo
         // d'app con una forma e un materiale tutti suoi.
@@ -435,7 +443,7 @@ struct PenToolbarView: View {
                 selectedTool = tool
             }
         } label: {
-            toolIcon(tool.systemImage, isSelected: selectedTool == tool, tint: selectedTool == tool ? color.wrappedValue : nil)
+            toolIcon(tool.systemImage, isSelected: selectedTool == tool, tint: selectedTool == tool ? color.wrappedValue : nil, inkColor: color.wrappedValue)
         }
         .accessibilityLabel(tool.label)
         .popover(isPresented: Binding(
@@ -733,7 +741,15 @@ struct PenToolbarView: View {
                 Text("Selezione")
                     .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textTertiary)
-                lassoStep("1", "Cerchia quello che ti interessa.")
+
+                BoostSegmented(
+                    options: LassoShape.allCases.map { ($0, $0.label) },
+                    selection: $lassoShape
+                )
+
+                lassoStep("1", lassoShape == .rectangle
+                          ? "Trascina un rettangolo su quello che ti interessa."
+                          : "Cerchia quello che ti interessa.")
                 lassoStep("2", "Trascina la selezione per spostarla.")
                 lassoStep("3", "Usa la barretta sopra la selezione per duplicare, copiare, tagliare o eliminare.")
                 Divider()
@@ -745,6 +761,21 @@ struct PenToolbarView: View {
             .padding(DesignSpace.s4)
             .frame(width: 280)
             .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    // Le due forme del recinto, in barra quando il lasso è in mano:
+    // è una scelta che si cambia in continuazione mentre si seleziona,
+    // non un'impostazione da andare a cercare.
+    @ViewBuilder
+    private var lassoShapeToggle: some View {
+        ForEach(LassoShape.allCases) { shape in
+            Button {
+                lassoShape = shape
+            } label: {
+                toolIcon(shape.systemImage, isSelected: lassoShape == shape)
+            }
+            .accessibilityLabel(shape.label)
         }
     }
 
@@ -763,7 +794,7 @@ struct PenToolbarView: View {
     }
 
     @ViewBuilder
-    private func toolIcon(_ systemImage: String, isSelected: Bool, tint: Color? = nil) -> some View {
+    private func toolIcon(_ systemImage: String, isSelected: Bool, tint: Color? = nil, inkColor: Color? = nil) -> some View {
         Image(systemName: systemImage)
             .font(.system(size: DesignIcon.md))
             .foregroundStyle(isSelected ? (tint ?? DesignColor.brandPrimary) : DesignColor.textPrimary)
@@ -772,6 +803,18 @@ struct PenToolbarView: View {
                 isSelected ? (tint ?? DesignColor.brandPrimary).opacity(0.15) : Color.clear,
                 in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
             )
+            // Il trattino del colore sotto l'icona: è quello che distingue
+            // penna ed evidenziatore a colpo d'occhio, molto più della
+            // forma del glifo, e dice con che colore si sta scrivendo.
+            .overlay(alignment: .bottom) {
+                if let inkColor {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(inkColor)
+                        .frame(width: 12, height: 2.5)
+                        .opacity(isSelected ? 1 : 0.45)
+                        .padding(.bottom, 2)
+                }
+            }
     }
 }
 

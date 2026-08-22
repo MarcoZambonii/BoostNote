@@ -74,6 +74,8 @@ struct NoteEditorView: View {
     @State private var inkWidths: [PenTool: CGFloat] = [:]
     // Penna a pressione o a spessore costante, per strumento.
     @State private var pressureEnabled: [PenTool: Bool] = [:]
+    @AppStorage("tool.lassoShape") private var storedLassoShape = LassoShape.freeform.rawValue
+    private var lassoShape: LassoShape { LassoShape(rawValue: storedLassoShape) ?? .freeform }
     @State private var eraserType: PKEraserTool.EraserType = .bitmap
     @State private var eraserWidth: CGFloat = 30
 
@@ -800,6 +802,7 @@ struct NoteEditorView: View {
                         color: activeColor,
                         inkWidth: activeInkWidth,
                         pressureSensitiveInk: activePressure,
+                        lassoShape: lassoShape,
                         eraserType: eraserType,
                         eraserWidth: eraserWidth,
                         template: note.template,
@@ -873,6 +876,10 @@ struct NoteEditorView: View {
             inkColors: $inkColors,
             inkWidths: $inkWidths,
             pressureEnabled: $pressureEnabled,
+            lassoShape: Binding(
+                get: { lassoShape },
+                set: { storedLassoShape = $0.rawValue }
+            ),
             eraserType: $eraserType,
             eraserWidth: $eraserWidth,
             magicAction: $magicAction,

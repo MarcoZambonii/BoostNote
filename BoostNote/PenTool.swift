@@ -189,10 +189,7 @@ extension PenTool {
     var systemImage: String {
         switch self {
         case .pen: "pencil.tip"
-        // "highlighter" a 17pt è una penna inclinata qualunque, identica
-        // alla punta della penna: il pennarello a punta piatta si
-        // riconosce anche piccolo.
-        case .marker: "paintbrush.pointed.fill"
+        case .marker: "highlighter"
         case .text: "textformat"
         case .eraser: "eraser"
         case .lasso: "lasso"

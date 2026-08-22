@@ -175,7 +175,13 @@ enum StudioGenerationService {
                     }
                     let outcome: GenerationOutcome
                     if vaultChunks.isEmpty {
-                        outcome = await generateWithAI(for: job.kind, from: resolved, options: job.options, progress: progress)
+                        // Rete di sicurezza: qui si finisce quando i
+                        // documenti del Vault non hanno testo indicizzato,
+                        // e in quel caso la scelta degli argomenti esiste
+                        // (i chip la mostrano) ma non incontrerebbe alcun
+                        // filtro. Passarla al prompt è l'unico modo perché
+                        // conti qualcosa. Vuota = comportamento di sempre.
+                        outcome = await generateWithAI(for: job.kind, from: resolved, options: job.options, indexTopics: job.options.selectedTopics, progress: progress)
                     } else {
                         outcome = await generateFromVault(kind: job.kind, chunks: vaultChunks, options: job.options, progress: progress)
                     }
@@ -650,7 +656,14 @@ enum StudioGenerationService {
             // Il riassunto è di teoria: i chunk di soli esercizi/temi
             // d'esame non c'entrano (a meno che non ci sia altro).
             let theory = chunks.filter { !$0.isExamPaper && $0.nature != "exercises" }
-            return await generateVaultSummary(chunks: theory.isEmpty ? chunks : theory, options: options, progress: progress)
+            // Gli argomenti scelti arrivano al PROMPT, non solo al filtro
+            // sui chunk: il filtro tiene i blocchi senza etichette (le
+            // note entrano così, e un chunk etichettato [A, B] scelto per
+            // A si porta dietro anche B), quindi da solo non restringe
+            // niente. Qui il vocabolario è un vincolo di campo, non il
+            // dizionario del campo "topic" — che il riassunto non ha —:
+            // perciò SOLO la scelta dell'utente, mai `orderedTopics`.
+            return await generateVaultSummary(chunks: theory.isEmpty ? chunks : theory, options: options, topics: options.selectedTopics, progress: progress)
         default:
             let (selected, note) = selectChunks(chunks, for: kind, budget: materialsBudget)
             let sources = selected.map { ResolvedSource(title: $0.title, text: $0.text, isExamPaper: $0.isExamPaper) }
@@ -787,7 +800,7 @@ enum StudioGenerationService {
     // Il riassunto a mappa: una chiamata Lite per chunk, 3 in parallelo,
     // sezioni cucite nell'ordine del corso. È il modulo che il
     // troncamento danneggiava di più: così copre il corso INTERO.
-    private static func generateVaultSummary(chunks: [VaultChunkInfo], options: StudyModuleOptions, progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
+    private static func generateVaultSummary(chunks: [VaultChunkInfo], options: StudyModuleOptions, topics: [String], progress: @escaping @Sendable (String) -> Void) async -> GenerationOutcome {
         await withDeadline(seconds: 360) {
             let total = chunks.count
             let results = await withTaskGroup(of: (Int, [SummarySection]?).self) { group -> [Int: [SummarySection]] in
@@ -798,7 +811,7 @@ enum StudioGenerationService {
 
                 func add(_ index: Int) {
                     let chunk = chunks[index]
-                    group.addTask { (index, await summarizeChunk(chunk, options: options)) }
+                    group.addTask { (index, await summarizeChunk(chunk, options: options, topics: topics)) }
                 }
 
                 while next < chunks.count && next < maxConcurrent {
@@ -815,10 +828,17 @@ enum StudioGenerationService {
                 return out
             }
             let ordered = (0..<chunks.count).compactMap { results[$0] }.flatMap { $0 }
+            let failedChunks = chunks.indices.filter { results[$0] == nil }
             guard !ordered.isEmpty else {
+                // Con un vincolo di campo attivo, "nessuna sezione" e
+                // "nessuna chiamata riuscita" sono due esiti diversi e
+                // meritano due messaggi diversi: il primo si risolve
+                // cambiando scelta, il secondo riprovando.
+                if failedChunks.isEmpty && !topics.isEmpty {
+                    return .failure("Nessuna parte del materiale tratta gli argomenti scelti: il riassunto sarebbe vuoto. Scegli altri argomenti, o altri materiali.")
+                }
                 return .failure("Il riassunto non è riuscito su nessuna parte del materiale. Riprova tra qualche minuto.")
             }
-            let failedChunks = chunks.indices.filter { results[$0] == nil }
             var warning: String?
             if !failedChunks.isEmpty {
                 let failedPages = failedChunks.reduce(0) { $0 + chunks[$1].pageCount }
@@ -829,15 +849,20 @@ enum StudioGenerationService {
         }
     }
 
-    private static func summarizeChunk(_ chunk: VaultChunkInfo, options: StudyModuleOptions) async -> [SummarySection]? {
+    private static func summarizeChunk(_ chunk: VaultChunkInfo, options: StudyModuleOptions, topics: [String]) async -> [SummarySection]? {
         let source = ResolvedSource(title: chunk.title, text: chunk.text, isExamPaper: chunk.isExamPaper)
-        let prompt = buildPrompt(for: .summary, from: [source], options: options)
+        let prompt = buildPrompt(for: .summary, from: [source], options: options, indexTopics: topics)
         guard case .success(let reply) = await AIService.generate(prompt: prompt, tier: .lite, schema: responseSchema(for: .summary), thinkingBudget: 0),
               let json = AIService.extractJSON(from: reply.text),
-              case .success(let dto) = decodeDTO(AISummaryDTO.self, from: json),
-              !dto.sections.isEmpty else {
+              case .success(let dto) = decodeDTO(AISummaryDTO.self, from: json) else {
             return nil
         }
+        // Zero sezioni con un vincolo di campo attivo è la risposta
+        // GIUSTA per un blocco fuori tema: `[]` = saltato, `nil` =
+        // fallito, e solo il secondo entra nell'avviso "riassunto
+        // incompleto". Senza vincolo la distinzione non esiste e zero
+        // sezioni resta un fallimento, come prima.
+        guard !dto.sections.isEmpty else { return topics.isEmpty ? nil : [] }
         let prepared = PreparedCitationSources([source])
         return dto.sections.map {
             SummarySection(title: $0.title, body: $0.body, quote: makeCitation(quote: $0.quote, source: $0.source, in: prepared))
@@ -1303,10 +1328,30 @@ enum StudioGenerationService {
             // sommario che elenca cosa c'è. La differenza la fanno la
             // spiegazione in parole semplici dopo ogni definizione e la
             // gerarchia visiva (grassetti, elenchi, formule a display).
-            return common + """
+            //
+            // Il vincolo di campo è l'UNICO punto in cui la scelta degli
+            // argomenti può agire sul riassunto: il filtro sui chunk
+            // lascia passare tutto il materiale privo di etichette, e
+            // "APPUNTI RIELABORATI completi" qui sotto è un ordine di
+            // copertura totale di ciò che entra nel prompt. Senza questa
+            // clausola le due cose insieme riassumevano l'intera nota.
+            let scopeRule: String
+            if indexTopics.isEmpty {
+                scopeRule = ""
+            } else {
+                let list = indexTopics.map { "- \($0)" }.joined(separator: "\n")
+                scopeRule = """
+                ARGOMENTI SCELTI DALLO STUDENTE — vincolo di campo, viene PRIMA di ogni altra istruzione:
+                \(list)
+                Riassumi SOLO le parti di questo materiale che trattano quegli argomenti. Tutto il resto va ignorato: anche se è teoria importante, anche se occupa la maggior parte del materiale, anche se è ciò da cui dipendono gli argomenti scelti (dai per noto, non spiegarlo).
+                Se questo materiale non tratta nessuno degli argomenti elencati, rispondi con {"sections":[]} e nient'altro: è la risposta corretta, non un errore.
+
+                """
+            }
+            return common + scopeRule + """
             Compito: trasforma i materiali di teoria in APPUNTI RIELABORATI completi, da cui si possa studiare senza aprire i materiali originali. NON un sommario che dice di cosa parlano: una spiegazione vera e propria.
 
-            Struttura: una sezione per ARGOMENTO (non per materiale), nell'ordine logico in cui gli argomenti si costruiscono l'uno sull'altro. Meglio tante sezioni focalizzate che poche generiche.
+            Struttura: una sezione per ARGOMENTO (non per materiale), nell'ordine logico in cui gli argomenti si costruiscono l'uno sull'altro. Meglio tante sezioni focalizzate che poche generiche. Se sopra c'è un elenco di argomenti scelti, "completi" e "una sezione per argomento" valgono SOLO dentro quell'elenco.
 
             Dentro ogni "body", in Markdown:
             - Le DEFINIZIONI e gli enunciati formali per primi, completi e precisi: se il materiale li numera (es. "DEF 1.3", "Proposizione 11.7") conserva la numerazione; il termine definito va in **grassetto**; le condizioni come elenco puntato; le formule in $$ su riga propria.

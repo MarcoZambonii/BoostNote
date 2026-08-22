@@ -620,77 +620,80 @@ struct StudioCreateFlowView: View {
     private var canGenerate: Bool { missingRequirements.isEmpty }
 
     private var generateBar: some View {
-        VStack(alignment: .trailing, spacing: DesignSpace.s2) {
-            // L'estrazione (OCR della scrittura a mano, PDF scansionati,
-            // download WeBeep) può durare parecchi secondi: senza questo
-            // sembrerebbe che l'app si sia piantata.
-            if let preparation {
-                HStack(spacing: DesignSpace.s2) {
-                    ProgressView().controlSize(.small)
-                    Text("Leggo i materiali — \(preparation.current) di \(preparation.total): \(preparation.title)\(preparation.detail.map { " (\($0))" } ?? "")")
-                        .font(DesignFont.caption)
+        // UNA riga sola: a sinistra cosa sta succedendo (lettura in corso,
+        // cosa manca, quanto costerà), a destra la quota e il tasto.
+        // Impilate su due righe con lo spazio in mezzo, quelle stesse
+        // informazioni facevano una fascia alta il doppio del necessario.
+        HStack(alignment: .center, spacing: DesignSpace.s3) {
+            statusLine
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Il pannello quota vive dietro la ⓘ, come chiesto: non
+            // in faccia, ma a un tocco quando si sta per spendere.
+            if AIService.selectedProvider == .gemini {
+                Button {
+                    showingQuotaInfo = true
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
-                        .lineLimit(1)
-                    Spacer()
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle().inset(by: -6))
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showingQuotaInfo, arrowEdge: .bottom) {
+                    GeminiQuotaPanel()
+                        .padding(DesignSpace.s4)
+                        // 420pt non stanno in un popover su iPhone:
+                        // lì diventa uno sheet a larghezza piena.
+                        .frame(width: DeviceLayout.isPhone ? nil : 420)
+                        .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
+                        .presentationDetents([.medium, .large])
                 }
             }
 
-            if !missingRequirements.isEmpty {
-                Label("Manca ancora: \(missingRequirements.joined(separator: ", ")).", systemImage: "info.circle")
-                    .font(DesignFont.caption)
-                    .foregroundStyle(DesignColor.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+            BoostButton(
+                "Genera studio",
+                icon: "sparkles",
+                tone: .primary,
+                isLoading: preparation != nil
+            ) {
+                createStudy()
             }
-            HStack(spacing: DesignSpace.s3) {
-                Spacer()
-                // Il pannello quota vive dietro la ⓘ, come chiesto: non
-                // in faccia, ma a un tocco quando si sta per spendere.
-                if AIService.selectedProvider == .gemini {
-                    Button {
-                        showingQuotaInfo = true
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: DesignIcon.md))
-                            .foregroundStyle(DesignColor.textSecondary)
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle().inset(by: -6))
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showingQuotaInfo, arrowEdge: .bottom) {
-                        GeminiQuotaPanel()
-                            .padding(DesignSpace.s4)
-                            // 420pt non stanno in un popover su iPhone:
-                            // lì diventa uno sheet a larghezza piena.
-                            .frame(width: DeviceLayout.isPhone ? nil : 420)
-                            .presentationCompactAdaptation(DeviceLayout.isPhone ? .sheet : .popover)
-                            .presentationDetents([.medium, .large])
-                    }
-                }
-                VStack(alignment: .trailing, spacing: DesignSpace.s1) {
-                    BoostButton(
-                        "Genera studio",
-                        icon: "sparkles",
-                        tone: .primary,
-                        isLoading: preparation != nil
-                    ) {
-                        createStudy()
-                    }
-                    .disabled(!canGenerate || preparation != nil)
-
-                    if canGenerate, AIService.selectedProvider == .gemini {
-                        Text(callEstimateLabel)
-                            .font(DesignFont.caption)
-                            .foregroundStyle(DesignColor.textTertiary)
-                    }
-                }
-            }
+            .disabled(!canGenerate || preparation != nil)
         }
         .padding(.horizontal, DesignSpace.s6)
-        .padding(.vertical, DesignSpace.s4)
+        .padding(.vertical, DesignSpace.s2)
         .background(DesignColor.surfacePage)
         .overlay(alignment: .top) {
             Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
+        }
+    }
+
+    // Una riga sola, quella che conta di più in questo momento.
+    @ViewBuilder
+    private var statusLine: some View {
+        if let preparation {
+            // L'estrazione (OCR della scrittura a mano, PDF scansionati,
+            // download WeBeep) può durare parecchi secondi: senza questo
+            // sembrerebbe che l'app si sia piantata.
+            HStack(spacing: DesignSpace.s2) {
+                ProgressView().controlSize(.small)
+                Text("Leggo i materiali — \(preparation.current) di \(preparation.total): \(preparation.title)\(preparation.detail.map { " (\($0))" } ?? "")")
+                    .font(DesignFont.caption)
+                    .foregroundStyle(DesignColor.textSecondary)
+                    .lineLimit(1)
+            }
+        } else if !missingRequirements.isEmpty {
+            Label("Manca ancora: \(missingRequirements.joined(separator: ", ")).", systemImage: "info.circle")
+                .font(DesignFont.caption)
+                .foregroundStyle(DesignColor.textTertiary)
+                .lineLimit(2)
+        } else if AIService.selectedProvider == .gemini {
+            Text(callEstimateLabel)
+                .font(DesignFont.caption)
+                .foregroundStyle(DesignColor.textTertiary)
+                .lineLimit(1)
         }
     }
 
