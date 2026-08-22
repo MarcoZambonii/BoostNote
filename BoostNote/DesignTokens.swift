@@ -113,8 +113,9 @@ enum DesignRadius {
 // Scala tipografica CHIUSA del design system (tokens/typography.css):
 // dieci ruoli, nessun altro. La regola di scelta sta nel §1 del README
 // del kit; `.fontWeight()` dopo un DesignFont è vietato — il peso lo
-// porta il ruolo. I titoli sono LEGGERI di proposito (la gerarchia la
-// dà la dimensione, non il grassetto): non reintrodurre il semibold.
+// porta il ruolo. I tre titoli erano ultraLight/light nel kit: sono
+// stati portati a bold su richiesta dell'utente (2026-08-22), che li
+// vuole leggibili come titoli e non come didascalie grandi.
 enum DesignFont {
     static let display      = Font.system(size: 30, weight: .bold)
     static let screenTitle  = Font.system(size: 26, weight: .bold)
@@ -154,6 +155,10 @@ enum DesignSize {
     static let compact: CGFloat = 38   // SOLO testate di card e pannelli
     static let touchMin: CGFloat = 44  // area di tocco minima, sempre
     static let rowMin: CGFloat = 56    // riga di elenco
+    // Fasce in fondo a una colonna o a una sheet (footer del Profilo,
+    // barra di conferma): stessa altezza, così stanno sulla stessa
+    // linea quando si vedono affiancate.
+    static let bottomBar: CGFloat = 60
 }
 
 // Le DUE elevazioni del sistema (tokens/colors.css --elev-popover /

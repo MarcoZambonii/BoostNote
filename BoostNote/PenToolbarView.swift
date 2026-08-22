@@ -92,8 +92,10 @@ struct PenToolbarView: View {
     // Penna a pressione (tratto che varia con la forza) oppure a
     // spessore costante: è una proprietà della penna quanto il colore.
     @Binding var pressureEnabled: [PenTool: Bool]
-    // Forma del recinto: a mano libera o rettangolo.
-    @Binding var lassoShape: LassoShape
+    // La penna salvata in mano: nil quando si scrive con lo strumento
+    // di base. Le penne salvate NON toccano la configurazione degli
+    // strumenti — sono strumenti loro.
+    @Binding var activePinnedPen: PinnedPen?
     @Binding var eraserType: PKEraserTool.EraserType
     @Binding var eraserWidth: CGFloat
     @Binding var magicAction: MagicAction?
@@ -140,9 +142,11 @@ struct PenToolbarView: View {
         }
     }
 
-    // La penna attualmente in mano, com'è configurata adesso.
+    // La penna attualmente in mano, com'è configurata adesso: quella
+    // salvata se se n'è presa una, altrimenti lo strumento di base.
     private func currentPen(for tool: PenTool) -> PinnedPen {
-        PinnedPen(
+        if let pen = activePinnedPen, pen.tool == tool { return pen }
+        return PinnedPen(
             toolRaw: tool.rawValue,
             colorHex: (inkColors[tool] ?? tool.defaultColor).hexString ?? "#000000",
             width: Double(inkWidths[tool] ?? tool.defaultWidth),
@@ -152,6 +156,13 @@ struct PenToolbarView: View {
 
     private func isPinned(_ pen: PinnedPen) -> Bool {
         pinnedPens.contains { $0.matchesConfiguration(of: pen) }
+    }
+
+    // Tornare allo strumento di base: qualunque tocco su penna,
+    // evidenziatore, gomma o lasso lascia andare la penna salvata.
+    private func selectBaseTool(_ tool: PenTool) {
+        activePinnedPen = nil
+        selectedTool = tool
     }
 
     private func togglePin(for tool: PenTool) {
@@ -165,18 +176,16 @@ struct PenToolbarView: View {
         }
     }
 
-    // Riprendere una penna significa rimettere in mano ESATTAMENTE quella
-    // configurazione: strumento, colore, spessore e pressione insieme.
+    // Prendere in mano una penna salvata NON scrive niente sugli
+    // strumenti: si limita a dire "adesso scrivo con questa". La penna
+    // di base resta col suo colore e il suo spessore, intatta.
     private func apply(_ pen: PinnedPen) {
-        let tool = pen.tool
-        inkColors[tool] = pen.color
-        inkWidths[tool] = CGFloat(pen.width)
-        pressureEnabled[tool] = pen.pressure
-        selectedTool = tool
+        activePinnedPen = pen
+        selectedTool = pen.tool
     }
 
     private func isActive(_ pen: PinnedPen) -> Bool {
-        selectedTool == pen.tool && currentPen(for: pen.tool).matchesConfiguration(of: pen)
+        activePinnedPen?.id == pen.id
     }
 
     // Tasto di una penna salvata: il glifo dello strumento con sotto la
@@ -235,13 +244,9 @@ struct PenToolbarView: View {
 
                 lassoButton
 
-                if selectedTool == .lasso {
-                    lassoShapeToggle
-                }
-
                 ForEach([PenTool.text, .pointer]) { tool in
                     Button {
-                        selectedTool = tool
+                        selectBaseTool(tool)
                     } label: {
                         toolIcon(tool.systemImage, isSelected: selectedTool == tool)
                     }
@@ -437,10 +442,10 @@ struct PenToolbarView: View {
     private func inkToolButton(_ tool: PenTool) -> some View {
         let color = colorBinding(for: tool)
         Button {
-            if selectedTool == tool {
+            if selectedTool == tool, activePinnedPen == nil {
                 showingOptionsFor = tool
             } else {
-                selectedTool = tool
+                selectBaseTool(tool)
             }
         } label: {
             toolIcon(tool.systemImage, isSelected: selectedTool == tool, tint: selectedTool == tool ? color.wrappedValue : nil, inkColor: color.wrappedValue)
@@ -656,7 +661,7 @@ struct PenToolbarView: View {
             if selectedTool == .eraser {
                 showingEraserOptions = true
             } else {
-                selectedTool = .eraser
+                selectBaseTool(.eraser)
             }
         } label: {
             toolIcon("eraser.fill", isSelected: selectedTool == .eraser)
@@ -730,7 +735,7 @@ struct PenToolbarView: View {
             if selectedTool == .lasso {
                 showingLassoInfo = true
             } else {
-                selectedTool = .lasso
+                selectBaseTool(.lasso)
             }
         } label: {
             toolIcon(PenTool.lasso.systemImage, isSelected: selectedTool == .lasso)
@@ -742,14 +747,7 @@ struct PenToolbarView: View {
                     .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textTertiary)
 
-                BoostSegmented(
-                    options: LassoShape.allCases.map { ($0, $0.label) },
-                    selection: $lassoShape
-                )
-
-                lassoStep("1", lassoShape == .rectangle
-                          ? "Trascina un rettangolo su quello che ti interessa."
-                          : "Cerchia quello che ti interessa.")
+                lassoStep("1", "Cerchia quello che ti interessa.")
                 lassoStep("2", "Trascina la selezione per spostarla.")
                 lassoStep("3", "Usa la barretta sopra la selezione per duplicare, copiare, tagliare o eliminare.")
                 Divider()
@@ -761,21 +759,6 @@ struct PenToolbarView: View {
             .padding(DesignSpace.s4)
             .frame(width: 280)
             .presentationCompactAdaptation(.popover)
-        }
-    }
-
-    // Le due forme del recinto, in barra quando il lasso è in mano:
-    // è una scelta che si cambia in continuazione mentre si seleziona,
-    // non un'impostazione da andare a cercare.
-    @ViewBuilder
-    private var lassoShapeToggle: some View {
-        ForEach(LassoShape.allCases) { shape in
-            Button {
-                lassoShape = shape
-            } label: {
-                toolIcon(shape.systemImage, isSelected: lassoShape == shape)
-            }
-            .accessibilityLabel(shape.label)
         }
     }
 

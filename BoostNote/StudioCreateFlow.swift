@@ -663,7 +663,7 @@ struct StudioCreateFlowView: View {
             .disabled(!canGenerate || preparation != nil)
         }
         .padding(.horizontal, DesignSpace.s6)
-        .padding(.vertical, DesignSpace.s2)
+        .frame(minHeight: DesignSize.bottomBar)
         .background(DesignColor.surfacePage)
         .overlay(alignment: .top) {
             Rectangle().fill(DesignColor.borderDefault).frame(height: 1)

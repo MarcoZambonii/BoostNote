@@ -408,7 +408,9 @@ struct SidebarView: View {
                     .foregroundStyle(DesignColor.textTertiary)
             }
             .padding(.horizontal, DesignSpace.s5)
-            .padding(.vertical, DesignSpace.s4)
+            // Stessa altezza della barra in fondo alle sheet: affiancate
+            // sullo stesso schermo, due fasce a quote diverse si notano.
+            .frame(height: DesignSize.bottomBar)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

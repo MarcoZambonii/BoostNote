@@ -447,29 +447,46 @@ struct StudyDetailView: View {
     @ViewBuilder
     private func moduleViewer(_ module: StudyModule) -> some View {
         VStack(spacing: 0) {
+            // La testata dice COSA stai guardando, su due livelli: il
+            // modulo come titolo e lo studio da cui viene sotto. Prima
+            // il nome dello studio faceva da etichetta al tasto indietro
+            // e il modulo era una targhetta colorata spinta a destra: si
+            // leggeva "Analisi decision I … Riassunto" e il titolo vero
+            // della schermata non c'era.
             HStack(spacing: DesignSpace.s3) {
                 Button {
                     openModule = nil
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: DesignIcon.md))
-                        Text(study.name)
-                            .font(DesignFont.body)
-                    }
-                    .foregroundStyle(DesignColor.textSecondary)
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: DesignIcon.md))
+                        .foregroundStyle(DesignColor.textSecondary)
+                        .frame(width: DesignSize.touchMin, height: DesignSize.touchMin)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Torna a \(study.name)")
+
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        if let kind = module.kind {
+                            Image(systemName: kind.systemImage)
+                                .font(.system(size: DesignIcon.sm))
+                                .foregroundStyle(kind.color)
+                        }
+                        Text(module.kind?.label ?? "Modulo")
+                            .font(DesignFont.sectionTitle)
+                            .foregroundStyle(DesignColor.textPrimary)
+                    }
+                    Text(study.name)
+                        .font(DesignFont.caption)
+                        .foregroundStyle(DesignColor.textTertiary)
+                        .lineLimit(1)
+                }
 
                 Spacer()
-                if let kind = module.kind {
-                    Label(kind.label, systemImage: kind.systemImage)
-                        .font(DesignFont.cardTitle)
-                        .foregroundStyle(kind.color)
-                }
             }
-            .padding(.horizontal, DesignSpace.s6)
-            .frame(height: 56)
+            .padding(.horizontal, DesignSpace.s4)
+            .padding(.vertical, DesignSpace.s2)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
             }

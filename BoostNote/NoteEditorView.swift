@@ -74,8 +74,6 @@ struct NoteEditorView: View {
     @State private var inkWidths: [PenTool: CGFloat] = [:]
     // Penna a pressione o a spessore costante, per strumento.
     @State private var pressureEnabled: [PenTool: Bool] = [:]
-    @AppStorage("tool.lassoShape") private var storedLassoShape = LassoShape.freeform.rawValue
-    private var lassoShape: LassoShape { LassoShape(rawValue: storedLassoShape) ?? .freeform }
     @State private var eraserType: PKEraserTool.EraserType = .bitmap
     @State private var eraserWidth: CGFloat = 30
 
@@ -165,17 +163,26 @@ struct NoteEditorView: View {
     // scorrimento continuo del foglio — non pagine reali separate.
     private var pageHeight: CGFloat { note.pageSize.height }
 
-    // Colore/spessore dello strumento a inchiostro attualmente attivo.
+    // La penna salvata attualmente in mano, se se n'è presa una. È uno
+    // STRUMENTO A SÉ: finché è attiva detta lei colore, spessore e
+    // pressione, e la penna "di base" resta esattamente com'era. Prima
+    // sceglierne una sovrascriveva la configurazione della penna, cioè
+    // per usare una penna salvata si perdeva la propria.
+    @State private var activePinnedPen: PinnedPen?
+
     private var activeColor: Color {
-        inkColors[selectedTool] ?? selectedTool.defaultColor
+        if let pen = activePinnedPen, pen.tool == selectedTool { return pen.color }
+        return inkColors[selectedTool] ?? selectedTool.defaultColor
     }
 
     private var activeInkWidth: CGFloat {
-        inkWidths[selectedTool] ?? selectedTool.defaultWidth
+        if let pen = activePinnedPen, pen.tool == selectedTool { return CGFloat(pen.width) }
+        return inkWidths[selectedTool] ?? selectedTool.defaultWidth
     }
 
     private var activePressure: Bool {
-        pressureEnabled[selectedTool] ?? true
+        if let pen = activePinnedPen, pen.tool == selectedTool { return pen.pressure }
+        return pressureEnabled[selectedTool] ?? true
     }
 
     // Strumenti aperti su QUESTA nota.
@@ -802,7 +809,6 @@ struct NoteEditorView: View {
                         color: activeColor,
                         inkWidth: activeInkWidth,
                         pressureSensitiveInk: activePressure,
-                        lassoShape: lassoShape,
                         eraserType: eraserType,
                         eraserWidth: eraserWidth,
                         template: note.template,
@@ -876,10 +882,7 @@ struct NoteEditorView: View {
             inkColors: $inkColors,
             inkWidths: $inkWidths,
             pressureEnabled: $pressureEnabled,
-            lassoShape: Binding(
-                get: { lassoShape },
-                set: { storedLassoShape = $0.rawValue }
-            ),
+            activePinnedPen: $activePinnedPen,
             eraserType: $eraserType,
             eraserWidth: $eraserWidth,
             magicAction: $magicAction,

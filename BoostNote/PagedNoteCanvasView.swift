@@ -757,27 +757,6 @@ final class NotePageView: UIView {
 // reciproca è già dentro la geometria, e all'incollaggio basta traslare
 // il gruppo. Vivono quanto la sessione e valgono fra pagine e fra note,
 // che è il caso d'uso vero (ricopiare uno schema da una pagina all'altra).
-// Come si recinta col lasso: a mano libera o con un rettangolo.
-enum LassoShape: String, CaseIterable, Identifiable {
-    case freeform, rectangle
-
-    var id: Self { self }
-
-    var label: String {
-        switch self {
-        case .freeform: "Forma libera"
-        case .rectangle: "Incorniciato"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .freeform: "lasso"
-        case .rectangle: "rectangle.dashed"
-        }
-    }
-}
-
 enum InkClipboard {
     private(set) static var strokes: [PKStroke] = []
     static var isEmpty: Bool { strokes.isEmpty }
@@ -787,17 +766,35 @@ enum InkClipboard {
     }
 }
 
-extension LiveInkCaptureOverlay {
-    // I quattro angoli in ordine: il recinto resta una lista di punti,
-    // così disegno e prova di appartenenza restano gli stessi del lasso
-    // a mano libera.
-    static func rectanglePerimeter(from origin: CGPoint, to corner: CGPoint) -> [CGPoint] {
-        [
-            origin,
-            CGPoint(x: corner.x, y: origin.y),
-            corner,
-            CGPoint(x: origin.x, y: corner.y)
-        ]
+
+// Le voci del menu di sistema. Sono UIAction vere dentro un UIMenu
+// vero: il sistema le disegna, le anima e le impagina da sé.
+extension LiveInkCaptureOverlay: UIEditMenuInteractionDelegate {
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        menuFor configuration: UIEditMenuConfiguration,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        var actions: [UIMenuElement] = []
+        if hasSelection {
+            actions.append(UIAction(title: "Taglia") { [weak self] _ in self?.cutSelection() })
+            actions.append(UIAction(title: "Copia") { [weak self] _ in self?.copySelection() })
+            actions.append(UIAction(title: "Duplica") { [weak self] _ in self?.duplicateSelection() })
+            actions.append(UIAction(title: "Elimina", attributes: .destructive) { [weak self] _ in
+                self?.deleteSelection()
+            })
+        } else if pendingPastePoint != nil, !InkClipboard.isEmpty {
+            actions.append(UIAction(title: "Incolla") { [weak self] _ in self?.performPendingPaste() })
+        }
+        guard !actions.isEmpty else { return nil }
+        return UIMenu(children: actions)
+    }
+
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        targetRectFor configuration: UIEditMenuConfiguration
+    ) -> CGRect {
+        CGRect(origin: editMenuSourcePoint, size: .zero)
     }
 }
 
@@ -825,10 +822,6 @@ final class LiveInkCaptureOverlay: UIView {
     }
     var mode: Mode = .draw
 
-    // Come si recinta: a mano libera oppure trascinando un rettangolo.
-    // Il rettangolo è comodo su blocchi di testo scritto in righe, dove
-    // il recinto a mano libera è solo più lavoro per lo stesso risultato.
-    var lassoShape: LassoShape = .freeform
 
     // Configurazione dello strumento corrente, impostata da applyToolState.
     var inkColor: UIColor = .black
@@ -890,57 +883,25 @@ final class LiveInkCaptureOverlay: UIView {
     private var pendingPastePage: NotePageView?
     private var pendingPastePoint: CGPoint?
 
-    private lazy var pasteBubble: UIButton = {
-        let button = UIButton(type: .system)
-        button.setTitle("Incolla", for: .normal)
-        button.titleLabel?.font = .systemFont(ofSize: 15, weight: .regular)
-        button.setTitleColor(.label, for: .normal)
-        button.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.98)
-        button.layer.cornerRadius = 10
-        button.layer.borderWidth = 1
-        button.layer.borderColor = UIColor.separator.cgColor
-        button.layer.shadowColor = UIColor.black.cgColor
-        button.layer.shadowOpacity = 0.16
-        button.layer.shadowRadius = 12
-        button.layer.shadowOffset = CGSize(width: 0, height: 4)
-        button.isHidden = true
-        button.addTarget(self, action: #selector(performPendingPaste), for: .touchUpInside)
-        addSubview(button)
-        return button
-    }()
-
     @objc private func handleFingerTap(_ recognizer: UITapGestureRecognizer) {
-        guard recognizer.state == .ended else { return }
-        // Bolla già aperta: il tocco fuori la chiude, senza incollare.
-        guard pasteBubble.isHidden else { hidePasteBubble(); return }
-        guard !InkClipboard.isEmpty, let container else { return }
+        guard recognizer.state == .ended, let container else { return }
+        // Un tocco fuori da una selezione la depone, e basta.
+        if selectionPage != nil {
+            clearLassoSelection()
+            return
+        }
+        guard !InkClipboard.isEmpty else { return }
         let point = recognizer.location(in: container.contentHost)
         guard let page = container.pageViews.first(where: { $0.frame.contains(point) }) else { return }
         pendingPastePage = page
         pendingPastePoint = recognizer.location(in: page)
-        showPasteBubble(at: point)
-    }
-
-    private func showPasteBubble(at point: CGPoint) {
-        let size = CGSize(width: 96, height: 40)
-        pasteBubble.frame = CGRect(
-            x: min(max(0, point.x - size.width / 2), bounds.width - size.width),
-            y: max(0, point.y - size.height - 12),
-            width: size.width, height: size.height
-        )
-        pasteBubble.isHidden = false
-        bringSubviewToFront(pasteBubble)
-    }
-
-    func hidePasteBubble() {
-        pasteBubble.isHidden = true
-        pendingPastePage = nil
-        pendingPastePoint = nil
+        presentEditMenu(at: recognizer.location(in: self))
     }
 
     @objc private func performPendingPaste() {
         guard let page = pendingPastePage, let point = pendingPastePoint else { return }
-        hidePasteBubble()
+        pendingPastePage = nil
+        pendingPastePoint = nil
         pasteClipboard(on: page, at: point)
     }
 
@@ -1252,64 +1213,28 @@ final class LiveInkCaptureOverlay: UIView {
         return layer
     }()
 
-    // Le azioni sulla selezione, in una barretta sopra il recinto.
-    // A PAROLE, non a simboli: è il menu di sistema di iPadOS (Taglia,
-    // Copia, Incolla…) e ci si aspetta di leggerlo, non di decifrare
-    // forbici e quadratini. L'ordine va dal meno al più distruttivo, e
-    // Elimina resta l'unico rosso.
-    private func makeChip(_ title: String, tint: UIColor, action: Selector) -> UIButton {
-        let button = UIButton(type: .system)
-        button.setTitle(title, for: .normal)
-        button.titleLabel?.font = .systemFont(ofSize: 15, weight: .regular)
-        button.setTitleColor(tint, for: .normal)
-        button.addTarget(self, action: action, for: .touchUpInside)
-        return button
-    }
-
-    private lazy var duplicateChip = makeChip("Duplica", tint: .label, action: #selector(duplicateSelection))
-    private lazy var cutChip = makeChip("Taglia", tint: .label, action: #selector(cutSelection))
-    private lazy var copyChip = makeChip("Copia", tint: .label, action: #selector(copySelection))
-    private lazy var deleteChip = makeChip("Elimina", tint: .systemRed, action: #selector(deleteSelection))
-
-    private static let chipHeight: CGFloat = 44
-    private static let chipPadding: CGFloat = 16
-
-    private lazy var selectionBar: UIView = {
-        let bar = UIView()
-        bar.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.98)
-        bar.layer.cornerRadius = 10
-        bar.layer.borderWidth = 1
-        bar.layer.borderColor = UIColor.separator.cgColor
-        bar.layer.shadowColor = UIColor.black.cgColor
-        bar.layer.shadowOpacity = 0.16
-        bar.layer.shadowRadius = 12
-        bar.layer.shadowOffset = CGSize(width: 0, height: 4)
-        bar.isHidden = true
-        addSubview(bar)
-        return bar
+    // IL MENU È QUELLO DI SISTEMA (UIEditMenuInteraction): stessa
+    // grafica, stesse animazioni e stessa posizione di Taglia/Copia/
+    // Incolla in qualunque altra app. Una barretta disegnata a mano ci
+    // somigliava e basta — e non è una somiglianza che valga la pena
+    // mantenere a mano.
+    private lazy var editMenu: UIEditMenuInteraction = {
+        let interaction = UIEditMenuInteraction(delegate: self)
+        addInteraction(interaction)
+        return interaction
     }()
 
-    // Le voci si dispongono sulla larghezza del loro testo, con un filo
-    // di separatore in mezzo come nel menu di sistema.
-    private func layoutSelectionBar() {
-        let chips = [duplicateChip, cutChip, copyChip, deleteChip]
-        selectionBar.subviews.forEach { $0.removeFromSuperview() }
-        var x: CGFloat = 0
-        for (index, chip) in chips.enumerated() {
-            let width = (chip.title(for: .normal) as NSString? ?? "")
-                .size(withAttributes: [.font: chip.titleLabel?.font ?? UIFont.systemFont(ofSize: 15)])
-                .width + Self.chipPadding * 2
-            chip.frame = CGRect(x: x, y: 0, width: width, height: Self.chipHeight)
-            selectionBar.addSubview(chip)
-            x += width
-            if index < chips.count - 1 {
-                let separator = UIView(frame: CGRect(x: x, y: 10, width: 1, height: Self.chipHeight - 20))
-                separator.backgroundColor = .separator
-                selectionBar.addSubview(separator)
-                x += 1
-            }
-        }
-        selectionBar.frame = CGRect(x: 0, y: 0, width: x, height: Self.chipHeight)
+    // Dove appoggiare il menu: sopra la selezione, o il punto toccato.
+    private var editMenuSourcePoint: CGPoint = .zero
+
+    func presentEditMenu(at point: CGPoint) {
+        editMenuSourcePoint = point
+        let configuration = UIEditMenuConfiguration(identifier: nil, sourcePoint: point)
+        editMenu.presentEditMenu(with: configuration)
+    }
+
+    func dismissEditMenu() {
+        editMenu.dismissMenu()
     }
 
     private var selectionBounds: CGRect {
@@ -1321,7 +1246,9 @@ final class LiveInkCaptureOverlay: UIView {
     }
 
     func clearLassoSelection() {
-        hidePasteBubble()
+        dismissEditMenu()
+        pendingPastePage = nil
+        pendingPastePoint = nil
         lassoPage = nil
         lassoPoints = []
         selectionPage = nil
@@ -1330,7 +1257,6 @@ final class LiveInkCaptureOverlay: UIView {
         isMovingSelection = false
         lassoLayer.path = nil
         selectionLayer.path = nil
-        selectionBar.isHidden = true
     }
 
     private func lassoBegan(_ touch: UITouch, on page: NotePageView) {
@@ -1368,16 +1294,7 @@ final class LiveInkCaptureOverlay: UIView {
             page.setStrokes(preview, invalidating: oldBounds.union(selectionBounds).insetBy(dx: -40, dy: -40))
             updateSelectionChrome()
         } else if let page = lassoPage {
-            let point = touch.location(in: page)
-            if lassoShape == .rectangle {
-                // Contano solo origine e punto corrente: il perimetro si
-                // ricava da quelli, così il recinto resta un rettangolo
-                // anche se la mano fa un giro largo.
-                let origin = lassoPoints.first ?? point
-                lassoPoints = Self.rectanglePerimeter(from: origin, to: point)
-            } else {
-                lassoPoints.append(point)
-            }
+            lassoPoints.append(touch.location(in: page))
             let path = CGMutablePath()
             guard let first = lassoPoints.first else { return }
             path.move(to: CGPoint(x: first.x + page.frame.minX, y: first.y + page.frame.minY))
@@ -1427,7 +1344,7 @@ final class LiveInkCaptureOverlay: UIView {
             // tocco col dito, così il gesto ha un solo significato.
             pendingPastePage = page
             pendingPastePoint = point
-            showPasteBubble(at: CGPoint(x: point.x + page.frame.minX, y: point.y + page.frame.minY))
+            presentEditMenu(at: CGPoint(x: point.x + page.frame.minX, y: point.y + page.frame.minY))
             return
         }
         guard let page = lassoPage, lassoPoints.count >= 3 else {
@@ -1482,21 +1399,13 @@ final class LiveInkCaptureOverlay: UIView {
             height: bounds.height
         ).insetBy(dx: -10, dy: -10)
         selectionLayer.path = UIBezierPath(roundedRect: overlayRect, cornerRadius: DesignRadius.md).cgPath
-        layoutSelectionBar()
-        selectionBar.isHidden = false
-        // Sopra la selezione, allineata a destra. Se lassù non ci sta
-        // (selezione a filo del bordo alto), scende sotto invece di
-        // finire fuori schermo.
-        let width = selectionBar.frame.width
-        let height = selectionBar.frame.height
-        let above = overlayRect.minY - height - 6
-        selectionBar.frame = CGRect(
-            x: max(0, overlayRect.maxX - width),
-            y: above >= 0 ? above : overlayRect.maxY + 6,
-            width: width, height: height
-        )
-        bringSubviewToFront(selectionBar)
+        // Il menu si appoggia in cima alla selezione: da lì il sistema
+        // decide da solo se aprirlo sopra o sotto.
+        presentEditMenu(at: CGPoint(x: overlayRect.midX, y: overlayRect.minY))
     }
+
+    // C'è una selezione viva su cui il menu può agire.
+    var hasSelection: Bool { selectionPage != nil && !selectedIndices.isEmpty }
 
     // I tratti selezionati, nell'ordine in cui stanno sulla pagina.
     private var selectedStrokes: [PKStroke] {
@@ -2217,8 +2126,6 @@ struct PagedNoteCanvasView: UIViewRepresentable {
     // Penna a pressione o a spessore costante: scelta dell'utente dalla
     // barra, vale sia per il tratto definitivo sia per l'anteprima.
     var pressureSensitiveInk: Bool = true
-    // Forma del recinto del lasso, scelta dalla barra strumenti.
-    var lassoShape: LassoShape = .freeform
     var eraserType: PKEraserTool.EraserType
     var eraserWidth: CGFloat
     var template: NoteTemplate
@@ -2384,7 +2291,6 @@ struct PagedNoteCanvasView: UIViewRepresentable {
                     )
                 case .lasso:
                     container.liveInkOverlay.mode = .lasso
-                    container.liveInkOverlay.lassoShape = parent.lassoShape
                 default:
                     container.liveInkOverlay.mode = .draw
                     let base = UIColor(parent.color)
