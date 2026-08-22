@@ -90,7 +90,7 @@ struct TodoPanelContent: View {
                                 .foregroundStyle(item.isDone ? DesignColor.textTertiary : DesignColor.textPrimary)
                             Spacer(minLength: 0)
                             Button { remove(item) } label: {
-                                Image(systemName: "xmark.circle.fill")
+                                Image(systemName: "xmark")
                                     .font(.system(size: DesignIcon.md))
                                     .foregroundStyle(DesignColor.textTertiary)
                             }
@@ -106,7 +106,7 @@ struct TodoPanelContent: View {
                     .textFieldStyle(.plain)
                     .onSubmit(add)
                 Button(action: add) {
-                    Image(systemName: "plus.circle.fill")
+                    Image(systemName: "plus")
                         .foregroundStyle(DesignColor.brandPrimary)
                 }
                 .disabled(newText.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -314,7 +314,7 @@ struct WolframPanelContent: View {
             WolframExample(query: "fourier series of x^2", label: "Serie di Fourier"),
             WolframExample(query: "z transform n^2", label: "Trasformata Zeta")
         ]),
-        WolframCapability(title: "Probabilità e statistica", icon: "chart.bar.xaxis", examples: [
+        WolframCapability(title: "Probabilità e statistica", icon: "chart.bar", examples: [
             WolframExample(query: "mean {2,4,4,4,5,5,7,9}", label: "Media, mediana, moda"),
             WolframExample(query: "standard deviation {2,4,4,4,5,5,7,9}", label: "Deviazione standard e varianza"),
             WolframExample(query: "linear fit {1,2},{2,4.1},{3,6.2}", label: "Regressione lineare"),

@@ -184,7 +184,7 @@ struct PenToolbarView: View {
     // barra, che si aggancia magneticamente al bordo più vicino al rilascio.
     @ViewBuilder
     private var dragHandle: some View {
-        Image(systemName: "circle.grid.3x3.fill")
+        Image(systemName: "line.3.horizontal")
             .font(.system(size: DesignIcon.md))
             .foregroundStyle(DesignColor.textTertiary)
             .frame(width: 34, height: 34)
@@ -221,11 +221,11 @@ struct PenToolbarView: View {
                         .controlSize(.mini)
                         .tint(magicAction != nil ? magicAction!.color : .white)
                 } else {
-                    Image(systemName: magicAction?.systemImage ?? "wand.and.stars")
+                    Image(systemName: magicAction?.systemImage ?? "sparkles")
                         .font(.system(size: DesignIcon.md))
                 }
                 if axis == .horizontal {
-                    Text(isMagicProcessing ? "Elaborazione…" : (magicAction?.label ?? "Magica"))
+                    Text(isMagicProcessing ? "Genero…" : (magicAction?.label ?? "Magica"))
                         .font(DesignFont.action)
                 }
             }

@@ -395,7 +395,7 @@ struct ResearchContentView: View {
                     model.results = []
                     model.errorMessage = nil
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(systemName: "xmark")
                         .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textTertiary)
                 }
@@ -632,7 +632,7 @@ private struct PaperRow: View {
                         .buttonStyle(PaperActionStyle())
                     }
                     Button(action: onImport) {
-                        Label("Aggiungi a nota", systemImage: "plus.circle")
+                        Label("Aggiungi a nota", systemImage: "plus")
                     }
                     .buttonStyle(PaperActionStyle())
                     .disabled(!canImport)

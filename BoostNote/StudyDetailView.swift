@@ -84,7 +84,7 @@ struct StudyDetailView: View {
                         Label("Elimina studio", systemImage: "trash")
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Image(systemName: "ellipsis")
                         .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                 }
@@ -567,7 +567,7 @@ struct CitationDisclosure: View {
                     withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
                 } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: citation.verified ? "checkmark.seal.fill" : (meaning == .inspiration ? "wand.and.stars" : "questionmark.circle"))
+                        Image(systemName: citation.verified ? "checkmark.seal.fill" : (meaning == .inspiration ? "sparkles" : "questionmark.circle"))
                             .font(.system(size: DesignIcon.sm))
                         Text(label)
                             .font(DesignFont.caption)

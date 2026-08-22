@@ -53,7 +53,7 @@ struct FolderContentsView: View {
                     quickActionCard(title: "Nuova sottocartella", subtitle: "Organizza", icon: "folder.badge.plus", color: DesignColor.success) {
                         showingNewFolderSheet = true
                     }
-                    quickActionCard(title: "Importa PDF", subtitle: "In \(folder.name)", icon: "doc.badge.plus", color: DesignColor.toolWolfram) {
+                    quickActionCard(title: "Aggiungi PDF", subtitle: "In \(folder.name)", icon: "doc.badge.plus", color: DesignColor.toolWolfram) {
                         showingPDFImporter = true
                     }
                 }

@@ -570,7 +570,7 @@ struct NoteEditorView: View {
                         if isCollapsed { collapsedTools.remove(tool.rawValue) } else { collapsedTools.insert(tool.rawValue) }
                     }
                 }
-                cardButton("xmark", label: "Rimuovi \(tool.label)") {
+                cardButton("xmark", label: "Togli \(tool.label)") {
                     withAnimation { closeSidePanel(tool) }
                 }
             }
@@ -711,7 +711,7 @@ struct NoteEditorView: View {
                         self.documentPreviewData = nil
                         documentPreviewName = ""
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
+                        Image(systemName: "xmark")
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                 }
@@ -1028,10 +1028,10 @@ struct NoteEditorView: View {
                 Button {
                     showingSettings = true
                 } label: {
-                    Label("Impostazioni foglio", systemImage: "slider.horizontal.3")
+                    Label("Impostazioni foglio", systemImage: "gearshape")
                 }
             } label: {
-                Image(systemName: "slider.horizontal.3")
+                Image(systemName: "gearshape")
                     .frame(width: 34, height: 34)
                     .contentShape(Rectangle())
             }

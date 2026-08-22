@@ -200,7 +200,7 @@ enum StudySourceKind: String, Codable {
         case .note: "note.text"
         case .webeep: "building.columns.fill"
         case .file: "doc.richtext"
-        case .vault: "archivebox.fill"
+        case .vault: "archivebox"
         }
     }
 }

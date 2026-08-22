@@ -178,7 +178,7 @@ struct HomeView: View {
                     Label("Da WeBeep", systemImage: "graduationcap")
                 }
             } label: {
-                headerActionLabel(title: "Importa PDF", icon: "doc.badge.plus", tint: nil)
+                headerActionLabel(title: "Aggiungi PDF", icon: "doc.badge.plus", tint: nil)
             }
             .buttonStyle(.plain)
         }

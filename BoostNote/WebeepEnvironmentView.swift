@@ -122,7 +122,7 @@ struct WebeepEnvironmentView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: DesignIcon.md))
-                            Text("Indietro")
+                            Text("File")
                                 .font(DesignFont.cardTitle)
                         }
                         .foregroundStyle(DesignColor.textPrimary)
@@ -385,7 +385,7 @@ struct WebeepEnvironmentView: View {
                 pendingFile = file
                 showingImportChoice = true
             } label: {
-                Image(systemName: "plus.circle")
+                Image(systemName: "plus")
                     .foregroundStyle(isPDF(file) || isImage(file) ? DesignColor.textTertiary : DesignColor.textTertiary.opacity(0.4))
             }
             .buttonStyle(.plain)

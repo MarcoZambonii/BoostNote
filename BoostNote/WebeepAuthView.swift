@@ -36,7 +36,7 @@ final class WebeepAuthViewController: UIViewController, WKNavigationDelegate {
         view.addSubview(webView)
 
         let closeButton = UIButton(type: .system)
-        closeButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
         closeButton.tintColor = .secondaryLabel
         closeButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
         closeButton.frame = CGRect(x: 16, y: 50, width: 32, height: 32)

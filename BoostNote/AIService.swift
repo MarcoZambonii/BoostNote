@@ -318,8 +318,8 @@ enum AIService {
 
     static func saveClaudeKey(_ key: String) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        // La copia legacy in chiaro va rimossa in ogni caso: altrimenti
-        // dopo un "Rimuovi" la migrazione la resusciterebbe.
+        // La copia legacy in chiaro va tolta in ogni caso: altrimenti
+        // dopo un «Elimina» la migrazione la resusciterebbe.
         UserDefaults.standard.removeObject(forKey: claudeLegacyDefaultsKey)
         if trimmed.isEmpty {
             KeychainStore.remove(claudeKeychainKey)
@@ -349,8 +349,8 @@ enum AIService {
 
     static func saveWolframAppID(_ key: String) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        // La copia legacy va rimossa in ogni caso: altrimenti dopo un
-        // "Rimuovi" la migrazione la resusciterebbe.
+        // La copia legacy va tolta in ogni caso: altrimenti dopo un
+        // «Elimina» la migrazione la resusciterebbe.
         UserDefaults.standard.removeObject(forKey: wolframLegacyDefaultsKey)
         if trimmed.isEmpty {
             KeychainStore.remove(wolframKeychainKey)

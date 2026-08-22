@@ -128,7 +128,7 @@ struct StudioTrustSheet: View {
     // ciò che rende credibile tutto il resto della schermata.
     private var limits: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s2) {
-            Label("Cosa non possiamo garantire", systemImage: "exclamationmark.triangle.fill")
+            Label("Cosa non possiamo garantire", systemImage: "exclamationmark.triangle")
                 .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.attention)
             Text("Questi controlli riducono molto gli errori, ma non li eliminano. Un modello può leggere male una formula, attribuire un enunciato alla sezione sbagliata o produrre una soluzione che sembra corretta e non lo è. Prima di un esame, considera i contenuti generati un aiuto al ripasso, non una fonte da citare: la fonte restano i tuoi materiali, che sono sempre a un tocco di distanza dalla citazione.")

@@ -362,7 +362,7 @@ struct ProfileView: View {
                     Label("Connesso come \(webeepSiteInfo.fullname)", systemImage: "checkmark.circle.fill")
                         .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.success)
-                    Text("Sfoglia corsi e file dalla scheda WeBeep nella barra laterale.")
+                    Text("Corsi e file si aprono dalla scheda WeBeep nella barra laterale.")
                         .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                     BoostButton("Disconnetti", tone: .destructive) {
@@ -436,7 +436,7 @@ struct ProfileView: View {
                     // La scelta di quale modello usare (quante chiamate al
                     // giorno, non "quanto è bravo") vive in Sviluppo ›
                     // Lettura dei materiali: qui basta la chiave.
-                    Label("Quale modello Gemini usare per lettura e generazione si sceglie in Sviluppo › Lettura dei materiali.", systemImage: "slider.horizontal.3")
+                    Label("Quale modello Gemini usare per lettura e generazione si sceglie in Sviluppo › Lettura dei materiali.", systemImage: "gearshape")
                         .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
 
@@ -483,7 +483,7 @@ struct ProfileView: View {
     }
 
     // Editor di una credenziale che non la lascia mai a schermo: da
-    // salvata mostra solo "Chiave salvata" con Sostituisci/Rimuovi, e il
+    // salvata mostra solo "Chiave salvata" con Sostituisci/Elimina, e il
     // campo (vuoto) compare solo mentre si sta inserendo. Il valore
     // salvato non viene MAI riletto nel campo.
     @ViewBuilder
@@ -627,7 +627,7 @@ private struct MaterialReadingPage: View {
                 modelTierPicker(for: .reading, selection: $readingTierRaw)
                 modelTierPicker(for: .generation, selection: $generationTierRaw)
 
-                Label("Se la quota di un modello finisce, l'app passa da sola all'altro.", systemImage: "arrow.triangle.2.circlepath")
+                Label("Se la quota di un modello finisce, l'app passa da sola all'altro.", systemImage: "arrow.clockwise")
                     .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.success)
 

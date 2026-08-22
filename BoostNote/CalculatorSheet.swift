@@ -226,7 +226,7 @@ struct CalculatorContentView: View {
         [
             Key(label: "7", action: "7", role: .digit), Key(label: "8", action: "8", role: .digit),
             Key(label: "9", action: "9", role: .digit),
-            Key(label: "Cancella", action: "#back", role: .control), Key(label: "AC", action: "#clear", role: .control)
+            Key(label: "DEL", action: "#back", role: .control), Key(label: "AC", action: "#clear", role: .control)
         ],
         [
             Key(label: "4", action: "4", role: .digit), Key(label: "5", action: "5", role: .digit),

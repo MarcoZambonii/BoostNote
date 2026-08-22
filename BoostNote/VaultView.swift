@@ -93,7 +93,7 @@ struct VaultView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: DesignSpace.s2) {
-                Image(systemName: "archivebox.fill")
+                Image(systemName: "archivebox")
                     .foregroundStyle(folder.folderColor.color)
                 Text(folder.name)
                     .font(DesignFont.sectionTitle)
@@ -181,7 +181,7 @@ struct VaultView: View {
             Button(role: .destructive) {
                 documentPendingDelete = document
             } label: {
-                Label("Rimuovi dal vault", systemImage: "trash")
+                Label("Elimina dal Vault", systemImage: "trash")
             }
         }
     }

@@ -161,7 +161,7 @@ struct StudioHomeView: View {
 
     private var headerButtons: some View {
         HStack(spacing: DesignSpace.s2) {
-            headerButton(title: "Analisi progressi", icon: "chart.bar.xaxis", tint: DesignColor.insight) {
+            headerButton(title: "Analisi progressi", icon: "chart.bar", tint: DesignColor.insight) {
                 showingProgress = true
             }
             headerButton(title: "Nuovo Vault", icon: "plus", tint: DesignColor.brandPrimary) {
@@ -243,7 +243,7 @@ struct StudioHomeView: View {
                         Button {
                             vaultFolder = folder
                         } label: {
-                            Label("\(folder.vaultDocuments.count) nel Vault", systemImage: "archivebox.fill")
+                            Label("\(folder.vaultDocuments.count) nel Vault", systemImage: "archivebox")
                                 .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.brandPrimary)
                                 .padding(.horizontal, 8)
@@ -539,7 +539,7 @@ struct StudioHomeView: View {
                                     Image(systemName: kind.systemImage)
                                         .font(.system(size: DesignIcon.sm))
                                     if module.status == .failed {
-                                        Image(systemName: "exclamationmark.triangle.fill")
+                                        Image(systemName: "exclamationmark.triangle")
                                             .font(.system(size: DesignIcon.sm))
                                     } else if module.status == .generating {
                                         ProgressView().controlSize(.mini)

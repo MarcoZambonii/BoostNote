@@ -205,7 +205,7 @@ struct StudioCreateFlowView: View {
             showingVaultPicker = true
         } label: {
             HStack(spacing: DesignSpace.s2) {
-                Image(systemName: "archivebox.fill")
+                Image(systemName: "archivebox")
                     .font(.system(size: DesignIcon.md))
                 Text("Scegli dal Vault")
                     .font(DesignFont.cardTitle)
@@ -231,7 +231,7 @@ struct StudioCreateFlowView: View {
             Button {
                 showingPDFImporter = true
             } label: {
-                Label("Carica PDF", systemImage: "doc.badge.plus")
+                Label("Aggiungi PDF", systemImage: "doc.badge.plus")
             }
             Text("Questi file vengono letti ora e consumano quota. Mettendoli invece nel Vault, la lettura si paga una volta sola.")
         } label: {
@@ -443,11 +443,11 @@ struct StudioCreateFlowView: View {
                 sources.removeAll { $0.id == source.id }
                 pdfPayloads.removeValue(forKey: source.id)
             } label: {
-                Image(systemName: "xmark.circle.fill")
+                Image(systemName: "xmark")
                     .foregroundStyle(DesignColor.textTertiary)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Rimuovi \(source.title)")
+            .accessibilityLabel("Togli \(source.title)")
         }
         .padding(.horizontal, DesignSpace.s3 + 2)
         .padding(.vertical, DesignSpace.s3)

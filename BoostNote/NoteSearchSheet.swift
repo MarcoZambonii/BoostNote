@@ -80,7 +80,7 @@ struct NoteSearchSheet: View {
                     query = ""
                     results = []
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(systemName: "xmark")
                         .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textTertiary)
                 }
