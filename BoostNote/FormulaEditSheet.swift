@@ -61,29 +61,15 @@ struct FormulaEditSheet: View {
                             .foregroundStyle(DesignColor.danger)
                     }
 
-                    Button {
+                    BoostButton("Aggiorna la formula sul foglio", tone: .primary,
+                                isLoading: isRendering, fullWidth: true) {
                         Task { await save() }
-                    } label: {
-                        HStack {
-                            if isRendering {
-                                ProgressView().controlSize(.small)
-                            }
-                            Text("Aggiorna la formula sul foglio")
-                        }
-                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.boostFilled)
-                    .tint(DesignColor.toolLatex)
-                    .disabled(isRendering || latex.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(latex.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                    Button {
+                    BoostButton("Copia il codice LaTeX", icon: "doc.on.doc", fullWidth: true) {
                         UIPasteboard.general.string = latex
-                    } label: {
-                        Label("Copia il codice LaTeX", systemImage: "doc.on.doc")
-                            .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.boostOutlined)
-                    .tint(DesignColor.toolLatex)
                 }
                 .padding(DesignSpace.s5)
             }

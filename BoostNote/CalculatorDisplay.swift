@@ -289,13 +289,13 @@ struct MathDisplayView: View {
             .padding(.horizontal, 1)
 
         case .slot:
-            RoundedRectangle(cornerRadius: 2)
+            RoundedRectangle(cornerRadius: DesignRadius.sm)
                 .strokeBorder(DesignColor.textTertiary, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
                 .frame(width: size * 0.62, height: size * 0.62)
                 .padding(.horizontal, 1)
 
         case .caret:
-            RoundedRectangle(cornerRadius: 1)
+            RoundedRectangle(cornerRadius: DesignRadius.sm)
                 .fill(DesignColor.brandPrimary)
                 .frame(width: 2)
                 .frame(minHeight: size)

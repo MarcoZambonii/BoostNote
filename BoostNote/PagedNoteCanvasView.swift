@@ -1324,7 +1324,7 @@ final class LiveInkCaptureOverlay: UIView {
             width: bounds.width,
             height: bounds.height
         ).insetBy(dx: -10, dy: -10)
-        selectionLayer.path = UIBezierPath(roundedRect: overlayRect, cornerRadius: 8).cgPath
+        selectionLayer.path = UIBezierPath(roundedRect: overlayRect, cornerRadius: DesignRadius.md).cgPath
         selectionBar.isHidden = false
         // Sopra la selezione, allineata a destra. Se lassù non ci sta
         // (selezione a filo del bordo alto), scende sotto invece di
@@ -2462,7 +2462,7 @@ struct PagedNoteCanvasView: UIViewRepresentable {
             case .changed:
                 guard let start = circleStartPoint else { return }
                 let rect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y), width: abs(point.x - start.x), height: abs(point.y - start.y))
-                circlePreviewLayer?.path = UIBezierPath(roundedRect: rect, cornerRadius: 12).cgPath
+                circlePreviewLayer?.path = UIBezierPath(roundedRect: rect, cornerRadius: DesignRadius.lg).cgPath
 
             case .ended, .cancelled:
                 circlePreviewLayer?.removeFromSuperlayer()

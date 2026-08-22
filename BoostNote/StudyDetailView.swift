@@ -1122,9 +1122,7 @@ private struct ExercisesModuleView: View {
             Text("\(sessionCorrect) giusti su \(sessionTotal) — i tentativi sono registrati in Analisi dei progressi.")
                 .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textSecondary)
-            Button("Ricomincia") { restartSession() }
-                .buttonStyle(.boostFilled)
-                .tint(DesignColor.brandPrimary)
+            BoostButton("Ricomincia", tone: .primary) { restartSession() }
             Spacer()
         }
         .frame(maxWidth: .infinity)

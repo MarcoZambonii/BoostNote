@@ -69,15 +69,10 @@ struct MagicResultSheet: View {
 
                         if editedText.trimmingCharacters(in: .whitespacesAndNewlines) != (result.recognizedText ?? ""),
                            !editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Button {
+                            BoostButton("Riesegui col testo corretto", icon: "arrow.clockwise", fullWidth: true) {
                                 onRetry(editedText.trimmingCharacters(in: .whitespacesAndNewlines))
                                 dismiss()
-                            } label: {
-                                Label("Riesegui col testo corretto", systemImage: "arrow.clockwise")
-                                    .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.boostOutlined)
-                            .tint(result.action.color)
                         }
                     }
 
@@ -140,54 +135,33 @@ struct MagicResultSheet: View {
                             // (re-interrogabile). I widget sul foglio non
                             // esistono più.
                             if result.action == .draw {
-                                Button {
+                                BoostButton("Apri nel pannello Grafici", icon: "sidebar.right", tone: .primary, fullWidth: true) {
                                     onInsert(true)
                                     dismiss()
-                                } label: {
-                                    Label("Apri nel pannello Grafici", systemImage: "sidebar.right")
-                                        .frame(maxWidth: .infinity)
                                 }
-                                .buttonStyle(.boostFilled)
-                                .tint(result.action.color)
                             } else {
-                                Button {
+                                BoostButton(insertLabel, icon: "plus", tone: .primary, fullWidth: true) {
                                     onInsert(false)
                                     dismiss()
-                                } label: {
-                                    Label(insertLabel, systemImage: "plus.circle.fill")
-                                        .frame(maxWidth: .infinity)
                                 }
-                                .buttonStyle(.boostFilled)
-                                .tint(result.action.color)
 
                                 // Il foglio riceve la formula composta:
                                 // chi vuole il sorgente (per Overleaf, per
                                 // un'altra app) se lo porta via da qui.
                                 if result.action == .latex, let resultText = result.resultText {
-                                    Button {
+                                    BoostButton(didCopy ? "Codice LaTeX copiato" : "Copia il codice LaTeX",
+                                                icon: didCopy ? "checkmark.circle.fill" : "doc.on.doc",
+                                                fullWidth: true) {
                                         UIPasteboard.general.string = resultText
                                         withAnimation { didCopy = true }
-                                    } label: {
-                                        Label(
-                                            didCopy ? "Codice LaTeX copiato" : "Copia il codice LaTeX",
-                                            systemImage: didCopy ? "checkmark" : "doc.on.doc"
-                                        )
-                                        .frame(maxWidth: .infinity)
                                     }
-                                    .buttonStyle(.boostOutlined)
-                                    .tint(result.action.color)
                                 }
 
                                 if result.action == .wolfram {
-                                    Button {
+                                    BoostButton("Apri nel pannello", icon: "sidebar.right", fullWidth: true) {
                                         onInsert(true)
                                         dismiss()
-                                    } label: {
-                                        Label("Apri nel pannello", systemImage: "sidebar.right")
-                                            .frame(maxWidth: .infinity)
                                     }
-                                    .buttonStyle(.boostOutlined)
-                                    .tint(result.action.color)
                                 }
                             }
                         }

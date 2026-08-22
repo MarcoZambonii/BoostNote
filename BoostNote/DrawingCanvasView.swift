@@ -870,7 +870,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             case .changed:
                 guard let start = circleStartPoint else { return }
                 let rect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y), width: abs(point.x - start.x), height: abs(point.y - start.y))
-                circlePreviewLayer?.path = UIBezierPath(roundedRect: rect, cornerRadius: 12).cgPath
+                circlePreviewLayer?.path = UIBezierPath(roundedRect: rect, cornerRadius: DesignRadius.lg).cgPath
                 canvasView.growIfNeeded(near: rect.maxY)
 
             case .ended, .cancelled:

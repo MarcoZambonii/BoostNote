@@ -349,14 +349,10 @@ struct StudioHomeView: View {
                     // Vault, dove si vede l'elenco e si aggiorna. Prima
                     // c'erano una ⓘ per sbirciare e un "Aggiorna" a
                     // parte: due mezze porte invece di una intera.
-                    Button {
+                    // Testata di card: l'unico posto dove è ammesso il 38.
+                    BoostButton("Gestisci Vault", icon: "archivebox", size: .compact) {
                         vaultFolder = folder
-                    } label: {
-                        Label("Gestisci Vault", systemImage: "archivebox")
-                            .font(DesignFont.action)
                     }
-                    .buttonStyle(.boostOutlined)
-                    .controlSize(.small)
                 }
                 Menu {
                     Button {

@@ -304,7 +304,7 @@ struct ProfileView: View {
                         .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                     HStack(spacing: DesignSpace.s3) {
-                        toneButton("Scegli cartella", icon: "folder.badge.plus", tone: .filled) {
+                        toneButton("Scegli cartella", icon: "folder.badge.plus", tone: .primary) {
                             archivePickerTarget = .folder
                             showingArchivePicker = true
                         }
@@ -395,12 +395,11 @@ struct ProfileView: View {
                     Text("Sfoglia corsi e file dalla scheda WeBeep nella barra laterale.")
                         .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
-                    Button("Disconnetti") {
+                    BoostButton("Disconnetti", tone: .destructive) {
                         WebeepService.signOut()
                         webeepToken = nil
                         self.webeepSiteInfo = nil
                     }
-                    .buttonStyle(.boostDestructive)
                 } else if isConnectingWebeep {
                     ProgressView("Verifica connessione…")
                 } else if webeepUnreachable, let token = webeepToken {
@@ -410,15 +409,13 @@ struct ProfileView: View {
                     Text("Il collegamento resta attivo: probabilmente è la rete, o WeBeep è giù. Riprova tra poco.")
                         .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
-                    Button("Riprova") {
+                    BoostButton("Riprova", icon: "arrow.clockwise") {
                         Task { await loadWebeepSiteInfo(token: token) }
                     }
-                    .buttonStyle(.boostOutlined)
                 } else {
-                    Button("Accedi con WeBeep") {
+                    BoostButton("Accedi con WeBeep", tone: .primary) {
                         showingWebeepAuth = true
                     }
-                    .buttonStyle(.boostFilled)
                 }
             }
         }
@@ -537,18 +534,16 @@ struct ProfileView: View {
                     .textInputAutocapitalization(.never)
                     .padding(DesignSpace.s3)
                     .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md))
-                Button("Salva") {
+                BoostButton("Salva", tone: .primary) {
                     onSave()
                     draft.wrappedValue = ""
                     isEditing.wrappedValue = false
                 }
-                .buttonStyle(.boostFilled)
                 .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Annulla") {
+                BoostButton("Annulla", tone: .ghost) {
                     draft.wrappedValue = ""
                     isEditing.wrappedValue = false
                 }
-                .buttonStyle(.boostOutlined)
             }
         } else if isSaved {
             HStack(spacing: DesignSpace.s3) {
@@ -556,18 +551,13 @@ struct ProfileView: View {
                     .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.success)
                 Spacer()
-                Button("Sostituisci") { isEditing.wrappedValue = true }
-                    .buttonStyle(.boostOutlined)
-                Button("Rimuovi", action: onRemove)
-                    .buttonStyle(.boostDestructive)
+                BoostButton("Sostituisci") { isEditing.wrappedValue = true }
+                BoostButton("Elimina", tone: .destructive, action: onRemove)
             }
         } else {
-            Button {
+            BoostButton("Aggiungi chiave", icon: "plus", tone: .primary) {
                 isEditing.wrappedValue = true
-            } label: {
-                Label("Aggiungi chiave", systemImage: "plus.circle.fill")
             }
-            .buttonStyle(.boostFilled)
         }
     }
 
@@ -609,18 +599,8 @@ struct ProfileView: View {
         }
     }
 
-    private enum ButtonTone { case filled, outlined, destructive }
-
-    private func toneButton(_ title: String, icon: String? = nil, tone: ButtonTone = .outlined, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let icon {
-                    Image(systemName: icon).font(.system(size: DesignIcon.md))
-                }
-                Text(title)
-            }
-        }
-        .buttonStyle(tone == .filled ? .boostFilled : (tone == .destructive ? .boostDestructive : .boostOutlined))
+    private func toneButton(_ title: String, icon: String? = nil, tone: BoostButton.Tone = .secondary, action: @escaping () -> Void) -> some View {
+        BoostButton(title, icon: icon, tone: tone, action: action)
     }
 
     @ViewBuilder

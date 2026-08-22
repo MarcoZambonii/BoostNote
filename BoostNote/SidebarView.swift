@@ -490,7 +490,7 @@ struct SidebarView: View {
                 // L'unico elemento PIENO della colonna: il quadratino del
                 // colore del corso. Tutto il resto è linea e tipografia,
                 // quindi qui basta poco per identificare la cartella.
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     .fill(folder.folderColor.color)
                     .frame(width: 9, height: 9)
                     .padding(.horizontal, 3)

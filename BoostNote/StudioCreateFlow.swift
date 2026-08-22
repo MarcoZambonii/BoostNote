@@ -990,7 +990,7 @@ private struct StudioWebeepPickerSheet: View {
                             systemImage: "wifi.exclamationmark",
                             description: Text(loadError)
                         )
-                        Button("Riprova") {
+                        BoostButton("Riprova", icon: "arrow.clockwise", tone: .primary) {
                             Task {
                                 if let course = selectedCourse {
                                     await loadSections(course)
@@ -999,7 +999,6 @@ private struct StudioWebeepPickerSheet: View {
                                 }
                             }
                         }
-                        .buttonStyle(.boostFilled)
                         .padding(.bottom, DesignSpace.s6)
                     }
                 } else if let course = selectedCourse {

@@ -282,7 +282,7 @@ struct HomeView: View {
 
     private func folderChip(_ folder: Folder) -> some View {
         HStack(spacing: 5) {
-            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                 .fill(folder.folderColor.color)
                 .frame(width: 9, height: 9)
             Text(folder.name)

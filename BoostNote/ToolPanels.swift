@@ -57,13 +57,9 @@ struct GraphPanelContent: View {
                         .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.danger)
                         .multilineTextAlignment(.center)
-                    Button {
+                    BoostButton("Riprova", icon: "arrow.clockwise") {
                         reloadToken += 1
-                    } label: {
-                        Label("Riprova", systemImage: "arrow.clockwise")
-                            .font(DesignFont.action)
                     }
-                    .buttonStyle(.boostOutlined)
                 }
             }
         }
@@ -123,10 +119,10 @@ struct TodoPanelContent: View {
 
     @ViewBuilder
     private func checkbox(isDone: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
+        RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
             .fill(isDone ? DesignColor.brandPrimary : Color.clear)
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     .stroke(isDone ? Color.clear : DesignColor.borderDefault, lineWidth: 1.5)
             )
             .overlay {

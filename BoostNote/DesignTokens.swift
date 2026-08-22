@@ -163,48 +163,9 @@ extension Color {
 }
 
 
-// Le tre varianti di bottone dell'app, dagli handoff di design: piena,
-// bordata, distruttiva. Esistono per sostituire .borderedProminent e
-// .bordered di sistema, che disegnano una CAPSULA e un raggio loro —
-// accanto ai blocchi da 10/14 sembravano di un'altra app. Regola unica di
-// tutta l'interfaccia: nessuna capsula, raggi solo dai token.
-struct BoostButtonStyle: ButtonStyle {
-    enum Tone { case filled, outlined, destructive }
-    var tone: Tone = .outlined
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(DesignFont.action)
-            .foregroundStyle(ink)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7)
-            .background(face, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                    .strokeBorder(tone == .filled ? .clear : DesignColor.borderDefault, lineWidth: 1)
-            }
-            .opacity(configuration.isPressed ? 0.7 : 1)
-    }
-
-    private var ink: Color {
-        switch tone {
-        case .filled: DesignColor.textOnBrand
-        case .outlined: DesignColor.textPrimary
-        case .destructive: DesignColor.danger
-        }
-    }
-
-    private var face: Color {
-        tone == .filled ? DesignColor.brandPrimary : DesignColor.surfacePage
-    }
-}
-
-extension ButtonStyle where Self == BoostButtonStyle {
-    static var boostFilled: BoostButtonStyle { BoostButtonStyle(tone: .filled) }
-    static var boostOutlined: BoostButtonStyle { BoostButtonStyle(tone: .outlined) }
-    static var boostDestructive: BoostButtonStyle { BoostButtonStyle(tone: .destructive) }
-}
-
+// Il vecchio BoostButtonStyle è stato ASSORBITO da BoostButton
+// (BoostComponents.swift): a ~30 pt di altezza stava sotto il minimo di
+// tocco iPad, e le facce ora le disegna il componente coi token.
 
 // Selettore a segmenti dell'app: fondo `surface-page`, opzione scelta su
 // `brand-primary-subtle` col testo in brand. Sostituisce

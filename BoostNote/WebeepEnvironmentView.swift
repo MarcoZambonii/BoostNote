@@ -52,7 +52,7 @@ struct WebeepEnvironmentView: View {
                             systemImage: "wifi.exclamationmark",
                             description: Text(loadError)
                         )
-                        Button("Riprova") {
+                        BoostButton("Riprova", icon: "arrow.clockwise", tone: .primary) {
                             Task {
                                 if let course = selectedCourse {
                                     await loadSections(course)
@@ -61,7 +61,6 @@ struct WebeepEnvironmentView: View {
                                 }
                             }
                         }
-                        .buttonStyle(.boostFilled)
                         .padding(.bottom, DesignSpace.s6)
                     }
                 } else if let selectedCourse {
@@ -210,8 +209,7 @@ struct WebeepEnvironmentView: View {
                 .foregroundStyle(DesignColor.textTertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
-            Button("Accedi con WeBeep") { showingAuth = true }
-                .buttonStyle(.boostFilled)
+            BoostButton("Accedi con WeBeep", tone: .primary) { showingAuth = true }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

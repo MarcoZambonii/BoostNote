@@ -210,10 +210,10 @@ struct ToolsPickerSheet: View {
 
         case .calculator:
             VStack(spacing: 6) {
-                RoundedRectangle(cornerRadius: 6).fill(DesignColor.surfaceSunken).frame(height: 24)
+                RoundedRectangle(cornerRadius: DesignRadius.sm).fill(DesignColor.surfaceSunken).frame(height: 24)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
                     ForEach(0..<8, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 6).fill(DesignColor.surfaceSunken).frame(height: 18)
+                        RoundedRectangle(cornerRadius: DesignRadius.sm).fill(DesignColor.surfaceSunken).frame(height: 18)
                     }
                 }
             }
@@ -268,8 +268,8 @@ struct ToolsPickerSheet: View {
                 }
                 .padding(8)
                 .frame(width: 60, height: 76)
-                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(DesignColor.borderDefault))
+                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm))
+                .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm).stroke(DesignColor.borderDefault))
             }
         }
     }
