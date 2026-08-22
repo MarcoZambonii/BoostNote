@@ -51,12 +51,9 @@ struct SidebarView: View {
     @Binding var showingStudioProgress: Bool
     var onCreateStudy: () -> Void
     var onOpenProfile: () -> Void
-    // PROVATO E NON FUNZIONA: ancorare qui un .popover con la punta
-    // sulla riga Profilo. Dentro la colonna di una NavigationSplitView il
-    // sistema gli concede solo lo spazio sotto la riga — che è in fondo —
-    // e il pannello esce schiacciato a una striscia alta ottanta punti,
-    // qualunque sia l'arrowEdge. Il Profilo resta un foglio; la resa
-    // nuova (testata con Chiudi, gruppi, blocchi tenui) c'è comunque.
+    // Il Profilo è un POPOVER con la punta sulla riga Profilo (HANDOFF,
+    // passo 4): dentro c'è comunque la testata read di BoostSheet, così
+    // su iPhone — dove il sistema lo adatta a foglio — resta la ✕.
     @Binding var showingProfile: Bool
 
     @Query(filter: #Predicate<Folder> { $0.parent == nil }, sort: \Folder.name)
@@ -418,6 +415,16 @@ struct SidebarView: View {
         .overlay(alignment: .top) {
             Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
         }
+        .popover(isPresented: $showingProfile, arrowEdge: .trailing) {
+            BoostSheet(title: "Profilo", mode: .read, onDismiss: { showingProfile = false }) {
+                ProfileView()
+            }
+            // 560×720 non stanno su un iPhone: lì il sistema lo adatta
+            // a foglio a larghezza piena.
+            .frame(width: DeviceLayout.isPhone ? nil : 560,
+                   height: DeviceLayout.isPhone ? nil : 720)
+            .presentationCompactAdaptation(.sheet)
+        }
     }
 
     private var renameAlertPresented: Binding<Bool> {
@@ -693,8 +700,20 @@ struct FolderEditSheet: View {
         return false
     }
 
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: isNew ? "Nuova cartella" : "Modifica cartella",
+            mode: .commit(verb: isNew ? "Crea" : "Salva", enabled: canSave),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                onSave(name, color, mode)
+                dismiss()
+            }
+        ) {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 VStack(alignment: .leading, spacing: DesignSpace.s2) {
                     HStack(spacing: DesignSpace.s3) {
@@ -738,22 +757,8 @@ struct FolderEditSheet: View {
                 Spacer()
             }
             .padding(DesignSpace.s5)
-            .navigationTitle(isNew ? "Nuova cartella" : "Modifica cartella")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isNew ? "Crea" : "Salva") {
-                        onSave(name, color, mode)
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.height(420)])
     }
 }
 

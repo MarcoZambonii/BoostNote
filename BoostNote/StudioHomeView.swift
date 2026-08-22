@@ -735,8 +735,20 @@ struct StudyFolderEditSheet: View {
         return false
     }
 
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: isNew ? "Nuovo Vault" : "Modifica Vault",
+            mode: .commit(verb: isNew ? "Crea" : "Salva", enabled: canSave),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                onSave(name, color, mode)
+                dismiss()
+            }
+        ) {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 HStack(spacing: DesignSpace.s3) {
                     Image(systemName: "folder.fill")
@@ -773,21 +785,7 @@ struct StudyFolderEditSheet: View {
                 Spacer()
             }
             .padding(DesignSpace.s5)
-            .navigationTitle(isNew ? "Nuovo Vault" : "Modifica Vault")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isNew ? "Crea" : "Salva") {
-                        onSave(name, color, mode)
-                        dismiss()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.height(420)])
     }
 }

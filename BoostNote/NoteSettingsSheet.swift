@@ -15,7 +15,11 @@ struct NoteSettingsSheet: View {
     private let thumbColumns = [GridItem(.adaptive(minimum: 90, maximum: 130), spacing: DesignSpace.s3)]
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Impostazioni foglio",
+            mode: .read,
+            onDismiss: { dismiss() }
+        ) {
             Form {
                     Section("Pagine") {
                         if showingAllPages {
@@ -112,13 +116,6 @@ struct NoteSettingsSheet: View {
             // delle schermate.
             .scrollContentBackground(.hidden)
             .background(DesignColor.surfacePage)
-            .navigationTitle("Impostazioni foglio")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Chiudi") { dismiss() }
-                }
-            }
         }
         .presentationDetents([.medium, .large])
     }

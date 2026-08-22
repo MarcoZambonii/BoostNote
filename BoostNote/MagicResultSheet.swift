@@ -33,7 +33,11 @@ struct MagicResultSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Penna magica",
+            mode: .read,
+            onDismiss: { dismiss() }
+        ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSpace.s4) {
                     Label(result.action.label, systemImage: result.action.systemImage)
@@ -169,13 +173,6 @@ struct MagicResultSheet: View {
                     }
                 }
                 .padding(DesignSpace.s5)
-            }
-            .navigationTitle("Penna magica")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Chiudi") { dismiss() }
-                }
             }
         }
         .presentationDetents([.medium, .large])

@@ -26,7 +26,6 @@ struct WebeepEnvironmentView: View {
     @State private var showingImportChoice = false
     @State private var showingNotePicker = false
     @State private var isImporting = false
-    @State private var importErrorMessage: String?
 
     @State private var quickLookURL: URL?
     @State private var isLoadingPreview = false
@@ -104,11 +103,6 @@ struct WebeepEnvironmentView: View {
                 showingNotePicker = false
                 if let file = pendingFile { Task { await importFile(file, target: .existingNote(note)) } }
             }
-        }
-        .alert("Import non riuscito", isPresented: Binding(get: { importErrorMessage != nil }, set: { if !$0 { importErrorMessage = nil } })) {
-            Button("OK", role: .cancel) { importErrorMessage = nil }
-        } message: {
-            Text(importErrorMessage ?? "")
         }
         .sheet(isPresented: Binding(get: { downloadURL != nil }, set: { if !$0 { downloadURL = nil } })) {
             if let downloadURL {
@@ -443,7 +437,7 @@ struct WebeepEnvironmentView: View {
 
     private func download(_ file: WebeepFile) async {
         guard let token else {
-            importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
+            BoostToastCenter.shared.show("Non sei collegato a WeBeep: riaccedi e riprova.", role: .danger)
             return
         }
         isDownloading = true
@@ -454,7 +448,7 @@ struct WebeepEnvironmentView: View {
         do {
             data = try await WebeepService.downloadFile(file, token: token)
         } catch {
-            importErrorMessage = "\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)"
+            BoostToastCenter.shared.show("\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)", role: .danger)
             return
         }
         let safeName = WebeepService.stripMultilang(file.filename).replacingOccurrences(of: "/", with: "-")
@@ -463,13 +457,13 @@ struct WebeepEnvironmentView: View {
             try data.write(to: tmpURL, options: .atomic)
             downloadURL = tmpURL
         } catch {
-            importErrorMessage = "Non sono riuscito a salvare \"\(file.filename)\"."
+            BoostToastCenter.shared.show("Non sono riuscito a salvare \"\(file.filename)\".", role: .danger)
         }
     }
 
     private func quickLook(_ file: WebeepFile) async {
         guard let token else {
-            importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
+            BoostToastCenter.shared.show("Non sei collegato a WeBeep: riaccedi e riprova.", role: .danger)
             return
         }
         isLoadingPreview = true
@@ -480,7 +474,7 @@ struct WebeepEnvironmentView: View {
         do {
             data = try await WebeepService.downloadFile(file, token: token)
         } catch {
-            importErrorMessage = "\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)"
+            BoostToastCenter.shared.show("\"\(file.filename)\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)", role: .danger)
             return
         }
         let safeName = WebeepService.stripMultilang(file.filename).replacingOccurrences(of: "/", with: "-")
@@ -489,7 +483,7 @@ struct WebeepEnvironmentView: View {
             try data.write(to: tmpURL, options: .atomic)
             quickLookURL = tmpURL
         } catch {
-            importErrorMessage = "Non sono riuscito ad aprire l'anteprima di \"\(file.filename)\"."
+            BoostToastCenter.shared.show("Non sono riuscito ad aprire l'anteprima di \"\(file.filename)\".", role: .danger)
         }
     }
 
@@ -501,7 +495,7 @@ struct WebeepEnvironmentView: View {
     private func importFile(_ file: WebeepFile, target: ImportTarget) async {
         guard !isImporting else { return }
         guard let token else {
-            importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
+            BoostToastCenter.shared.show("Non sei collegato a WeBeep: riaccedi e riprova.", role: .danger)
             return
         }
         isImporting = true
@@ -511,7 +505,7 @@ struct WebeepEnvironmentView: View {
         do {
             data = try await WebeepService.downloadFile(file, token: token)
         } catch {
-            importErrorMessage = "\"\(WebeepService.stripMultilang(file.filename))\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)"
+            BoostToastCenter.shared.show("\"\(WebeepService.stripMultilang(file.filename))\": \((error as? WebeepDownloadError)?.message ?? error.localizedDescription)", role: .danger)
             return
         }
 
@@ -531,7 +525,7 @@ struct WebeepEnvironmentView: View {
         if isPDF(file) {
             guard note.appendPages(fromPDF: data, in: context) else {
                 if case .newNote = target { context.delete(note) }
-                importErrorMessage = "\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF leggibile — probabilmente WeBeep ha restituito una pagina di errore invece del file (token scaduto?). Prova a scaricarlo con la freccia per controllare, o a riaccedere a WeBeep."
+                BoostToastCenter.shared.show("\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF leggibile — probabilmente WeBeep ha restituito una pagina di errore invece del file (token scaduto?). Prova a scaricarlo con la freccia per controllare, o a riaccedere a WeBeep.", role: .danger)
                 return
             }
         } else if isImage(file) {
@@ -541,7 +535,7 @@ struct WebeepEnvironmentView: View {
             note.media.append(media)
         } else {
             if case .newNote = target { context.delete(note) }
-            importErrorMessage = "\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF né un'immagine: per ora puoi solo scaricarlo o vederne l'anteprima, non aggiungerlo direttamente alla nota."
+            BoostToastCenter.shared.show("\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF né un'immagine: per ora puoi solo scaricarlo o vederne l'anteprima, non aggiungerlo direttamente alla nota.", role: .danger)
             return
         }
         note.updatedAt = .now
@@ -555,29 +549,42 @@ private struct WebeepNotePickerSheet: View {
     @Query(sort: \Note.updatedAt, order: .reverse) private var allNotes: [Note]
     var onSelect: (Note) -> Void
 
+    // Il tocco seleziona, «Aggiungi» conferma: stessa meccanica di ogni
+    // sheet commit (§4), invece dell'esecuzione al tocco.
+    @State private var selectedNoteID: UUID?
+
     var body: some View {
-        NavigationStack {
-            List(allNotes) { note in
-                Button {
+        BoostSheet(
+            title: "Scegli una nota",
+            mode: .commit(verb: "Aggiungi", enabled: selectedNoteID != nil),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                if let note = allNotes.first(where: { $0.id == selectedNoteID }) {
                     onSelect(note)
+                }
+            }
+        ) {
+            List(allNotes) { note in
+                let isSelected = selectedNoteID == note.id
+                Button {
+                    selectedNoteID = isSelected ? nil : note.id
                 } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                            .foregroundStyle(.primary)
-                        if let folder = note.folder {
-                            Text(folder.name)
-                                .font(DesignFont.caption)
-                                .foregroundStyle(.secondary)
+                    HStack(spacing: DesignSpace.s3) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(note.title.isEmpty ? "Senza titolo" : note.title)
+                                .foregroundStyle(.primary)
+                            if let folder = note.folder {
+                                Text(folder.name)
+                                    .font(DesignFont.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("Scegli una nota")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-            }
         }
+        .presentationDetents([.medium])
     }
 }

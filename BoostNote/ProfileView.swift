@@ -4,10 +4,6 @@ import PhotosUI
 // Schermata Profilo: dati utente, sincronizzazioni (iCloud/Obsidian),
 // WeBeep/PolimiApp, chiave Wolfram Alpha, About.
 struct ProfileView: View {
-    // Presente quando il Profilo è un popup (iPad): la testata porta il
-    // suo "Chiudi". Su iPhone resta un foglio e ci pensa il sistema.
-    var onClose: (() -> Void)?
-
     @AppStorage("profileName") private var name = ""
     @AppStorage("profileSurname") private var surname = ""
     // SOLO per migrare: la foto stava qui come base64, ma sopra i 4 MB
@@ -63,25 +59,6 @@ struct ProfileView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if onClose != nil {
-                HStack {
-                    Text("Profilo")
-                        .font(DesignFont.sectionTitle)
-                        .foregroundStyle(DesignColor.textPrimary)
-                    Spacer()
-                    Button("Chiudi") { onClose?() }
-                        .font(DesignFont.action)
-                        .foregroundStyle(DesignColor.brandPrimary)
-                        .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 14)
-                .overlay(alignment: .bottom) {
-                    Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
-                }
-            }
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     profileSection
@@ -105,9 +82,8 @@ struct ProfileView: View {
             if let token = webeepToken { await loadWebeepSiteInfo(token: token) }
         }
         .background(DesignColor.surfacePage)
-        // Niente titolo di sistema: il nome della schermata lo dà la
-        // testata qui dentro, insieme al "Chiudi". Con tutti e due si
-        // leggeva "Profilo" due volte, una sopra l'altra.
+        // Niente titolo di sistema: il nome lo dà la testata di
+        // BoostSheet nel popover che ospita questa vista.
         .toolbar(.hidden, for: .navigationBar)
         .fullScreenCover(isPresented: $showingWebeepAuth) {
             WebeepAuthView(

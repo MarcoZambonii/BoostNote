@@ -9,11 +9,16 @@ import SwiftUI
 // corso: si spuntano più file, si cambia corso, si spunta ancora, e si
 // conferma una volta sola. Aggiungere dieci dispense al Vault non deve
 // voler dire aprire e chiudere il foglio dieci volte.
+//
+// Sheet commit (§4): il verbo in alto a destra è l'unica conferma, anche
+// in modalità singola («Scegli»), dove prima il tocco scaricava subito.
+// Il drilldown corso → file è a stato interno, non NavigationStack: la
+// testata resta quella di BoostSheet.
 struct WebeepFilePickerSheet: View {
 
     // Un solo file per volta serve dove il chiamante ne mostra uno solo
-    // (il pannello Documento): lì la spunta non avrebbe senso e il tocco
-    // scarica subito, come prima.
+    // (il pannello Documento): lì la spunta diventa una scelta radio e
+    // il verbo di conferma è «Scegli».
     enum SelectionMode { case single, multiple }
 
     var selectionMode: SelectionMode = .multiple
@@ -25,6 +30,7 @@ struct WebeepFilePickerSheet: View {
     @State private var courses: [WebeepCourse] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var openCourse: WebeepCourse?
 
     // In ordine di spunta: è anche l'ordine in cui i file vengono
     // aggiunti, che su una dispensa divisa in parti conta.
@@ -35,63 +41,86 @@ struct WebeepFilePickerSheet: View {
     private var token: String? { WebeepService.savedToken }
     private var isDownloading: Bool { downloaded != nil }
 
+    private var confirmVerb: String {
+        switch selectionMode {
+        case .single: "Scegli"
+        case .multiple: selected.isEmpty ? "Aggiungi" : "Aggiungi (\(selected.count))"
+        }
+    }
+
     var body: some View {
-        NavigationStack {
-            Group {
-                if token == nil {
-                    ContentUnavailableView(
-                        "WeBeep non collegato",
-                        systemImage: "link.badge.plus",
-                        description: Text("Collega WeBeep dal Profilo, poi torna qui.")
-                    )
-                } else if isLoading {
-                    ProgressView("Carico i corsi…")
-                } else if let errorMessage {
-                    ContentUnavailableView(
-                        "Errore",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(errorMessage)
-                    )
-                } else {
-                    List(courses) { course in
-                        NavigationLink {
-                            WebeepCourseFilesView(
-                                course: course,
-                                selectionMode: selectionMode,
-                                selected: $selected,
-                                onPickedSingle: pickSingle
-                            )
-                        } label: {
-                            courseRow(course)
-                        }
+        BoostSheet(
+            title: "PDF da WeBeep",
+            mode: .commit(verb: confirmVerb, enabled: !selected.isEmpty && !isDownloading),
+            onDismiss: {
+                guard !isDownloading else { return }
+                dismiss()
+            },
+            onConfirm: { Task { await addSelected() } }
+        ) {
+            VStack(spacing: 0) {
+                Group {
+                    if token == nil {
+                        BoostState(
+                            kind: .empty,
+                            icon: "link.badge.plus",
+                            title: "WeBeep non collegato",
+                            message: "Collega WeBeep dal Profilo, poi torna qui."
+                        )
+                    } else if isLoading {
+                        BoostState(kind: .loading, title: "Carico i corsi…")
+                    } else if let errorMessage {
+                        BoostState(
+                            kind: .error,
+                            icon: "exclamationmark.triangle",
+                            title: "Errore",
+                            message: errorMessage
+                        )
+                    } else if let openCourse {
+                        WebeepCourseFilesView(
+                            course: openCourse,
+                            selectionMode: selectionMode,
+                            selected: $selected,
+                            onBack: { self.openCourse = nil }
+                        )
+                    } else {
+                        coursesList
                     }
-                    .listStyle(.insetGrouped)
-                    .scrollContentBackground(.hidden)
-                    .background(DesignColor.surfacePage)
                 }
-            }
-            .navigationTitle("PDF da WeBeep")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                        .disabled(isDownloading)
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                statusBar
             }
         }
-        // Fuori dallo NavigationStack: così la barra di conferma resta
-        // visibile anche dentro un corso, e si può spuntare in giro
-        // senza tornare indietro per confermare.
-        .safeAreaInset(edge: .bottom) { confirmBar }
         .presentationDetents([.large])
         .interactiveDismissDisabled(isDownloading)
         .task { await loadCourses() }
+    }
+
+    private var coursesList: some View {
+        List(courses) { course in
+            Button {
+                openCourse = course
+            } label: {
+                HStack(spacing: DesignSpace.s3) {
+                    courseRow(course)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: DesignIcon.sm))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(DesignColor.surfacePage)
     }
 
     private func courseRow(_ course: WebeepCourse) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(WebeepService.stripMultilang(course.fullname))
                 .font(DesignFont.body)
+                .foregroundStyle(DesignColor.textPrimary)
                 .lineLimit(2)
             if let short = course.shortname, !short.isEmpty {
                 Text(short)
@@ -101,9 +130,11 @@ struct WebeepFilePickerSheet: View {
         }
     }
 
+    // Progresso del download e file falliti: sotto la lista, mentre la
+    // conferma resta nella testata.
     @ViewBuilder
-    private var confirmBar: some View {
-        if selectionMode == .multiple, !selected.isEmpty || isDownloading {
+    private var statusBar: some View {
+        if isDownloading || !failedNames.isEmpty {
             VStack(spacing: DesignSpace.s2) {
                 if !failedNames.isEmpty {
                     // I falliti restano spuntati: si riprova senza
@@ -114,36 +145,19 @@ struct WebeepFilePickerSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Button {
-                    Task { await addSelected() }
-                } label: {
+                if let downloaded {
                     HStack(spacing: DesignSpace.s2) {
-                        if let downloaded {
-                            ProgressView().controlSize(.small).tint(DesignColor.textOnBrand)
-                            Text("Scarico \(min(downloaded + 1, selected.count)) di \(selected.count)…")
-                        } else {
-                            Image(systemName: "plus.circle.fill")
-                            Text(selected.count == 1 ? "Aggiungi 1 file" : "Aggiungi \(selected.count) file")
-                        }
+                        ProgressView().controlSize(.small)
+                        Text("Scarico \(min(downloaded + 1, selected.count)) di \(selected.count)…")
+                            .font(DesignFont.caption)
+                            .foregroundStyle(DesignColor.textSecondary)
+                        Spacer()
                     }
-                    .font(DesignFont.cardTitle)
-                    .foregroundStyle(DesignColor.textOnBrand)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, DesignSpace.s3)
-                    .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
                 }
-                .buttonStyle(.plain)
-                .disabled(isDownloading)
             }
             .padding(DesignSpace.s4)
             .background(.bar)
         }
-    }
-
-    // Modalità a file singolo: invariata, il tocco scarica e chiude.
-    private func pickSingle(_ data: Data, _ name: String) {
-        onPicked(data, name)
-        dismiss()
     }
 
     private func addSelected() async {
@@ -187,59 +201,70 @@ struct WebeepFilePickerSheet: View {
     }
 }
 
-// Secondo livello: i PDF di un corso, raggruppati per sezione.
+// Secondo livello: i PDF di un corso, raggruppati per sezione. Vive
+// dentro la BoostSheet del genitore; il ritorno ai corsi è il bottone
+// ghost in testa alla lista.
 private struct WebeepCourseFilesView: View {
     let course: WebeepCourse
     let selectionMode: WebeepFilePickerSheet.SelectionMode
     @Binding var selected: [WebeepFile]
-    var onPickedSingle: (Data, String) -> Void
+    var onBack: () -> Void
 
     @State private var sections: [WebeepSection] = []
     @State private var isLoading = true
-    @State private var downloadingFileID: String?
     @State private var errorMessage: String?
 
     var body: some View {
-        Group {
-            if isLoading {
-                ProgressView("Carico i file…")
-            } else if pdfSections.isEmpty {
-                ContentUnavailableView(
-                    "Nessun PDF",
-                    systemImage: "doc.questionmark",
-                    description: Text("In questo corso non ci sono PDF scaricabili.")
-                )
-            } else {
-                List {
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(DesignFont.caption)
-                            .foregroundStyle(DesignColor.danger)
+        VStack(spacing: 0) {
+            HStack(spacing: DesignSpace.s3) {
+                BoostButton("Corsi", icon: "chevron.left", tone: .ghost, size: .compact) {
+                    onBack()
+                }
+                Text(WebeepService.stripMultilang(course.shortname ?? course.fullname))
+                    .font(DesignFont.cardTitle)
+                    .foregroundStyle(DesignColor.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+                if selectionMode == .multiple, !visibleFiles.isEmpty {
+                    BoostButton(allVisibleSelected ? "Deseleziona tutti" : "Tutti", tone: .ghost, size: .compact) {
+                        toggleAllVisible()
                     }
-                    ForEach(pdfSections) { section in
-                        Section(WebeepService.stripMultilang(section.name ?? "Sezione")) {
-                            ForEach(pdfFiles(in: section)) { file in
-                                fileRow(file)
+                }
+            }
+            .padding(.horizontal, DesignSpace.s4)
+            .padding(.vertical, DesignSpace.s2)
+
+            Group {
+                if isLoading {
+                    BoostState(kind: .loading, title: "Carico i file…")
+                } else if pdfSections.isEmpty {
+                    BoostState(
+                        kind: .empty,
+                        icon: "doc.questionmark",
+                        title: "Nessun PDF",
+                        message: "In questo corso non ci sono PDF scaricabili."
+                    )
+                } else {
+                    List {
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .font(DesignFont.caption)
+                                .foregroundStyle(DesignColor.danger)
+                        }
+                        ForEach(pdfSections) { section in
+                            Section(WebeepService.stripMultilang(section.name ?? "Sezione")) {
+                                ForEach(pdfFiles(in: section)) { file in
+                                    fileRow(file)
+                                }
                             }
                         }
                     }
-                }
-                .listStyle(.insetGrouped)
+                    .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
                     .background(DesignColor.surfacePage)
-            }
-        }
-        .navigationTitle(WebeepService.stripMultilang(course.shortname ?? course.fullname))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if selectionMode == .multiple, !visibleFiles.isEmpty {
-                ToolbarItem(placement: .primaryAction) {
-                    Button(allVisibleSelected ? "Deseleziona tutti" : "Tutti") {
-                        toggleAllVisible()
-                    }
-                    .font(DesignFont.body)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task {
             guard let token = WebeepService.savedToken else { isLoading = false; return }
@@ -254,15 +279,11 @@ private struct WebeepCourseFilesView: View {
 
     private func fileRow(_ file: WebeepFile) -> some View {
         Button {
-            if selectionMode == .multiple {
-                toggle(file)
-            } else {
-                Task { await download(file) }
-            }
+            toggle(file)
         } label: {
             HStack(spacing: DesignSpace.s3) {
-                Image(systemName: icon(for: file))
-                    .foregroundStyle(isSelected(file) ? DesignColor.brandPrimary : DesignColor.brandPrimary.opacity(0.7))
+                Image(systemName: isSelected(file) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected(file) ? DesignColor.brandPrimary : DesignColor.borderDefault)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(file.filename)
                         .font(DesignFont.body)
@@ -275,17 +296,8 @@ private struct WebeepCourseFilesView: View {
                     }
                 }
                 Spacer()
-                if downloadingFileID == file.id {
-                    ProgressView().controlSize(.small)
-                }
             }
         }
-        .disabled(selectionMode == .single && downloadingFileID != nil)
-    }
-
-    private func icon(for file: WebeepFile) -> String {
-        guard selectionMode == .multiple else { return "doc.richtext" }
-        return isSelected(file) ? "checkmark.circle.fill" : "circle"
     }
 
     private func isSelected(_ file: WebeepFile) -> Bool {
@@ -296,6 +308,9 @@ private struct WebeepCourseFilesView: View {
         if let index = selected.firstIndex(where: { $0.id == file.id }) {
             selected.remove(at: index)
         } else {
+            // In modalità singola la spunta è una radio: la nuova scelta
+            // scalza la precedente.
+            if selectionMode == .single { selected.removeAll() }
             selected.append(file)
         }
     }
@@ -329,18 +344,5 @@ private struct WebeepCourseFilesView: View {
 
     private var pdfSections: [WebeepSection] {
         sections.filter { !pdfFiles(in: $0).isEmpty }
-    }
-
-    private func download(_ file: WebeepFile) async {
-        guard let token = WebeepService.savedToken else { return }
-        downloadingFileID = file.id
-        errorMessage = nil
-        defer { downloadingFileID = nil }
-        do {
-            let data = try await WebeepService.downloadFile(file, token: token)
-            onPickedSingle(data, file.filename)
-        } catch {
-            errorMessage = "Download non riuscito: \(error.localizedDescription)"
-        }
     }
 }

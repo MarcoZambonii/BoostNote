@@ -297,7 +297,6 @@ struct ResearchContentView: View {
     @State private var showingImportChoice = false
     @State private var showingNotePicker = false
     @State private var isImporting = false
-    @State private var importErrorMessage: String?
     @State private var recents: [RecentPaper] = RecentPapersStore.load()
     @State private var pinned: [RecentPaper] = PinnedPapersStore.load()
 
@@ -348,11 +347,6 @@ struct ResearchContentView: View {
                 showingNotePicker = false
                 Task { await importPaper(target: .existingNote(note)) }
             }
-        }
-        .alert("Import non riuscito", isPresented: Binding(get: { importErrorMessage != nil }, set: { if !$0 { importErrorMessage = nil } })) {
-            Button("OK", role: .cancel) { importErrorMessage = nil }
-        } message: {
-            Text(importErrorMessage ?? "")
         }
     }
 
@@ -552,7 +546,7 @@ struct ResearchContentView: View {
         defer { isImporting = false; pendingPaper = nil }
 
         guard let (data, _) = try? await URLSession.shared.data(from: pdfURL) else {
-            importErrorMessage = "Non sono riuscito a scaricare il PDF di \"\(paper.title)\". Controlla la connessione e riprova."
+            BoostToastCenter.shared.show("Non sono riuscito a scaricare il PDF di \"\(paper.title)\". Controlla la connessione e riprova.", role: .danger)
             return
         }
 
@@ -566,7 +560,7 @@ struct ResearchContentView: View {
         }
         guard note.appendPages(fromPDF: data, in: context) else {
             if case .newNote = target { context.delete(note) }
-            importErrorMessage = "Il PDF di \"\(paper.title)\" non è leggibile. Riprova più tardi."
+            BoostToastCenter.shared.show("Il PDF di \"\(paper.title)\" non è leggibile. Riprova più tardi.", role: .danger)
             return
         }
         note.updatedAt = .now
@@ -698,30 +692,43 @@ private struct ResearchNotePickerSheet: View {
     @Query(sort: \Note.updatedAt, order: .reverse) private var allNotes: [Note]
     var onSelect: (Note) -> Void
 
+    // Il tocco seleziona, «Aggiungi» conferma: stessa meccanica di ogni
+    // sheet commit (§4), invece dell'esecuzione al tocco.
+    @State private var selectedNoteID: UUID?
+
     var body: some View {
-        NavigationStack {
-            List(allNotes) { note in
-                Button {
+        BoostSheet(
+            title: "Scegli una nota",
+            mode: .commit(verb: "Aggiungi", enabled: selectedNoteID != nil),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                if let note = allNotes.first(where: { $0.id == selectedNoteID }) {
                     onSelect(note)
+                }
+            }
+        ) {
+            List(allNotes) { note in
+                let isSelected = selectedNoteID == note.id
+                Button {
+                    selectedNoteID = isSelected ? nil : note.id
                 } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                            .foregroundStyle(.primary)
-                        if let folder = note.folder {
-                            Text(folder.name)
-                                .font(DesignFont.caption)
-                                .foregroundStyle(.secondary)
+                    HStack(spacing: DesignSpace.s3) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(note.title.isEmpty ? "Senza titolo" : note.title)
+                                .foregroundStyle(.primary)
+                            if let folder = note.folder {
+                                Text(folder.name)
+                                    .font(DesignFont.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("Scegli una nota")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-            }
         }
+        .presentationDetents([.medium])
     }
 }
 

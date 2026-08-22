@@ -22,7 +22,6 @@ struct RootView: View {
     // ruotando o entrando in Split View il size class cambia e lo stato
     // non deve perdersi.
     @State private var compactPath: [CompactDestination] = []
-    @State private var restoreErrorMessage: String?
     private var archiveOpenRequest = ArchiveOpenRequest.shared
 
     // Selezione dell'ambiente Studio. Vive qui e non dentro
@@ -52,15 +51,9 @@ struct RootView: View {
                     .background(DesignColor.surfacePage)
             }
         }
-        // Su iPhone il Profilo resta un foglio a tutta altezza; su iPad è
-        // un popup ancorato alla riga Profilo della sidebar, e quel
-        // popover vive dentro SidebarView perché solo lì c'è la vista a
-        // cui agganciare la punta.
-        .sheet(isPresented: $showingProfile) {
-            NavigationStack {
-                ProfileView(onClose: { showingProfile = false })
-            }
-        }
+        // I toast di esito (import falliti, ripristini, segnalazioni)
+        // compaiono sopra qualunque schermata, editor compreso.
+        .boostToastHost()
         // Nella nota niente ora/batteria: il modificatore DEVE stare qui
         // alla radice — dentro il detail della NavigationSplitView la
         // preferenza non risale fino al view controller che comanda la
@@ -85,17 +78,9 @@ struct RootView: View {
                 environment = .home
                 selectedNote = note
             } catch {
-                restoreErrorMessage = (error as? LocalizedError)?.errorDescription
-                    ?? "Il pacchetto non è leggibile."
+                BoostToastCenter.shared.show((error as? LocalizedError)?.errorDescription
+                    ?? "Il pacchetto non è leggibile.", role: .danger)
             }
-        }
-        .alert("Ripristino non riuscito", isPresented: Binding(
-            get: { restoreErrorMessage != nil },
-            set: { if !$0 { restoreErrorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { restoreErrorMessage = nil }
-        } message: {
-            Text(restoreErrorMessage ?? "")
         }
         .onChange(of: selectedNote) { _, newValue in
             // Non tocca selectedFolder: chiudendo la nota si torna alla

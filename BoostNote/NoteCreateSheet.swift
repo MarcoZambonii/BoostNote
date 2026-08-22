@@ -22,8 +22,17 @@ struct NoteCreateSheet: View {
         _selectedFolder = State(initialValue: preselectedFolder)
     }
 
+    private var canCreate: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Nuova nota",
+            mode: .commit(verb: "Crea", enabled: canCreate),
+            onDismiss: { dismiss() },
+            onConfirm: { create() }
+        ) {
             Form {
                 Section("Nome") {
                     TextField("Nome nota", text: $name)
@@ -71,19 +80,8 @@ struct NoteCreateSheet: View {
             // delle schermate.
             .scrollContentBackground(.hidden)
             .background(DesignColor.surfacePage)
-            .navigationTitle("Nuova nota")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Crea") { create() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium])
     }
 
     private func create() {

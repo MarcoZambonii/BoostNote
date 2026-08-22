@@ -607,6 +607,9 @@ struct BoostSheet<Content: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(DesignColor.surfaceOverlay)
+        // Un toast lanciato da dentro lo sheet deve comparire sopra lo
+        // sheet: l'host di RootView sta nella gerarchia coperta sotto.
+        .boostToastHost()
     }
 
     private var header: some View {

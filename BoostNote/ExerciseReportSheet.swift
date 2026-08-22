@@ -37,7 +37,15 @@ struct ExerciseReportSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Segnala errore",
+            mode: .commit(verb: "Rigenera", enabled: !feedback.isEmpty),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                onRegenerate(feedback)
+                dismiss()
+            }
+        ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSpace.s5) {
                     VStack(alignment: .leading, spacing: DesignSpace.s2) {
@@ -94,37 +102,12 @@ struct ExerciseReportSheet: View {
                     }
 
                     VStack(spacing: DesignSpace.s3) {
-                        Button {
-                            onRegenerate(feedback)
-                            dismiss()
-                        } label: {
-                            HStack(spacing: DesignSpace.s2) {
-                                Image(systemName: "arrow.clockwise")
-                                Text("Rigenera con questa correzione")
-                            }
-                            .font(DesignFont.cardTitle)
-                            .foregroundStyle(DesignColor.textOnBrand)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, DesignSpace.s3)
-                            .background(
-                                feedback.isEmpty ? DesignColor.gray300 : DesignColor.brandPrimary,
-                                in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(feedback.isEmpty)
-
-                        Button {
+                        BoostButton("Segnala e basta", tone: .ghost, fullWidth: true) {
                             onReportOnly(feedback)
                             dismiss()
-                        } label: {
-                            Text("Segnala e basta")
-                                .font(DesignFont.body)
-                                .foregroundStyle(DesignColor.textSecondary)
                         }
-                        .buttonStyle(.plain)
 
-                        Text("Rigenerare usa una chiamata al modello e sostituisce solo questo esercizio: gli altri restano com'erano.")
+                        Text("«Rigenera» usa una chiamata al modello e sostituisce solo questo esercizio: gli altri restano com'erano. «Segnala e basta» lo marca soltanto.")
                             .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                             .multilineTextAlignment(.center)
@@ -135,13 +118,6 @@ struct ExerciseReportSheet: View {
                 .frame(maxWidth: .infinity)
             }
             .background(DesignColor.surfacePage)
-            .navigationTitle("Segnala errore")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-            }
         }
         .presentationDetents([.large])
     }

@@ -40,7 +40,11 @@ struct StudioTrustSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Come funziona la generazione",
+            mode: .read,
+            onDismiss: { dismiss() }
+        ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSpace.s6) {
                     intro
@@ -103,13 +107,6 @@ struct StudioTrustSheet: View {
                 .frame(maxWidth: .infinity)
             }
             .background(DesignColor.surfacePage)
-            .navigationTitle("Come funziona la generazione")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Chiudi") { dismiss() }
-                }
-            }
         }
     }
 

@@ -75,43 +75,33 @@ struct StudioCreateFlowView: View {
     // dell'utente vale solo dentro la callback del file importer.
     @State private var pdfPayloads: [UUID: Data] = [:]
     @State private var preparation: StudyMaterialPreparation.Progress?
-    @State private var fileImportError: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: DesignSpace.s3) {
-                Button(action: onCancel) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: DesignIcon.md))
-                        .foregroundStyle(DesignColor.textSecondary)
+        // È una sheet a tutti gli effetti (tabella di HANDOFF): stessa
+        // testata commit di ogni altra, col verbo «Genera». L'Annulla
+        // resta fermo finché la preparazione dei materiali è in corso.
+        BoostSheet(
+            title: "Crea nuovo studio",
+            mode: .commit(verb: "Genera", enabled: canGenerate && preparation == nil),
+            onDismiss: {
+                guard preparation == nil else { return }
+                onCancel()
+            },
+            onConfirm: { createStudy() }
+        ) {
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DesignSpace.s8) {
+                        nameSection
+                        materialsSection
+                        modulesSection
+                    }
+                    .padding(DesignSpace.s6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Torna a Studio")
-                .disabled(preparation != nil)
 
-                Text("Crea nuovo studio")
-                    .font(DesignFont.cardTitle)
-                    .foregroundStyle(DesignColor.textPrimary)
-                Spacer()
+                generateBar
             }
-            .padding(.horizontal, DesignSpace.s6 + 4)
-            .frame(height: 56)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(DesignColor.borderDefault).frame(height: 1)
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: DesignSpace.s8) {
-                    nameSection
-                    materialsSection
-                    modulesSection
-                }
-                .padding(DesignSpace.s6)
-                .frame(maxWidth: 720, alignment: .leading)
-                .frame(maxWidth: .infinity)
-            }
-
-            generateBar
         }
         .sheet(isPresented: $showingVaultPicker) {
             VaultSourcePicker(alreadyPicked: Set(sources.compactMap(\.vaultDocumentID))) { picked in
@@ -133,14 +123,6 @@ struct StudioCreateFlowView: View {
             StudioWebeepPickerSheet { picked in
                 sources.append(contentsOf: picked)
             }
-        }
-        .alert("File non leggibile", isPresented: Binding(
-            get: { fileImportError != nil },
-            set: { if !$0 { fileImportError = nil } }
-        )) {
-            Button("OK", role: .cancel) { fileImportError = nil }
-        } message: {
-            Text(fileImportError ?? "")
         }
         .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
@@ -170,7 +152,7 @@ struct StudioCreateFlowView: View {
                 sources.append(source)
             }
             if !unreadable.isEmpty {
-                fileImportError = "Non riesco a leggere: \(unreadable.joined(separator: ", ")). Se il file sta su un cloud, aprilo prima nell'app File per scaricarlo."
+                BoostToastCenter.shared.show("Non riesco a leggere: \(unreadable.joined(separator: ", ")).", role: .danger)
             }
         }
     }
@@ -683,30 +665,10 @@ struct StudioCreateFlowView: View {
                             .presentationDetents([.medium, .large])
                     }
                 }
-                VStack(alignment: .trailing, spacing: 4) {
-                    Button {
-                        createStudy()
-                    } label: {
-                        HStack(spacing: DesignSpace.s2) {
-                            Image(systemName: "sparkles")
-                            Text("Genera studio")
-                        }
-                        .font(DesignFont.cardTitle)
-                        .foregroundStyle(DesignColor.textOnBrand)
-                        .padding(.horizontal, DesignSpace.s5)
-                        .padding(.vertical, DesignSpace.s3)
-                        .background(
-                            canGenerate ? DesignColor.brandPrimary : DesignColor.gray300,
-                            in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canGenerate || preparation != nil)
-                    if canGenerate, AIService.selectedProvider == .gemini {
-                        Text(callEstimateLabel)
-                            .font(DesignFont.caption)
-                            .foregroundStyle(DesignColor.textTertiary)
-                    }
+                if canGenerate, AIService.selectedProvider == .gemini {
+                    Text(callEstimateLabel)
+                        .font(DesignFont.caption)
+                        .foregroundStyle(DesignColor.textTertiary)
                 }
             }
         }
@@ -901,51 +863,61 @@ private struct StudioNotePickerSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List(filteredNotes) { note in
-                let isSelected = selectedIDs.contains(note.id)
-                Button {
-                    if isSelected { selectedIDs.remove(note.id) } else { selectedIDs.insert(note.id) }
-                } label: {
-                    HStack(spacing: DesignSpace.s3) {
-                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                                .foregroundStyle(.primary)
-                            if let folder = note.folder {
-                                Text(folder.name)
-                                    .font(DesignFont.caption)
-                                    .foregroundStyle(.secondary)
+        BoostSheet(
+            title: "Scegli le note",
+            mode: .commit(verb: "Aggiungi (\(selectedIDs.count))", enabled: !selectedIDs.isEmpty),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                let picked = allNotes.filter { selectedIDs.contains($0.id) }.map { note in
+                    StudySourceMaterial(
+                        kind: .note,
+                        title: note.title.isEmpty ? "Senza titolo" : note.title,
+                        subtitle: note.folder?.name,
+                        noteID: note.id
+                    )
+                }
+                onAdd(picked)
+                dismiss()
+            }
+        ) {
+            VStack(spacing: 0) {
+                // Campo di ricerca in testa al contenuto: .searchable vuole
+                // una barra di navigazione, che qui non esiste più.
+                HStack(spacing: DesignSpace.s2) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: DesignIcon.sm))
+                        .foregroundStyle(DesignColor.textTertiary)
+                    TextField("Cerca nota", text: $searchText)
+                        .font(DesignFont.body)
+                        .textFieldStyle(.plain)
+                }
+                .padding(DesignSpace.s3)
+                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                .padding(DesignSpace.s3)
+
+                List(filteredNotes) { note in
+                    let isSelected = selectedIDs.contains(note.id)
+                    Button {
+                        if isSelected { selectedIDs.remove(note.id) } else { selectedIDs.insert(note.id) }
+                    } label: {
+                        HStack(spacing: DesignSpace.s3) {
+                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(note.title.isEmpty ? "Senza titolo" : note.title)
+                                    .foregroundStyle(.primary)
+                                if let folder = note.folder {
+                                    Text(folder.name)
+                                        .font(DesignFont.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
                 }
             }
-            .searchable(text: $searchText, prompt: "Cerca nota")
-            .navigationTitle("Scegli le note")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Aggiungi (\(selectedIDs.count))") {
-                        let picked = allNotes.filter { selectedIDs.contains($0.id) }.map { note in
-                            StudySourceMaterial(
-                                kind: .note,
-                                title: note.title.isEmpty ? "Senza titolo" : note.title,
-                                subtitle: note.folder?.name,
-                                noteID: note.id
-                            )
-                        }
-                        onAdd(picked)
-                        dismiss()
-                    }
-                    .disabled(selectedIDs.isEmpty)
-                }
-            }
         }
+        .presentationDetents([.large])
     }
 }
 
@@ -967,30 +939,30 @@ private struct StudioWebeepPickerSheet: View {
     @State private var selected: [String: StudySourceMaterial] = [:]  // per fileurl
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Materiali da WeBeep",
+            mode: .commit(verb: "Aggiungi (\(selected.count))", enabled: !selected.isEmpty),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                onAdd(Array(selected.values))
+                dismiss()
+            }
+        ) {
             Group {
                 if token == nil {
-                    VStack(spacing: DesignSpace.s3) {
-                        Image(systemName: "building.columns")
-                            .font(.system(size: DesignIcon.xl))
-                            .foregroundStyle(DesignColor.textTertiary)
-                        Text("WeBeep non è collegato")
-                            .font(DesignFont.cardTitle)
-                        Text("Accedi dall'ambiente WeBeep nella barra laterale, poi torna qui per scegliere i materiali del corso.")
-                            .font(DesignFont.label)
-                            .foregroundStyle(DesignColor.textTertiary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 300)
-                    }
+                    BoostState(
+                        kind: .empty,
+                        icon: "building.columns",
+                        title: "WeBeep non è collegato",
+                        message: "Accedi dall'ambiente WeBeep nella barra laterale, poi torna qui per scegliere i materiali del corso."
+                    )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let loadError {
-                    VStack(spacing: DesignSpace.s3) {
-                        ContentUnavailableView(
-                            "WeBeep non risponde",
-                            systemImage: "wifi.exclamationmark",
-                            description: Text(loadError)
-                        )
-                        BoostButton("Riprova", icon: "arrow.clockwise", tone: .primary) {
+                    BoostState(
+                        kind: .error,
+                        title: "WeBeep non risponde",
+                        message: loadError,
+                        action: AnyView(BoostButton("Riprova", icon: "arrow.clockwise", tone: .primary) {
                             Task {
                                 if let course = selectedCourse {
                                     await loadSections(course)
@@ -998,38 +970,35 @@ private struct StudioWebeepPickerSheet: View {
                                     await loadCourses()
                                 }
                             }
-                        }
-                        .padding(.bottom, DesignSpace.s6)
-                    }
+                        })
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let course = selectedCourse {
-                    fileList(course)
+                    VStack(spacing: 0) {
+                        // Livello corso: la via del ritorno sta nel
+                        // contenuto, la testata resta della sheet.
+                        HStack(spacing: DesignSpace.s2) {
+                            BoostButton("Corsi", icon: "chevron.left", tone: .ghost, size: .compact) {
+                                selectedCourse = nil
+                                sections = []
+                            }
+                            Text(WebeepService.stripMultilang(course.fullname))
+                                .font(DesignFont.label)
+                                .foregroundStyle(DesignColor.textSecondary)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, DesignSpace.s3)
+                        .padding(.top, DesignSpace.s2)
+                        fileList(course)
+                    }
                 } else {
                     courseList
                 }
             }
-            .navigationTitle(selectedCourse.map { WebeepService.stripMultilang($0.fullname) } ?? "Materiali da WeBeep")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    if selectedCourse != nil {
-                        Button("Corsi") {
-                            selectedCourse = nil
-                            sections = []
-                        }
-                    } else {
-                        Button("Annulla") { dismiss() }
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Aggiungi (\(selected.count))") {
-                        onAdd(Array(selected.values))
-                        dismiss()
-                    }
-                    .disabled(selected.isEmpty)
-                }
-            }
             .task { await loadCourses() }
         }
+        .presentationDetents([.large])
     }
 
     private var courseList: some View {

@@ -14,7 +14,6 @@ struct VaultView: View {
     @State private var showingNotePicker = false
     @State private var showingPDFImporter = false
     @State private var showingWebeepPicker = false
-    @State private var importError: String?
     // Rimozione in attesa di conferma: le pagine lette sono lavoro
     // pagato in chiamate API, e prima bastava una voce di menu.
     @State private var documentPendingDelete: VaultDocument?
@@ -34,7 +33,11 @@ struct VaultView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Vault del corso",
+            mode: .read,
+            onDismiss: { dismiss() }
+        ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
@@ -56,14 +59,8 @@ struct VaultView: View {
                 .frame(maxWidth: .infinity)
             }
             .background(DesignColor.surfacePage)
-            .navigationTitle("Vault del corso")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Chiudi") { dismiss() }
-                }
-            }
         }
+        .presentationDetents([.large])
         .sheet(isPresented: $showingNotePicker) {
             VaultNotePicker(folder: folder)
         }
@@ -74,17 +71,6 @@ struct VaultView: View {
         }
         .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
             importPDFs(result)
-        }
-        // Binding vero, non `.constant`: con la costante SwiftUI non può
-        // scrivere false alla chiusura e una dismissal di sistema
-        // (rotazione, cambio scena) lasciava lo stato incoerente.
-        .alert("Aggiunta al Vault non riuscita", isPresented: Binding(
-            get: { importError != nil },
-            set: { if !$0 { importError = nil } }
-        )) {
-            Button("OK", role: .cancel) { importError = nil }
-        } message: {
-            Text(importError ?? "")
         }
         .alert(
             "Rimuovere dal Vault?",
@@ -285,7 +271,7 @@ struct VaultView: View {
         // firma "%PDF" in testa è più affidabile dell'estensione.
         let isPDF = name.lowercased().hasSuffix(".pdf") || data.prefix(4).elementsEqual([0x25, 0x50, 0x44, 0x46])
         guard isPDF else {
-            importError = "\(name): per ora il Vault legge solo PDF."
+            BoostToastCenter.shared.show("\(name): per ora il Vault legge solo PDF.", role: .danger)
             return
         }
         let title = (name as NSString).deletingPathExtension
@@ -314,13 +300,13 @@ struct VaultView: View {
     private func importPDFs(_ result: Result<[URL], Error>) {
         switch result {
         case .failure(let error):
-            importError = error.localizedDescription
+            BoostToastCenter.shared.show(error.localizedDescription, role: .danger)
         case .success(let urls):
             for url in urls {
                 let secured = url.startAccessingSecurityScopedResource()
                 defer { if secured { url.stopAccessingSecurityScopedResource() } }
                 guard let data = try? Data(contentsOf: url) else {
-                    importError = "Non riesco a leggere \(url.lastPathComponent)."
+                    BoostToastCenter.shared.show("Non riesco a leggere \(url.lastPathComponent).", role: .danger)
                     continue
                 }
                 let title = url.deletingPathExtension().lastPathComponent
@@ -349,51 +335,35 @@ struct VaultSourcePicker: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if foldersWithVault.isEmpty {
-                    VStack(spacing: DesignSpace.s2) {
-                        Image(systemName: "archivebox")
-                            .font(.system(size: DesignIcon.xl))
-                            .foregroundStyle(DesignColor.textTertiary)
-                        Text("Nessun Vault con materiale")
-                            .font(DesignFont.cardTitle)
-                        Text("Apri una cartella di Studio e aggiungi note, PDF o file WeBeep al suo Vault: da lì gli studi si creano senza rileggere niente.")
-                            .font(DesignFont.caption)
-                            .foregroundStyle(DesignColor.textTertiary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 360)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(foldersWithVault) { folder in
-                            Section {
-                                ForEach(folder.vaultDocuments.sorted { $0.addedAt < $1.addedAt }) { document in
-                                    documentRow(document)
-                                }
-                            } header: {
-                                Label(folder.name, systemImage: "archivebox.fill")
-                                    .foregroundStyle(folder.folderColor.color)
+        BoostSheet(
+            title: "Dal Vault",
+            mode: .commit(verb: "Aggiungi (\(selected.count))", enabled: !selected.isEmpty),
+            onDismiss: { dismiss() },
+            onConfirm: { confirm() }
+        ) {
+            if foldersWithVault.isEmpty {
+                BoostState(
+                    kind: .empty,
+                    title: "Nessun Vault con materiale",
+                    message: "Apri una cartella di Studio e aggiungi note, PDF o file WeBeep al suo Vault: da lì gli studi si creano senza rileggere niente."
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(foldersWithVault) { folder in
+                        Section {
+                            ForEach(folder.vaultDocuments.sorted { $0.addedAt < $1.addedAt }) { document in
+                                documentRow(document)
                             }
+                        } header: {
+                            Label(folder.name, systemImage: "archivebox")
+                                .foregroundStyle(folder.folderColor.color)
                         }
                     }
                 }
             }
-            .navigationTitle("Dal Vault")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Aggiungi (\(selected.count))") {
-                        confirm()
-                    }
-                    .disabled(selected.isEmpty)
-                }
-            }
         }
+        .presentationDetents([.large])
     }
 
     @ViewBuilder
@@ -474,14 +444,30 @@ private struct VaultNotePicker: View {
         return notes.filter { !linked.contains($0.id) }
     }
 
+    // La scelta si conferma con «Collega», non al tocco: il tocco
+    // seleziona, come in ogni sheet commit (§4).
+    @State private var selectedNoteID: UUID?
+
     var body: some View {
-        NavigationStack {
-            List(availableNotes) { note in
-                Button {
+        BoostSheet(
+            title: "Collega una nota",
+            mode: .commit(verb: "Collega", enabled: selectedNoteID != nil),
+            onDismiss: { dismiss() },
+            onConfirm: {
+                if let note = availableNotes.first(where: { $0.id == selectedNoteID }) {
                     VaultIngestionService.addNote(note, to: folder, in: context)
-                    dismiss()
+                }
+                dismiss()
+            }
+        ) {
+            List(availableNotes) { note in
+                let isSelected = selectedNoteID == note.id
+                Button {
+                    selectedNoteID = isSelected ? nil : note.id
                 } label: {
                     HStack(spacing: DesignSpace.s3) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
                         Image(systemName: "note.text")
                             .foregroundStyle(DesignColor.brandPrimary)
                         VStack(alignment: .leading, spacing: 2) {
@@ -495,13 +481,7 @@ private struct VaultNotePicker: View {
                     }
                 }
             }
-            .navigationTitle("Collega una nota")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
-            }
         }
+        .presentationDetents([.medium])
     }
 }

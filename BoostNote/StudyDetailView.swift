@@ -732,7 +732,6 @@ private struct ExercisesModuleView: View {
     // rigenerazione mirata che ne può seguire.
     @State private var reportingExercise: StudyExercise?
     @State private var regeneratingID: UUID?
-    @State private var regenerationError: String?
 
     @State private var wolframResults: [UUID: WolframCheck] = [:]
     @State private var wolframCheckingID: UUID?
@@ -784,14 +783,6 @@ private struct ExercisesModuleView: View {
                 }
             )
         }
-        .alert("Rigenerazione non riuscita", isPresented: Binding(
-            get: { regenerationError != nil },
-            set: { if !$0 { regenerationError = nil } }
-        )) {
-            Button("OK", role: .cancel) { regenerationError = nil }
-        } message: {
-            Text(regenerationError ?? "")
-        }
     }
 
     private func regenerate(exercise: StudyExercise, feedback: String) async {
@@ -805,7 +796,7 @@ private struct ExercisesModuleView: View {
             context: context
         )
         if let error {
-            regenerationError = error
+            BoostToastCenter.shared.show(error, role: .danger)
         } else {
             // Il contenuto è cambiato sotto ai piedi: si riparte dalla
             // rivelazione chiusa, altrimenti si vedrebbe la soluzione

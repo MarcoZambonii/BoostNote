@@ -22,8 +22,17 @@ struct FormulaEditSheet: View {
         _latex = State(initialValue: media.sourceText ?? "")
     }
 
+    private var canSave: Bool {
+        !latex.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isRendering
+    }
+
     var body: some View {
-        NavigationStack {
+        BoostSheet(
+            title: "Modifica formula",
+            mode: .commit(verb: "Salva", enabled: canSave),
+            onDismiss: { dismiss() },
+            onConfirm: { Task { await save() } }
+        ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSpace.s4) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -61,24 +70,20 @@ struct FormulaEditSheet: View {
                             .foregroundStyle(DesignColor.danger)
                     }
 
-                    BoostButton("Aggiorna la formula sul foglio", tone: .primary,
-                                isLoading: isRendering, fullWidth: true) {
-                        Task { await save() }
+                    if isRendering {
+                        HStack(spacing: DesignSpace.s2) {
+                            ProgressView().controlSize(.small)
+                            Text("Compongo la formula…")
+                                .font(DesignFont.caption)
+                                .foregroundStyle(DesignColor.textTertiary)
+                        }
                     }
-                    .disabled(latex.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     BoostButton("Copia il codice LaTeX", icon: "doc.on.doc", fullWidth: true) {
                         UIPasteboard.general.string = latex
                     }
                 }
                 .padding(DesignSpace.s5)
-            }
-            .navigationTitle("Modifica formula")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annulla") { dismiss() }
-                }
             }
         }
         .presentationDetents([.medium, .large])

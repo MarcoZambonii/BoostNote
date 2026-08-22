@@ -152,9 +152,6 @@ struct NoteEditorView: View {
     @State private var webeepPickerTarget: PDFPickerTarget = .documentPanel
 
     @State private var magicResult: MagicResult?
-    // Errore d'import PDF (file illeggibile, non-PDF): prima spariva in
-    // silenzio e "importa" sembrava non fare niente.
-    @State private var pdfImportError: String?
     // Formula sul foglio aperta per la correzione del suo LaTeX.
     @State private var editingFormula: NoteMedia?
     // Immagine e sorgente della formula PRIMA della modifica: il "prima"
@@ -300,20 +297,12 @@ struct NoteEditorView: View {
                 photosPickerItem = nil
             }
         }
-        .alert("Import non riuscito", isPresented: Binding(
-            get: { pdfImportError != nil },
-            set: { if !$0 { pdfImportError = nil } }
-        )) {
-            Button("OK", role: .cancel) { pdfImportError = nil }
-        } message: {
-            Text(pdfImportError ?? "")
-        }
         .fileImporter(isPresented: $showingPDFPicker, allowedContentTypes: [.pdf]) { result in
             guard case .success(let url) = result else { return }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else {
-                pdfImportError = "Non riesco a leggere \"\(url.lastPathComponent)\". Se il file sta su un cloud, aprilo prima nell'app File per scaricarlo."
+                BoostToastCenter.shared.show("Non riesco a leggere \"\(url.lastPathComponent)\": se sta su un cloud, aprilo prima nell'app File.", role: .danger)
                 return
             }
             switch pdfPickerTarget {
@@ -1173,7 +1162,7 @@ struct NoteEditorView: View {
             // sono un PDF (per esempio una pagina di errore scaricata al
             // posto del file). Prima veniva ignorato e sembrava che
             // l'import non facesse niente.
-            pdfImportError = "Il file non è un PDF leggibile: è danneggiato, o non è un vero PDF."
+            BoostToastCenter.shared.show("Il file non è un PDF leggibile.", role: .danger)
             return
         }
         note.updatedAt = .now
