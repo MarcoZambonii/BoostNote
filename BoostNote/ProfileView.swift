@@ -605,6 +605,7 @@ private struct PenTuningPage: View {
         }
         .background(DesignColor.surfacePage)
         .navigationTitle("Scrittura")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -643,6 +644,7 @@ private struct MaterialReadingPage: View {
         }
         .background(DesignColor.surfacePage)
         .navigationTitle("Lettura dei materiali")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func modelTierPicker(for purpose: AIPurpose, selection: Binding<String>) -> some View {

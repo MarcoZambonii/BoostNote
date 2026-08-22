@@ -19,7 +19,19 @@ struct ResearchEnvironmentView: View {
     }
 
     private var content: some View {
-        ResearchContentView(model: model, onImported: { note in selectedNote = note })
-            .navigationTitle("Ricerca")
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Ricerca")
+                .font(DesignFont.screenTitle)
+                .foregroundStyle(DesignColor.textPrimary)
+                .padding(.horizontal, DesignSpace.s6)
+                .padding(.top, DesignSpace.s6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ResearchContentView(model: model, onImported: { note in selectedNote = note })
+        }
+        .background(DesignColor.surfacePage)
+        // Il titolo lo dà la testata qui sopra; la barra resta per il
+        // pulsante indietro quando la vista è spinta (iPhone).
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
