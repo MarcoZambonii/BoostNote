@@ -51,9 +51,10 @@ struct SidebarView: View {
     @Binding var showingStudioProgress: Bool
     var onCreateStudy: () -> Void
     var onOpenProfile: () -> Void
-    // Il Profilo è un POPOVER con la punta sulla riga Profilo (HANDOFF,
-    // passo 4): dentro c'è comunque la testata read di BoostSheet, così
-    // su iPhone — dove il sistema lo adatta a foglio — resta la ✕.
+    // Il Profilo è un FOGLIO, non un popover: appeso alla riga in fondo
+    // alla colonna il popover usciva schiacciato, e comunque il pannello
+    // è troppo denso per un pop-up con la punta. Dentro c'è la testata
+    // read di BoostSheet, con la ✕.
     @Binding var showingProfile: Bool
 
     @Query(filter: #Predicate<Folder> { $0.parent == nil }, sort: \Folder.name)
@@ -414,20 +415,7 @@ struct SidebarView: View {
         .overlay(alignment: .top) {
             Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
         }
-        .popover(isPresented: $showingProfile,
-                 attachmentAnchor: .point(UnitPoint(x: 1, y: 0.5)),
-                 arrowEdge: .leading) {
-            BoostSheet(title: "Profilo", mode: .read, onDismiss: { showingProfile = false }) {
-                // Lo stack serve alle pagine di Sviluppo, che si
-                // spingono da qui dentro.
-                NavigationStack { ProfileView() }
-            }
-            // 560×720 non stanno su un iPhone: lì il sistema lo adatta
-            // a foglio a larghezza piena.
-            .frame(width: DeviceLayout.isPhone ? nil : 500,
-                   height: DeviceLayout.isPhone ? nil : 640)
-            .presentationCompactAdaptation(.sheet)
-        }
+
     }
 
     // Albero ricorsivo con DisclosureGroup espliciti al posto di

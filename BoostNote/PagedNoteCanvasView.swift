@@ -796,6 +796,11 @@ final class LiveInkCaptureOverlay: UIView {
     var baseWidth: CGFloat = 3
     // La penna modula lo spessore con la pressione, l'evidenziatore no.
     var pressureSensitive = true
+    // L'inchiostro con cui il tratto finito entra nel PKDrawing. Conta
+    // più di quanto sembri: `.marker` è l'unico che si FONDE con ciò che
+    // sta sotto, ed è quello che fa passare l'evidenziatore sotto alla
+    // scrittura invece che sopra.
+    var inkType: PKInkingTool.InkType = .pen
 
     private var activePage: NotePageView?
     // Vero mentre un tratto (o una passata di gomma) è in corso: il
@@ -1057,7 +1062,7 @@ final class LiveInkCaptureOverlay: UIView {
     private func makeStroke(from points: [PKStrokePoint]) -> PKStroke? {
         guard points.count >= 2 else { return nil }
         return PKStroke(
-            ink: PKInk(.pen, color: inkColor),
+            ink: PKInk(inkType, color: inkColor),
             path: PKStrokePath(controlPoints: points, creationDate: Date())
         )
     }
@@ -2056,6 +2061,9 @@ struct PagedNoteCanvasView: UIViewRepresentable {
     var tool: PenTool
     var color: Color
     var inkWidth: CGFloat
+    // Penna a pressione o a spessore costante: scelta dell'utente dalla
+    // barra, vale sia per il tratto definitivo sia per l'anteprima.
+    var pressureSensitiveInk: Bool = true
     var eraserType: PKEraserTool.EraserType
     var eraserWidth: CGFloat
     var template: NoteTemplate
@@ -2225,10 +2233,13 @@ struct PagedNoteCanvasView: UIViewRepresentable {
                     container.liveInkOverlay.mode = .draw
                     let base = UIColor(parent.color)
                     container.liveInkOverlay.inkColor = parent.tool == .marker
-                        ? base.withAlphaComponent(PenTool.markerOpacity)
+                        ? base.withAlphaComponent(PenTool.markerLivePreviewOpacity)
                         : base
                     container.liveInkOverlay.baseWidth = parent.inkWidth
-                    container.liveInkOverlay.pressureSensitive = parent.tool != .marker
+                    // L'evidenziatore non varia con la forza; la penna sì,
+                    // ma solo se l'utente ha lasciato accesa la pressione.
+                    container.liveInkOverlay.pressureSensitive = parent.tool != .marker && parent.pressureSensitiveInk
+                    container.liveInkOverlay.inkType = parent.tool.inkType(pressure: parent.pressureSensitiveInk) ?? .pen
                 }
             }
             if parent.tool != .lasso {

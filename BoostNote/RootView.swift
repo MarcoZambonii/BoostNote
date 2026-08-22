@@ -51,6 +51,14 @@ struct RootView: View {
                     .background(DesignColor.surfacePage)
             }
         }
+        // Il Profilo è un foglio a tutta altezza: la testata con la ✕
+        // gliela dà BoostSheet, lo stack serve alle pagine di Sviluppo
+        // che si spingono da dentro.
+        .sheet(isPresented: $showingProfile) {
+            BoostSheet(title: "Profilo", mode: .read, onDismiss: { showingProfile = false }) {
+                NavigationStack { ProfileView() }
+            }
+        }
         // I toast di esito (import falliti, ripristini, segnalazioni)
         // compaiono sopra qualunque schermata, editor compreso.
         .boostToastHost()

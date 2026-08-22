@@ -62,7 +62,9 @@ struct StudyDetailView: View {
                     Text(study.name)
                         .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
-                    Text(study.subjectOrPlaceholder + " · creato il " + study.createdAt.formatted(date: .abbreviated, time: .omitted))
+                    Text([study.subjectIfAny, "creato il " + study.createdAt.formatted(date: .abbreviated, time: .omitted)]
+                        .compactMap { $0 }
+                        .joined(separator: " · "))
                         .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }

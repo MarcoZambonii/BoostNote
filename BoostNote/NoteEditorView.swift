@@ -72,6 +72,8 @@ struct NoteEditorView: View {
     // con la penna.
     @State private var inkColors: [PenTool: Color] = [:]
     @State private var inkWidths: [PenTool: CGFloat] = [:]
+    // Penna a pressione o a spessore costante, per strumento.
+    @State private var pressureEnabled: [PenTool: Bool] = [:]
     @State private var eraserType: PKEraserTool.EraserType = .bitmap
     @State private var eraserWidth: CGFloat = 30
 
@@ -168,6 +170,10 @@ struct NoteEditorView: View {
 
     private var activeInkWidth: CGFloat {
         inkWidths[selectedTool] ?? selectedTool.defaultWidth
+    }
+
+    private var activePressure: Bool {
+        pressureEnabled[selectedTool] ?? true
     }
 
     // Strumenti aperti su QUESTA nota.
@@ -793,6 +799,7 @@ struct NoteEditorView: View {
                         tool: selectedTool,
                         color: activeColor,
                         inkWidth: activeInkWidth,
+                        pressureSensitiveInk: activePressure,
                         eraserType: eraserType,
                         eraserWidth: eraserWidth,
                         template: note.template,
@@ -865,6 +872,7 @@ struct NoteEditorView: View {
             selectedTool: $selectedTool,
             inkColors: $inkColors,
             inkWidths: $inkWidths,
+            pressureEnabled: $pressureEnabled,
             eraserType: $eraserType,
             eraserWidth: $eraserWidth,
             magicAction: $magicAction,
@@ -938,9 +946,12 @@ struct NoteEditorView: View {
                 .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textPrimary)
                 .frame(width: headerRowHeight, height: headerRowHeight)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().stroke(DesignColor.borderDefault, lineWidth: 1))
-                .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+                // Stessa superficie della barra fissa qui a destra:
+                // bianca, squadrata, stessa ombra. Il cerchio era
+                // l'unica forma del genere in tutta l'app.
+                .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1))
+                .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Indietro")
@@ -1045,8 +1056,10 @@ struct NoteEditorView: View {
         // mancare il tocco era la norma.
         .padding(.horizontal, DesignSpace.s2)
         .frame(height: headerRowHeight)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).stroke(DesignColor.borderDefault.opacity(0.6), lineWidth: 1))
+        // Bianca come il tasto indietro e la barra della penna: le tre
+        // superfici sospese sul foglio hanno la stessa ricetta.
+        .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1))
         .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
     }
 
@@ -1181,13 +1194,15 @@ struct NoteEditorView: View {
     private func saveToolPreferences() {
         var colors: [String: String] = [:]
         var widths: [String: Double] = [:]
+        var pressures: [String: Bool] = [:]
         for tool in PenTool.inkTools {
             if let hex = (inkColors[tool] ?? tool.defaultColor).hexString {
                 colors[tool.rawValue] = hex
             }
             widths[tool.rawValue] = Double(inkWidths[tool] ?? tool.defaultWidth)
+            pressures[tool.rawValue] = pressureEnabled[tool] ?? true
         }
-        if let data = try? JSONEncoder().encode(StoredInkSettings(colors: colors, widths: widths)),
+        if let data = try? JSONEncoder().encode(StoredInkSettings(colors: colors, widths: widths, pressures: pressures)),
            let string = String(data: data, encoding: .utf8) {
             storedInkSettings = string
         }
@@ -1213,7 +1228,9 @@ struct NoteEditorView: View {
             // gli intervalli venissero presi da PencilKit): si riporta
             // dentro, altrimenti lo slider mostrerebbe un numero che il
             // tratto non rispetta.
-            let range = tool.widthRange
+            let pressure = stored?.pressures?[tool.rawValue] ?? true
+            pressureEnabled[tool] = pressure
+            let range = tool.widthRange(pressure: pressure)
             let width = stored?.widths[tool.rawValue].map { CGFloat($0) } ?? tool.defaultWidth
             inkWidths[tool] = min(max(width, range.lowerBound), range.upperBound)
         }

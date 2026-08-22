@@ -116,9 +116,9 @@ enum DesignRadius {
 // porta il ruolo. I titoli sono LEGGERI di proposito (la gerarchia la
 // dà la dimensione, non il grassetto): non reintrodurre il semibold.
 enum DesignFont {
-    static let display      = Font.system(size: 30, weight: .ultraLight)
-    static let screenTitle  = Font.system(size: 26, weight: .light)
-    static let sectionTitle = Font.system(size: 20, weight: .light)
+    static let display      = Font.system(size: 30, weight: .bold)
+    static let screenTitle  = Font.system(size: 26, weight: .bold)
+    static let sectionTitle = Font.system(size: 20, weight: .bold)
     static let cardTitle    = Font.system(size: 15, weight: .semibold)
     static let body         = Font.system(size: 15, weight: .regular)
     static let action       = Font.system(size: 13, weight: .semibold)

@@ -77,17 +77,18 @@ struct StudioCreateFlowView: View {
     @State private var preparation: StudyMaterialPreparation.Progress?
 
     var body: some View {
-        // È una sheet a tutti gli effetti (tabella di HANDOFF): stessa
-        // testata commit di ogni altra, col verbo «Genera». L'Annulla
-        // resta fermo finché la preparazione dei materiali è in corso.
+        // Sheet con testata di sola chiusura: qui la conferma NON sta in
+        // alto come verbo. Generare è la fine di un modulo che si
+        // compila dall'alto in basso, e il tasto sta dove si arriva —
+        // in fondo, grande, con accanto il costo in chiamate.
+        // La ✕ resta ferma finché la preparazione dei materiali è in corso.
         BoostSheet(
             title: "Crea nuovo studio",
-            mode: .commit(verb: "Genera", enabled: canGenerate && preparation == nil),
+            mode: .read,
             onDismiss: {
                 guard preparation == nil else { return }
                 onCancel()
-            },
-            onConfirm: { createStudy() }
+            }
         ) {
             VStack(spacing: 0) {
                 ScrollView {
@@ -666,10 +667,22 @@ struct StudioCreateFlowView: View {
                             .presentationDetents([.medium, .large])
                     }
                 }
-                if canGenerate, AIService.selectedProvider == .gemini {
-                    Text(callEstimateLabel)
-                        .font(DesignFont.caption)
-                        .foregroundStyle(DesignColor.textTertiary)
+                VStack(alignment: .trailing, spacing: DesignSpace.s1) {
+                    BoostButton(
+                        "Genera studio",
+                        icon: "sparkles",
+                        tone: .primary,
+                        isLoading: preparation != nil
+                    ) {
+                        createStudy()
+                    }
+                    .disabled(!canGenerate || preparation != nil)
+
+                    if canGenerate, AIService.selectedProvider == .gemini {
+                        Text(callEstimateLabel)
+                            .font(DesignFont.caption)
+                            .foregroundStyle(DesignColor.textTertiary)
+                    }
                 }
             }
         }

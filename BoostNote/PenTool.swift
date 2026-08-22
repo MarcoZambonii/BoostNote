@@ -24,20 +24,14 @@ enum PenTool: String, CaseIterable, Identifiable {
     var inkType: PKInkingTool.InkType? {
         switch self {
         case .pen: .pen
-        // L'evidenziatore è una PENNA con inchiostro trasparente: punta
-        // tonda, tratto uniforme, nessuna sorpresa in curva.
-        //
-        // Sarebbe stato meglio `.monoline`, che ha larghezza IDENTICA a
-        // qualsiasi pressione (misurato: 12,25 pt da forza 0 a forza 1).
-        // Non si può: PencilKit gli accetta larghezze solo fino a 4 punti,
-        // e un evidenziatore da 4 punti non evidenzia niente — ne serve
-        // una ventina. La penna arriva a 25,66.
-        //
-        // Il prezzo è che la penna resta un po' sensibile alla pressione.
-        // Il testo sotto comunque resta leggibile: misurato con giallo al
-        // 40%, un tratto nero coperto resta a 55-79 su 255, cioè grigio
-        // scuro — non è lo sbiadimento che si temeva.
-        case .marker: .pen
+        // L'evidenziatore usa l'inchiostro `.marker` di PencilKit, che
+        // si FONDE con ciò che sta sotto invece di coprirlo: la
+        // scrittura resta nera e leggibile sotto il giallo, che è come
+        // ci si aspetta lavori un evidenziatore. Il prezzo è la punta a
+        // scalpello, che cambia spessore a seconda della direzione del
+        // tratto — con la penna trasparente non succedeva, ma quella
+        // stendeva una velatura SOPRA il testo e lo ingrigiva.
+        case .marker: .marker
         case .text, .eraser, .lasso, .pointer: nil
         }
     }
@@ -59,6 +53,25 @@ enum PenTool: String, CaseIterable, Identifiable {
     // funzionare per tutti.
     var widthRange: ClosedRange<CGFloat> {
         inkType?.validWidthRange ?? 1...30
+    }
+
+    // Solo la penna può rinunciare alla pressione: l'inchiostro a
+    // spessore costante di PencilKit (`.monoline`) è accettato fino a 4
+    // punti, che bastano per scrivere ma non per evidenziare — un
+    // evidenziatore da 4 punti non evidenzia niente.
+    var supportsConstantWidth: Bool { self == .pen }
+
+    // L'inchiostro davvero usato, che dipende dalla pressione scelta.
+    func inkType(pressure: Bool) -> PKInkingTool.InkType? {
+        guard !pressure, supportsConstantWidth else { return inkType }
+        return .monoline
+    }
+
+    // A pressione spenta l'intervallo è quello del monoline (0,5-4): con
+    // quello della penna lo slider avrebbe mostrato fino a 25 punti che
+    // PencilKit avrebbe tagliato in silenzio.
+    func widthRange(pressure: Bool) -> ClosedRange<CGFloat> {
+        inkType(pressure: pressure)?.validWidthRange ?? widthRange
     }
 
     // Spessore iniziale. NON si usa `inkType.defaultWidth`: per matita e
@@ -83,12 +96,13 @@ enum PenTool: String, CaseIterable, Identifiable {
         }
     }
 
-    // Trasparenza dell'evidenziatore. Ora che è una penna normale, non
-    // si fonde più con quello che c'è sotto: la leggibilità del testo
-    // dipende tutta da questo valore. Misurato su testo nero coperto:
-    // 0,25 -> 39/255, 0,4 -> 55/255, 0,5 -> 79/255 (grigio chiaro).
-    // 0,4 tiene il giallo pieno e il testo scuro.
-    static let markerOpacity: CGFloat = 0.4
+    // Serve SOLO all'anteprima dal vivo del tratto (il livello che
+    // disegna mentre la punta è giù): quello compone in modo normale e
+    // senza un po' di trasparenza l'evidenziatore coprirebbe il testo
+    // finché non si stacca la penna. Il tratto definitivo lo rende
+    // PencilKit con l'inchiostro `.marker`, che si fonde da sé.
+    static let markerLivePreviewOpacity: CGFloat = 0.4
+
 }
 
 // Curva di risposta alla pressione della penna:
@@ -146,7 +160,7 @@ enum InkSmoothing {
 }
 
 extension PenTool {
-    func pkTool(color: Color, width: CGFloat, eraserType: PKEraserTool.EraserType, eraserWidth: CGFloat) -> PKTool {
+    func pkTool(color: Color, width: CGFloat, eraserType: PKEraserTool.EraserType, eraserWidth: CGFloat, pressure: Bool = true) -> PKTool {
         switch self {
         case .eraser:
             return PKEraserTool(eraserType, width: eraserWidth)
@@ -157,14 +171,15 @@ extension PenTool {
             // minima come rete di sicurezza, oltre a drawingPolicy.
             return PKInkingTool(.pen, color: .clear, width: 0.01)
         default:
-            guard let inkType else { return PKInkingTool(.pen, color: UIColor(color), width: width) }
+            guard let inkType = inkType(pressure: pressure) else { return PKInkingTool(.pen, color: UIColor(color), width: width) }
             // Fuori intervallo PencilKit taglia in silenzio: si taglia
             // qui, così il valore mostrato è quello davvero applicato.
             let range = inkType.validWidthRange
             let clamped = min(max(width, range.lowerBound), range.upperBound)
-            let inkColor = self == .marker
-                ? UIColor(color).withAlphaComponent(Self.markerOpacity)
-                : UIColor(color)
+            // Niente alpha a mano sull'evidenziatore: l'inchiostro
+            // `.marker` è già translucido e si fonde da sé. Sommarci
+            // anche il 40% lo rendeva un alone slavato.
+            let inkColor = UIColor(color)
             return PKInkingTool(inkType, color: inkColor, width: clamped)
         }
     }
@@ -174,7 +189,10 @@ extension PenTool {
     var systemImage: String {
         switch self {
         case .pen: "pencil.tip"
-        case .marker: "highlighter"
+        // "highlighter" a 17pt è una penna inclinata qualunque, identica
+        // alla punta della penna: il pennarello a punta piatta si
+        // riconosce anche piccolo.
+        case .marker: "paintbrush.pointed.fill"
         case .text: "textformat"
         case .eraser: "eraser"
         case .lasso: "lasso"
@@ -222,4 +240,7 @@ extension PenTool {
 struct StoredInkSettings: Codable {
     var colors: [String: String]
     var widths: [String: Double]
+    // Opzionale: chi aggiorna l'app ha un salvataggio senza questa
+    // chiave, e la penna deve semplicemente restare a pressione.
+    var pressures: [String: Bool]?
 }

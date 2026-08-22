@@ -133,10 +133,12 @@ extension Study {
 
     var sortedModules: [StudyModule] { modules.sorted { $0.order < $1.order } }
 
-    // Gruppo mostrato nella sidebar: la materia se impostata.
-    var subjectOrPlaceholder: String {
+    // La materia, se c'è: nil quando non è stata scritta. Chi la mostra
+    // decide cosa fare del vuoto — inventare un "Senza materia" da
+    // mettere a schermo non aiutava nessuno.
+    var subjectIfAny: String? {
         let trimmed = subject.trimmingCharacters(in: .whitespaces)
-        return trimmed.isEmpty ? "Senza materia" : trimmed
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

@@ -58,14 +58,40 @@ enum ToolbarDock: String, CaseIterable {
     }
 }
 
+// Una penna salvata dall'utente: strumento, colore, spessore e
+// pressione tenuti insieme. Riprenderla costa un tocco invece di
+// rifare ogni volta la stessa configurazione.
+struct PinnedPen: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var toolRaw: String
+    var colorHex: String
+    var width: Double
+    var pressure: Bool
+
+    var tool: PenTool { PenTool(rawValue: toolRaw) ?? .pen }
+    var color: Color { Color(hexString: colorHex) ?? .black }
+
+    // Due penne sono "la stessa" quando coincide la configurazione, non
+    // l'id: serve a capire se quella in mano è già appuntata in barra.
+    func matchesConfiguration(of other: PinnedPen) -> Bool {
+        toolRaw == other.toolRaw
+            && colorHex.caseInsensitiveCompare(other.colorHex) == .orderedSame
+            && abs(width - other.width) < 0.05
+            && pressure == other.pressure
+    }
+}
+
 // Barra strumenti "a isola" flottante, in stile Claude Design
-// (PenToolbar.jsx): pillola con ombra, agganciabile ai 4 lati del foglio.
-// Si trascina dalla maniglia a destra e si aggancia magneticamente al
-// bordo più vicino al rilascio, come i pannelli di sistema su iPad.
+// (PenToolbar.jsx): superficie bianca con ombra, agganciabile ai 4 lati
+// del foglio. Si trascina dalla maniglia a destra e si aggancia
+// magneticamente al bordo più vicino al rilascio.
 struct PenToolbarView: View {
     @Binding var selectedTool: PenTool
     @Binding var inkColors: [PenTool: Color]
     @Binding var inkWidths: [PenTool: CGFloat]
+    // Penna a pressione (tratto che varia con la forza) oppure a
+    // spessore costante: è una proprietà della penna quanto il colore.
+    @Binding var pressureEnabled: [PenTool: Bool]
     @Binding var eraserType: PKEraserTool.EraserType
     @Binding var eraserWidth: CGFloat
     @Binding var magicAction: MagicAction?
@@ -89,7 +115,102 @@ struct PenToolbarView: View {
     @State private var dragOffset: CGSize = .zero
     @GestureState private var isDragging = false
 
+    // Le penne dell'utente, salvate come JSON: sopravvivono alla nota e
+    // all'app. Sono una scorciatoia, non uno stato del disegno — per
+    // questo vivono qui e non fra le preferenze passate dall'editor.
+    @AppStorage("tool.pinnedPens") private var storedPinnedPens = ""
+
     private var axis: Axis { dock.axis }
+
+    // Massimo sei: oltre, la barra non ci sta più su un iPad in verticale
+    // e le penne si mangerebbero gli strumenti.
+    private static let maxPinnedPens = 6
+
+    var pinnedPens: [PinnedPen] {
+        get {
+            storedPinnedPens.data(using: .utf8)
+                .flatMap { try? JSONDecoder().decode([PinnedPen].self, from: $0) } ?? []
+        }
+        nonmutating set {
+            guard let data = try? JSONEncoder().encode(Array(newValue.prefix(Self.maxPinnedPens))),
+                  let string = String(data: data, encoding: .utf8) else { return }
+            storedPinnedPens = string
+        }
+    }
+
+    // La penna attualmente in mano, com'è configurata adesso.
+    private func currentPen(for tool: PenTool) -> PinnedPen {
+        PinnedPen(
+            toolRaw: tool.rawValue,
+            colorHex: (inkColors[tool] ?? tool.defaultColor).hexString ?? "#000000",
+            width: Double(inkWidths[tool] ?? tool.defaultWidth),
+            pressure: pressureEnabled[tool] ?? true
+        )
+    }
+
+    private func isPinned(_ pen: PinnedPen) -> Bool {
+        pinnedPens.contains { $0.matchesConfiguration(of: pen) }
+    }
+
+    private func togglePin(for tool: PenTool) {
+        let pen = currentPen(for: tool)
+        if let index = pinnedPens.firstIndex(where: { $0.matchesConfiguration(of: pen) }) {
+            var pens = pinnedPens
+            pens.remove(at: index)
+            pinnedPens = pens
+        } else {
+            pinnedPens = pinnedPens + [pen]
+        }
+    }
+
+    // Riprendere una penna significa rimettere in mano ESATTAMENTE quella
+    // configurazione: strumento, colore, spessore e pressione insieme.
+    private func apply(_ pen: PinnedPen) {
+        let tool = pen.tool
+        inkColors[tool] = pen.color
+        inkWidths[tool] = CGFloat(pen.width)
+        pressureEnabled[tool] = pen.pressure
+        selectedTool = tool
+    }
+
+    private func isActive(_ pen: PinnedPen) -> Bool {
+        selectedTool == pen.tool && currentPen(for: pen.tool).matchesConfiguration(of: pen)
+    }
+
+    // Tasto di una penna salvata: il glifo dello strumento con sotto la
+    // riga del suo colore, come nel mock.
+    @ViewBuilder
+    private func pinnedPenButton(_ pen: PinnedPen) -> some View {
+        let active = isActive(pen)
+        Button {
+            apply(pen)
+        } label: {
+            Image(systemName: pen.tool.systemImage)
+                .font(.system(size: DesignIcon.md))
+                .foregroundStyle(active ? pen.color : DesignColor.textPrimary)
+                .frame(width: 34, height: 34)
+                .background(
+                    active ? pen.color.opacity(0.15) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                )
+                .overlay(alignment: .bottom) {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(pen.color)
+                        .frame(width: 12, height: 2.5)
+                        .opacity(active ? 1 : 0.45)
+                        .padding(.bottom, DesignSpace.s1)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(pen.tool.label) salvata")
+        .contextMenu {
+            Button(role: .destructive) {
+                pinnedPens = pinnedPens.filter { $0.id != pen.id }
+            } label: {
+                Label("Togli dalla barra", systemImage: "pin.slash")
+            }
+        }
+    }
 
     var body: some View {
         let layout: AnyLayout = axis == .horizontal
@@ -100,6 +221,10 @@ struct PenToolbarView: View {
             layout {
                 ForEach(visibleInks) { tool in
                     inkToolButton(tool)
+                }
+
+                ForEach(pinnedPens) { pen in
+                    pinnedPenButton(pen)
                 }
 
                 moreInksButton
@@ -154,20 +279,15 @@ struct PenToolbarView: View {
         // scrittura è il difetto che si nota di più.
         .frame(maxWidth: axis == .horizontal ? 560 : 46)
         .frame(maxHeight: axis == .vertical ? 460 : 46)
-        // ultraThin invece di regular: si legge cosa c'è sotto, così la
-        // barra sembra appoggiata sul foglio invece di bucarlo.
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous))
+        // Bianca e squadrata come ogni altra superficie sospesa (barra
+        // fissa, pannelli): la pillola traslucida era l'unico pezzo
+        // d'app con una forma e un materiale tutti suoi.
+        .background(DesignColor.surfaceOverlay, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous)
-                .stroke(Color.white.opacity(0.55), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous)
+                .strokeBorder(DesignColor.borderDefault, lineWidth: 1)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignRadius.pill, style: .continuous)
-                .stroke(DesignColor.borderDefault.opacity(0.5), lineWidth: 1)
-        )
-        // Ombra più morbida e diffusa: prima era un alone netto che
-        // faceva sembrare la barra incollata sopra invece che sospesa.
-        .shadow(color: .black.opacity(isDragging ? 0.18 : 0.10), radius: isDragging ? 24 : 18, y: 6)
+        .shadow(color: .black.opacity(isDragging ? 0.20 : 0.12), radius: isDragging ? 26 : 20, y: 7)
         .scaleEffect(isDragging ? 1.03 : 1)
         .offset(dragOffset)
         .animation(.spring(response: 0.32, dampingFraction: 0.78), value: dragOffset)
@@ -235,7 +355,7 @@ struct PenToolbarView: View {
             .foregroundStyle(magicAction != nil ? magicAction!.color : .white)
             .background(
                 magicAction != nil ? AnyShapeStyle(magicAction!.backgroundColor) : AnyShapeStyle(DesignColor.brandPrimary),
-                in: Capsule()
+                in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
             )
         }
         .buttonStyle(.plain)
@@ -386,17 +506,78 @@ struct PenToolbarView: View {
         }
     }
 
+    // Interruttore della pressione: acceso, il tratto ingrossa dove
+    // premi; spento ha spessore identico ovunque. Solo la penna può
+    // farlo davvero — l'inchiostro a spessore costante di PencilKit
+    // (monoline) non supera i 4 punti, e un evidenziatore da 4 punti
+    // non evidenzia niente.
+    @ViewBuilder
+    private func pressureToggle(for tool: PenTool) -> some View {
+        if tool.supportsConstantWidth {
+            let binding = Binding(
+                get: { pressureEnabled[tool] ?? true },
+                set: { isOn in
+                    pressureEnabled[tool] = isOn
+                    // Spegnendo la pressione l'intervallo si stringe: uno
+                    // spessore da 12 resterebbe scritto nello slider ma
+                    // il tratto uscirebbe da 4.
+                    let range = tool.widthRange(pressure: isOn)
+                    let current = inkWidths[tool] ?? tool.defaultWidth
+                    inkWidths[tool] = min(max(current, range.lowerBound), range.upperBound)
+                }
+            )
+            VStack(alignment: .leading, spacing: DesignSpace.s1) {
+                Toggle(isOn: binding) {
+                    Text("Sensibile alla pressione")
+                        .font(DesignFont.label)
+                        .foregroundStyle(DesignColor.textSecondary)
+                }
+                .tint(DesignColor.brandPrimary)
+
+                Text(binding.wrappedValue
+                     ? "Il tratto ingrossa dove premi."
+                     : "Tratto identico ovunque, fino a 4 punti.")
+                    .font(DesignFont.caption)
+                    .foregroundStyle(DesignColor.textTertiary)
+            }
+        }
+    }
+
+    // Appuntare la penna in barra: la configurazione attuale diventa un
+    // tasto, e un secondo tocco sullo stesso comando la toglie.
+    @ViewBuilder
+    private func pinButton(for tool: PenTool) -> some View {
+        let pen = currentPen(for: tool)
+        let pinned = isPinned(pen)
+        BoostButton(
+            pinned ? "Togli dalla barra" : "Appunta in barra",
+            icon: pinned ? "pin.slash" : "pin",
+            tone: pinned ? .ghost : .secondary,
+            size: .compact,
+            fullWidth: true
+        ) {
+            togglePin(for: tool)
+        }
+        .disabled(!pinned && pinnedPens.count >= Self.maxPinnedPens)
+    }
+
     @ViewBuilder
     private func inkOptions(for tool: PenTool) -> some View {
         let color = colorBinding(for: tool)
         let width = widthBinding(for: tool)
-        let range = tool.widthRange
+        // A pressione spenta l'intervallo si stringe (0,5-4): lo slider
+        // deve mostrare quello vero, non promettere spessori che
+        // PencilKit taglierebbe in silenzio.
+        let range = tool.widthRange(pressure: pressureEnabled[tool] ?? true)
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text(tool.hint)
                 .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             inkOptionsBody(color: color, width: width, widthRange: range)
+            pressureToggle(for: tool)
+            Divider()
+            pinButton(for: tool)
         }
     }
 
