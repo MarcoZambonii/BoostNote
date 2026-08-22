@@ -93,7 +93,7 @@ struct StudioTrustSheet: View {
 
                     section(title: "DOVE FINISCONO I TUOI MATERIALI") {
                         Text(privacyText)
-                            .font(.system(size: 13))
+                            .font(DesignFont.label)
                             .foregroundStyle(DesignColor.textSecondary)
                             .lineSpacing(2)
                     }
@@ -118,11 +118,11 @@ struct StudioTrustSheet: View {
             Text(usesRealAI
                  ? "I contenuti di questo studio sono stati generati con \(generatorLabel) a partire dai materiali che hai scelto."
                  : "I moduli di questo studio non sono ancora stati generati: apri una card per vedere cosa è andato storto e riprovare.")
-                .font(.system(size: 15, weight: .medium))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textPrimary)
                 .lineSpacing(2)
             Text("Qui sotto trovi esattamente quali controlli sono attivi, e cosa restano comunque da verificare.")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textTertiary)
         }
     }
@@ -132,14 +132,14 @@ struct StudioTrustSheet: View {
     private var limits: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s2) {
             Label("Cosa non possiamo garantire", systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.attention)
             Text("Questi controlli riducono molto gli errori, ma non li eliminano. Un modello può leggere male una formula, attribuire un enunciato alla sezione sbagliata o produrre una soluzione che sembra corretta e non lo è. Prima di un esame, considera i contenuti generati un aiuto al ripasso, non una fonte da citare: la fonte restano i tuoi materiali, che sono sempre a un tocco di distanza dalla citazione.")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textSecondary)
                 .lineSpacing(2)
             Text("Se trovi qualcosa di sbagliato, usa “Segnala errore” sul contenuto: resta evidenziato e puoi rigenerare il modulo.")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textSecondary)
                 .lineSpacing(2)
         }
@@ -208,7 +208,7 @@ struct StudioTrustSheet: View {
     private func section(title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
             content()
@@ -220,15 +220,15 @@ struct StudioTrustSheet: View {
     private func info(icon: String, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: DesignSpace.s3) {
             Image(systemName: icon)
-                .font(.system(size: 16))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.brandPrimary)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                 Text(detail)
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .lineSpacing(2)
             }
@@ -238,14 +238,14 @@ struct StudioTrustSheet: View {
     private func check(on: Bool, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: DesignSpace.s3) {
             Image(systemName: on ? "checkmark.circle.fill" : "circle.dashed")
-                .font(.system(size: 16))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(on ? DesignColor.success : DesignColor.textTertiary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(on ? DesignColor.textPrimary : DesignColor.textSecondary)
                 Text(detail)
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .lineSpacing(2)
             }

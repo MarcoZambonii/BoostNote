@@ -309,7 +309,7 @@ struct ResearchContentView: View {
 
                 if let errorMessage = model.errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                         .padding(.horizontal, DesignSpace.s1)
                 }
@@ -365,7 +365,7 @@ struct ResearchContentView: View {
     private var sourceNote: some View {
         HStack(alignment: .center, spacing: DesignSpace.s2) {
             Text("Preprint (arXiv) e articoli di riviste e conferenze (OpenAlex), insieme.")
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -385,11 +385,11 @@ struct ResearchContentView: View {
     private var searchField: some View {
         HStack(spacing: DesignSpace.s2) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textTertiary)
             TextField("Cerca un paper (es. neural networks)", text: $model.query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
+                .font(DesignFont.body)
                 .submitLabel(.search)
                 .onSubmit { Task { await model.search() } }
             if model.isSearching {
@@ -402,7 +402,7 @@ struct ResearchContentView: View {
                     model.errorMessage = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 .buttonStyle(.plain)
@@ -466,7 +466,7 @@ struct ResearchContentView: View {
                     RecentPapersStore.clear()
                     recents = []
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(DesignFont.action)
                 .foregroundStyle(DesignColor.textTertiary)
                 .buttonStyle(.plain)
             }
@@ -513,13 +513,13 @@ struct ResearchContentView: View {
     private var emptyState: some View {
         VStack(spacing: DesignSpace.s3) {
             Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 30, weight: .light))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(DesignColor.textTertiary)
             Text("Cerca preprint e articoli")
-                .font(.system(size: 14, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textSecondary)
             Text("I paper che apri o aggiungi a una nota compariranno qui, tra i visti di recente.")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
@@ -530,7 +530,7 @@ struct ResearchContentView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.system(size: 11, weight: .semibold))
+            .font(DesignFont.micro)
             .tracking(0.6)
             .foregroundStyle(DesignColor.textTertiary)
             .padding(.horizontal, DesignSpace.s1)
@@ -607,13 +607,13 @@ private struct PaperRow: View {
                 .frame(width: 36, height: 36)
                 .overlay(
                     Image(systemName: tileIcon)
-                        .font(.system(size: 15))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                 )
 
             VStack(alignment: .leading, spacing: DesignSpace.s1) {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(3)
                 HStack(spacing: DesignSpace.s2) {
@@ -623,7 +623,7 @@ private struct PaperRow: View {
                     // citarlo.
                     if let origin {
                         Text(origin.label.uppercased())
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.4)
                             .foregroundStyle(origin.tint)
                             .padding(.horizontal, 6)
@@ -632,7 +632,7 @@ private struct PaperRow: View {
                     }
                     if !subtitle.isEmpty {
                         Text(subtitle)
-                            .font(.system(size: 12))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                             .lineLimit(2)
                     }
@@ -658,7 +658,7 @@ private struct PaperRow: View {
 
             Button(action: onTogglePin) {
                 Image(systemName: isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(isPinned ? DesignColor.brandPrimary : DesignColor.textTertiary)
                     .frame(width: 28, height: 28)
                     .background(
@@ -680,7 +680,7 @@ private struct PaperActionStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .semibold))
+            .font(DesignFont.action)
             .foregroundStyle(isEnabled ? DesignColor.brandPrimary : DesignColor.textTertiary)
             .padding(.horizontal, DesignSpace.s3)
             .padding(.vertical, 6)
@@ -709,7 +709,7 @@ private struct ResearchNotePickerSheet: View {
                             .foregroundStyle(.primary)
                         if let folder = note.folder {
                             Text(folder.name)
-                                .font(.caption)
+                                .font(DesignFont.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }

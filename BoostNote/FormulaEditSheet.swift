@@ -28,10 +28,10 @@ struct FormulaEditSheet: View {
                 VStack(alignment: .leading, spacing: DesignSpace.s4) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("CODICE LATEX")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.textTertiary)
                         TextField("Formula", text: $latex, axis: .vertical)
-                            .font(.system(size: 14, design: .monospaced))
+                            .font(DesignFont.mono)
                             .foregroundStyle(DesignColor.textPrimary)
                             .textFieldStyle(.plain)
                             .autocorrectionDisabled()
@@ -44,7 +44,7 @@ struct FormulaEditSheet: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("ANTEPRIMA")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.textTertiary)
                         // Si aggiorna mentre si scrive: l'errore di sintassi
                         // si vede subito, non dopo aver confermato.
@@ -57,7 +57,7 @@ struct FormulaEditSheet: View {
 
                     if let errorMessage {
                         Text(errorMessage)
-                            .font(.system(size: 13))
+                            .font(DesignFont.label)
                             .foregroundStyle(DesignColor.danger)
                     }
 

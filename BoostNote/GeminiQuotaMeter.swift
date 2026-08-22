@@ -70,7 +70,7 @@ struct GeminiQuotaPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text("QUOTA GEMINI · FREE TIER")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
 
@@ -90,7 +90,7 @@ struct GeminiQuotaPanel: View {
             )
 
             Text("Stima locale: conta solo le chiamate riuscite di quest'app. Le quote dei modelli in catena si sommano · azzeramento alle 9:00 italiane.")
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -100,7 +100,7 @@ struct GeminiQuotaPanel: View {
         HStack(spacing: DesignSpace.s2) {
             Circle().fill(color).frame(width: 8, height: 8)
             Text(label)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
                 .frame(width: 56, alignment: .leading)
             GeometryReader { proxy in
@@ -112,10 +112,10 @@ struct GeminiQuotaPanel: View {
             }
             .frame(height: 6)
             Text("\(used)/\(limit)")
-                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .font(DesignFont.caption.monospacedDigit())
                 .foregroundStyle(DesignColor.textSecondary)
             Text(note)
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         }
     }

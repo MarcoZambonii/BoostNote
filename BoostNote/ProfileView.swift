@@ -66,11 +66,11 @@ struct ProfileView: View {
             if onClose != nil {
                 HStack {
                     Text("Profilo")
-                        .font(.system(size: 20, weight: .ultraLight))
+                        .font(DesignFont.sectionTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                     Spacer()
                     Button("Chiudi") { onClose?() }
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DesignFont.action)
                         .foregroundStyle(DesignColor.brandPrimary)
                         .buttonStyle(.plain)
                 }
@@ -170,7 +170,7 @@ struct ProfileView: View {
                             photoImage.resizable().scaledToFill().frame(width: 64, height: 64).clipShape(Circle())
                         } else {
                             Image(systemName: "person.fill")
-                                .font(.system(size: 24))
+                                .font(.system(size: DesignIcon.xl))
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     }
@@ -195,7 +195,7 @@ struct ProfileView: View {
     private func profileField(_ placeholder: String, text: Binding<String>) -> some View {
         TextField(placeholder, text: text)
             .textFieldStyle(.plain)
-            .font(.system(size: 13.5))
+            .font(DesignFont.label)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
@@ -241,20 +241,20 @@ struct ProfileView: View {
     private func settingsRow(icon: String, title: String, subtitle: String) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: icon)
-                .font(.system(size: 18))
+                .font(.system(size: DesignIcon.lg))
                 .foregroundStyle(DesignColor.brandPrimary)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(DesignFont.body)
                     .foregroundStyle(DesignColor.textPrimary)
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textSecondary)
             }
             Spacer()
             Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textSecondary)
         }
         .contentShape(Rectangle())
@@ -271,18 +271,18 @@ struct ProfileView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(DesignColor.success)
                         Text("Attivo su \"\(NoteArchiveService.folderDisplayName ?? "cartella scelta")\"")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DesignFont.label)
                         Spacer()
                         Button("Disattiva") {
                             NoteArchiveService.removeFolder()
                             archiveConfigured = false
                         }
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DesignFont.action)
                         .foregroundStyle(DesignColor.danger)
                         .buttonStyle(.plain)
                     }
                     Text("Ogni nota, quando la chiudi, lascia nella cartella il suo pacchetto .boostnote: se perdi l'iPad, reimporti i pacchetti e le note tornano modificabili identiche. La scrittura avviene in background e non tocca mai la penna.")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                     HStack(spacing: DesignSpace.s3) {
                         toneButton("Archivia tutte adesso", icon: "arrow.up.doc") {
@@ -296,12 +296,12 @@ struct ProfileView: View {
                     }
                     if let archiveMessage {
                         Text(archiveMessage)
-                            .font(.system(size: 12))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textSecondary)
                     }
                 } else {
                     Text("Scegli una cartella su OneDrive (1TB gratuito con l'account Polimi, dall'app File) o su qualunque altro provider: ogni nota chiusa ci lascerà una copia ripristinabile. Il database dell'app resta sul dispositivo — nella cartella vanno solo copie.")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                     HStack(spacing: DesignSpace.s3) {
                         toneButton("Scegli cartella", icon: "folder.badge.plus", tone: .filled) {
@@ -359,23 +359,23 @@ struct ProfileView: View {
         sectionCard(title: "Sincronizzazioni") {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 Label("iCloud", systemImage: "icloud")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(DesignFont.body)
                 Text("Le note si sincronizzano da sole tra i tuoi dispositivi quando l'iPad è connesso al tuo account iCloud: non c'è nulla da attivare qui. Senza iCloud, tutto resta comunque salvato sul dispositivo.")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textSecondary)
 
                 Divider()
 
                 HStack {
                     Label("Obsidian", systemImage: "note.text")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(DesignFont.body)
                     Spacer()
                     Text("In arrivo")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 Text("Collegamento a un vault Obsidian — non ancora disponibile.")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textSecondary)
             }
         }
@@ -385,15 +385,15 @@ struct ProfileView: View {
         sectionCard(title: "WeBeep / PolimiApp") {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 Text("WeBeep gira su Moodle: il login avviene sulla vera pagina Polimi in un browser incorporato, l'app non vede mai la password. Integrazione non ufficiale — può smettere di funzionare se Polimi cambia configurazione.")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
 
                 if let webeepSiteInfo {
                     Label("Connesso come \(webeepSiteInfo.fullname)", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.success)
                     Text("Sfoglia corsi e file dalla scheda WeBeep nella barra laterale.")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                     Button("Disconnetti") {
                         WebeepService.signOut()
@@ -405,10 +405,10 @@ struct ProfileView: View {
                     ProgressView("Verifica connessione…")
                 } else if webeepUnreachable, let token = webeepToken {
                     Label("WeBeep non risponde in questo momento", systemImage: "wifi.exclamationmark")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.attention)
                     Text("Il collegamento resta attivo: probabilmente è la rete, o WeBeep è giù. Riprova tra poco.")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                     Button("Riprova") {
                         Task { await loadWebeepSiteInfo(token: token) }
@@ -432,7 +432,7 @@ struct ProfileView: View {
         sectionCard(title: "AI per lo Studio") {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 Text("Genera riassunti, esercizi, esercizi teorici e flashcard nell'ambiente Studio. Senza provider configurato la generazione si ferma con il motivo, e puoi riprovare dopo averlo impostato.")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
 
                 HStack(spacing: 0) {
@@ -442,7 +442,7 @@ struct ProfileView: View {
                             aiProviderRaw = kind.rawValue
                         } label: {
                             Text(kind.label)
-                                .font(.system(size: 12.5, weight: isOn ? .semibold : .medium))
+                                .font(isOn ? DesignFont.action : DesignFont.label)
                                 .foregroundStyle(isOn ? DesignColor.brandPrimary : DesignColor.textSecondary)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 6)
@@ -459,7 +459,7 @@ struct ProfileView: View {
 
                 if let kind = AIProviderKind(rawValue: aiProviderRaw) {
                     Text(kind.hint)
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                 }
 
@@ -470,7 +470,7 @@ struct ProfileView: View {
                     // giorno, non "quanto è bravo") vive in Sviluppo ›
                     // Lettura dei materiali: qui basta la chiave.
                     Label("Quale modello Gemini usare per lettura e generazione si sceglie in Sviluppo › Lettura dei materiali.", systemImage: "slider.horizontal.3")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
 
                     credentialEditor(
@@ -493,7 +493,7 @@ struct ProfileView: View {
                     Divider()
 
                     Text("La stessa chiave la usa la penna magica per l'azione \"Spiega\". Si crea su console.anthropic.com.")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
 
                     credentialEditor(
@@ -553,7 +553,7 @@ struct ProfileView: View {
         } else if isSaved {
             HStack(spacing: DesignSpace.s3) {
                 Label(savedLabel, systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.success)
                 Spacer()
                 Button("Sostituisci") { isEditing.wrappedValue = true }
@@ -575,7 +575,7 @@ struct ProfileView: View {
         sectionCard(title: "Wolfram Alpha") {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 Text("Usata dalla penna magica (azione \"Wolfram\") per risolvere le espressioni cerchiate, e dallo strumento Wolfram del pannello laterale della nota.")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
                 credentialEditor(
                     placeholder: "AppID",
@@ -599,9 +599,9 @@ struct ProfileView: View {
         sectionCard(title: "About") {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 VStack(alignment: .leading, spacing: DesignSpace.s1) {
-                    Text("BoostNote").font(.system(size: 14, weight: .semibold))
+                    Text("BoostNote").font(DesignFont.cardTitle)
                     Text("Versione 0.1 — app di note per iPad con Apple Pencil.")
-                        .font(.system(size: 13))
+                        .font(DesignFont.label)
                         .foregroundStyle(DesignColor.textSecondary)
                 }
 
@@ -615,7 +615,7 @@ struct ProfileView: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 if let icon {
-                    Image(systemName: icon).font(.system(size: 13, weight: .semibold))
+                    Image(systemName: icon).font(.system(size: DesignIcon.md))
                 }
                 Text(title)
             }
@@ -627,7 +627,7 @@ struct ProfileView: View {
     private func sectionCard(title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased())
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
                 .padding(.leading, 2)
@@ -671,14 +671,14 @@ private struct MaterialReadingPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 Text("Lettura e generazione sono separate perché hanno profili opposti: trascrivere pagine costa tante chiamate su un compito semplice, generare ne costa poche ma è lì che serve un modello capace.")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
 
                 modelTierPicker(for: .reading, selection: $readingTierRaw)
                 modelTierPicker(for: .generation, selection: $generationTierRaw)
 
                 Label("Se la quota di un modello finisce, l'app passa da sola all'altro.", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.success)
 
                 Divider()
@@ -698,11 +698,11 @@ private struct MaterialReadingPage: View {
     private func modelTierPicker(for purpose: AIPurpose, selection: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: DesignSpace.s2) {
             Text(purpose.label.uppercased())
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textSecondary)
             Text(purpose.explanation)
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textSecondary)
             BoostSegmented(
                 options: GeminiModelTier.allCases.map { ($0.rawValue, $0.label) },
@@ -710,7 +710,7 @@ private struct MaterialReadingPage: View {
             )
             if let tier = GeminiModelTier(rawValue: selection.wrappedValue) {
                 Text(tier.hint)
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textSecondary)
             }
         }
@@ -733,7 +733,7 @@ private struct PenTuningControls: View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             HStack {
                 Text("Come risponde la penna alla pressione e quanto viene levigato il tratto.")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
@@ -744,7 +744,7 @@ private struct PenTuningControls: View {
                         gamma = InkPressure.defaultGamma
                         smoothing = InkSmoothing.defaultDistance
                     }
-                    .font(.system(size: 12))
+                    .font(DesignFont.action)
                 }
             }
 
@@ -776,11 +776,11 @@ private struct PenTuningControls: View {
     private func labeledValue(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label)
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textSecondary)
             Spacer()
             Text(value)
-                .font(.system(size: 13, design: .monospaced))
+                .font(DesignFont.mono)
                 .foregroundStyle(DesignColor.textSecondary)
         }
     }
@@ -791,7 +791,7 @@ private struct PenTuningControls: View {
             Spacer()
             Text(trailing)
         }
-        .font(.system(size: 10))
+        .font(DesignFont.micro)
         .foregroundStyle(DesignColor.textSecondary)
     }
 
@@ -803,7 +803,7 @@ private struct PenTuningControls: View {
                 .frame(maxWidth: .infinity)
                 .animation(.easeOut(duration: 0.12), value: width)
             Text(label)
-                .font(.system(size: 10))
+                .font(DesignFont.micro)
                 .foregroundStyle(DesignColor.textSecondary)
         }
     }

@@ -17,8 +17,9 @@ import SwiftUI
 // WebView entra in gioco solo quando serve davvero.
 struct StudioRichText: View {
     let text: String
-    var size: CGFloat = 14
-    var weight: Font.Weight = .regular
+    // Ruolo tipografico del percorso veloce (il ramo WebView compone con
+    // il CSS del template e non lo legge): dai DesignFont, mai size raw.
+    var font: Font = DesignFont.body
     var color: Color = DesignColor.textSecondary
 
     @State private var height: CGFloat = 20
@@ -30,9 +31,9 @@ struct StudioRichText: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Text(text)
-                .font(.system(size: size, weight: weight))
+                .font(font)
                 .foregroundStyle(color)
-                .lineSpacing(3)
+                .lineSpacing(DesignFont.bodyLineSpacing)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

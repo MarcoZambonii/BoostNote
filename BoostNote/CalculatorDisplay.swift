@@ -220,6 +220,12 @@ struct MathDisplayView: View {
         .system(size: size, weight: weight).monospacedDigit()
     }
 
+    // L'indice della radice (∛) scala col corpo della formula: il
+    // compositore è parametrico per natura, come DesignFont.readout.
+    private var radicalIndexFont: Font {
+        .system(size: size * 0.46, weight: weight)
+    }
+
     var body: some View {
         switch node {
         case .text(let value):
@@ -265,7 +271,7 @@ struct MathDisplayView: View {
             HStack(spacing: 0) {
                 if let index {
                     Text(index)
-                        .font(.system(size: size * 0.46, weight: weight))
+                        .font(radicalIndexFont)
                         .foregroundStyle(color)
                         .padding(.trailing, -size * 0.28)
                         .offset(y: size * 0.1)

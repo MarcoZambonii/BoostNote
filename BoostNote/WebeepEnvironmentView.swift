@@ -127,9 +127,9 @@ struct WebeepEnvironmentView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.system(size: DesignIcon.md))
                             Text("Indietro")
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(DesignFont.cardTitle)
                         }
                         .foregroundStyle(DesignColor.textPrimary)
                         .padding(.horizontal, DesignSpace.s3 + 2)
@@ -153,23 +153,23 @@ struct WebeepEnvironmentView: View {
                     sections = []
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: DesignIcon.md))
                 }
                 .buttonStyle(.plain)
 
                 Text(WebeepService.stripMultilang(selectedCourse.fullname))
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
             } else {
                 Image(systemName: "building.columns.fill")
                     .foregroundStyle(DesignColor.brandPrimary)
                 Text("WeBeep")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                 if let siteInfo {
                     Text("· \(siteInfo.fullname)")
-                        .font(.system(size: 13))
+                        .font(DesignFont.label)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -181,7 +181,7 @@ struct WebeepEnvironmentView: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text("Importo…")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -200,13 +200,13 @@ struct WebeepEnvironmentView: View {
     private var connectPrompt: some View {
         VStack(spacing: DesignSpace.s4) {
             Image(systemName: "building.columns")
-                .font(.system(size: 40))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(DesignColor.textTertiary)
             Text("Collega WeBeep")
-                .font(.system(size: 18, weight: .semibold))
+                .font(DesignFont.sectionTitle)
                 .foregroundStyle(DesignColor.textPrimary)
             Text("Il login avviene sulla vera pagina Polimi in un browser incorporato: l'app non vede mai la password.")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textTertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
@@ -234,18 +234,18 @@ struct WebeepEnvironmentView: View {
                                         .frame(width: 24)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(WebeepService.stripMultilang(course.fullname))
-                                            .font(.system(size: 14, weight: .medium))
+                                            .font(DesignFont.body)
                                             .foregroundStyle(DesignColor.textPrimary)
                                             .multilineTextAlignment(.leading)
                                         if let shortname = course.shortname {
                                             Text(shortname)
-                                                .font(.system(size: 12))
+                                                .font(DesignFont.caption)
                                                 .foregroundStyle(DesignColor.textTertiary)
                                         }
                                     }
                                     Spacer()
                                     Image(systemName: "chevron.right")
-                                        .font(.system(size: 12, weight: .semibold))
+                                        .font(.system(size: DesignIcon.sm))
                                         .foregroundStyle(DesignColor.textTertiary)
                                 }
                                 .padding(DesignSpace.s4)
@@ -275,7 +275,7 @@ struct WebeepEnvironmentView: View {
                             if !section.files.isEmpty {
                                 VStack(alignment: .leading, spacing: DesignSpace.s3) {
                                     Text(WebeepService.stripMultilang(section.name?.isEmpty == false ? section.name! : "Materiali"))
-                                        .font(.system(size: 12, weight: .semibold))
+                                        .font(DesignFont.caption)
                                         .tracking(0.4)
                                         .foregroundStyle(DesignColor.textTertiary)
                                         .padding(.horizontal, DesignSpace.s2)
@@ -311,7 +311,7 @@ struct WebeepEnvironmentView: View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             if isFolder {
                 Label(WebeepService.stripMultilang(module.name?.isEmpty == false ? module.name! : "Cartella"), systemImage: "folder.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textSecondary)
                     .padding(.horizontal, DesignSpace.s2)
             }
@@ -323,7 +323,7 @@ struct WebeepEnvironmentView: View {
             ForEach(subfolderNames, id: \.self) { name in
                 VStack(alignment: .leading, spacing: DesignSpace.s2) {
                     Label(WebeepService.stripMultilang(name), systemImage: "folder")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                         .padding(.horizontal, DesignSpace.s2 + 6)
                     fileGroupCard(subfolders[name] ?? [])
@@ -352,7 +352,7 @@ struct WebeepEnvironmentView: View {
                 .foregroundStyle(DesignColor.brandPrimary)
                 .frame(width: 22)
             Text(WebeepService.stripMultilang(file.filename))
-                .font(.system(size: 14))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textPrimary)
                 .multilineTextAlignment(.leading)
             Spacer()
@@ -568,7 +568,7 @@ private struct WebeepNotePickerSheet: View {
                             .foregroundStyle(.primary)
                         if let folder = note.folder {
                             Text(folder.name)
-                                .font(.caption)
+                                .font(DesignFont.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }

@@ -91,11 +91,11 @@ struct WebeepFilePickerSheet: View {
     private func courseRow(_ course: WebeepCourse) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(WebeepService.stripMultilang(course.fullname))
-                .font(.system(size: 15, weight: .medium))
+                .font(DesignFont.body)
                 .lineLimit(2)
             if let short = course.shortname, !short.isEmpty {
                 Text(short)
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
             }
         }
@@ -109,7 +109,7 @@ struct WebeepFilePickerSheet: View {
                     // I falliti restano spuntati: si riprova senza
                     // ricominciare la selezione da capo.
                     Text("Non scaricati: \(failedNames.joined(separator: ", ")). Restano selezionati, puoi riprovare.")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.danger)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -126,7 +126,7 @@ struct WebeepFilePickerSheet: View {
                             Text(selected.count == 1 ? "Aggiungi 1 file" : "Aggiungi \(selected.count) file")
                         }
                     }
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textOnBrand)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, DesignSpace.s3)
@@ -213,7 +213,7 @@ private struct WebeepCourseFilesView: View {
                 List {
                     if let errorMessage {
                         Text(errorMessage)
-                            .font(.system(size: 12))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.danger)
                     }
                     ForEach(pdfSections) { section in
@@ -237,7 +237,7 @@ private struct WebeepCourseFilesView: View {
                     Button(allVisibleSelected ? "Deseleziona tutti" : "Tutti") {
                         toggleAllVisible()
                     }
-                    .font(.system(size: 14, weight: .medium))
+                    .font(DesignFont.body)
                 }
             }
         }
@@ -265,12 +265,12 @@ private struct WebeepCourseFilesView: View {
                     .foregroundStyle(isSelected(file) ? DesignColor.brandPrimary : DesignColor.brandPrimary.opacity(0.7))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(file.filename)
-                        .font(.system(size: 14))
+                        .font(DesignFont.body)
                         .foregroundStyle(DesignColor.textPrimary)
                         .lineLimit(2)
                     if let sub = file.subfolderName {
                         Text(sub)
-                            .font(.system(size: 11))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                 }

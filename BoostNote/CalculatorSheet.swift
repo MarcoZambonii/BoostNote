@@ -85,16 +85,16 @@ struct CalculatorContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 Text(angleMode.label)
-                    .font(.system(size: 9.5, weight: .bold)).tracking(1)
+                    .font(DesignFont.micro).tracking(1)
                     .foregroundStyle(DesignColor.textTertiary)
                 if showsExact {
                     Text("ESATTO")
-                        .font(.system(size: 9.5, weight: .bold)).tracking(1)
+                        .font(DesignFont.micro).tracking(1)
                         .foregroundStyle(DesignColor.brandPrimary)
                 }
                 Spacer(minLength: 0)
                 Text(memoryHint)
-                    .font(.system(size: 9.5, weight: .medium)).tracking(0.4)
+                    .font(DesignFont.micro).tracking(0.4)
                     .foregroundStyle(DesignColor.textTertiary)
             }
             .frame(minHeight: 13)
@@ -104,14 +104,14 @@ struct CalculatorContentView: View {
                     MathDisplayView(node: MathLayout.nodes(from: solved.expression),
                                     size: 13, color: DesignColor.textTertiary, weight: .regular)
                     Text(" = ")
-                        .font(.system(size: 13))
+                        .font(DesignFont.label)
                         .foregroundStyle(DesignColor.textTertiary)
                     Spacer(minLength: 0)
                 }
                 .frame(minHeight: 17)
 
                 Text(showsExact ? (solved.exact ?? solved.text) : solved.text)
-                    .font(.system(size: 34, weight: .ultraLight).monospacedDigit())
+                    .font(DesignFont.readout(size: 34).monospacedDigit())
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(2)
                     .minimumScaleFactor(0.5)
@@ -121,7 +121,7 @@ struct CalculatorContentView: View {
                     Group {
                         if expression.isEmpty {
                             Text("scrivi un'espressione, poi premi =")
-                                .font(.system(size: 14))
+                                .font(DesignFont.body)
                                 .foregroundStyle(DesignColor.textTertiary)
                         } else {
                             MathDisplayView(node: MathLayout.nodes(from: expression, cursor: cursor), size: 26)
@@ -135,7 +135,7 @@ struct CalculatorContentView: View {
 
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.system(size: 12.5))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -156,12 +156,12 @@ struct CalculatorContentView: View {
         HStack(spacing: 6) {
             if solved != nil {
                 Button("Continua dal risultato") { continueFromResult() }
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(DesignFont.action)
                     .foregroundStyle(DesignColor.brandPrimary)
                     .buttonStyle(.plain)
             } else {
                 Text("cursore")
-                    .font(.system(size: 10.5))
+                    .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.textTertiary)
             }
             Spacer(minLength: 0)
@@ -173,7 +173,7 @@ struct CalculatorContentView: View {
     private func arrow(_ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.brandPrimary)
                 .frame(width: 40, height: 30)
                 .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
@@ -274,17 +274,17 @@ struct CalculatorContentView: View {
                 // leggere, il simbolo di cancellazione si riconosce.
                 if key.action == "#back" {
                     Image(systemName: "delete.left")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: DesignIcon.md))
                 } else if key.action == "/" && !showsSecond {
                     VStack(spacing: 1.5) {
                         Text("a").italic()
                         Rectangle().fill(ink).frame(width: 11, height: 1)
                         Text("b").italic()
                     }
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DesignFont.micro)
                 } else {
                     Text(label)
-                        .font(.system(size: fontSize(for: key, label: label), weight: fontWeight(for: key, lit: isLit)))
+                        .font(keyFont(for: key, label: label))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
@@ -331,25 +331,17 @@ struct CalculatorContentView: View {
         }
     }
 
-    private func fontSize(for key: Key, label: String) -> CGFloat {
+    // Ruoli della tabella di migrazione applicati ai tasti: cifre ed
+    // equals (18) → sectionTitle; operatori corti (17) → cardTitle;
+    // funzioni, operatori lunghi e controlli (12-13, dentro un tasto) →
+    // action; indicatori di modalità (11, MAIUSCOLI) → micro. Il "lit"
+    // non tocca più il peso: lo dice già la faccia del tasto.
+    private func keyFont(for key: Key, label: String) -> Font {
         switch key.role {
-        case .mode: return 11
-        case .digit: return 18
-        case .operation: return label.count > 2 ? 13 : 17
-        case .control: return 12
-        case .equals: return 18
-        case .function: return 13
-        }
-    }
-
-    private func fontWeight(for key: Key, lit: Bool) -> Font.Weight {
-        if lit { return .semibold }
-        switch key.role {
-        case .mode: return .bold
-        case .digit: return .regular
-        case .operation: return .medium
-        case .control, .equals: return .semibold
-        case .function: return .medium
+        case .mode: return DesignFont.micro
+        case .digit, .equals: return DesignFont.sectionTitle
+        case .operation: return label.count > 2 ? DesignFont.action : DesignFont.cardTitle
+        case .control, .function: return DesignFont.action
         }
     }
 
@@ -369,7 +361,7 @@ struct CalculatorContentView: View {
             panel = panel == target ? nil : target
         } label: {
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .font(DesignFont.caption)
                 .foregroundStyle(panel == target ? DesignColor.brandPrimary : DesignColor.textTertiary)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 4)
@@ -403,12 +395,12 @@ struct CalculatorContentView: View {
                 ForEach(Self.catalog, id: \.0) { group, items in
                     VStack(alignment: .leading, spacing: 5) {
                         Text(group.uppercased())
-                            .font(.system(size: 9.5, weight: .bold)).tracking(1)
+                            .font(DesignFont.micro).tracking(1)
                             .foregroundStyle(DesignColor.textTertiary)
                         FlowRow(items: items) { item in
                             Button { insert(item) } label: {
                                 Text(item.replacingOccurrences(of: "(", with: ""))
-                                    .font(.system(size: 11.5, weight: .medium))
+                                    .font(DesignFont.action)
                                     .foregroundStyle(DesignColor.textPrimary)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
@@ -419,7 +411,7 @@ struct CalculatorContentView: View {
                     }
                 }
                 Text("Moltiplicazione implicita ammessa (2π, 3(x+1)) · le variabili si salvano dal pannello Variabili e si richiamano toccandone il nome.")
-                    .font(.system(size: 10.5))
+                    .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -434,7 +426,7 @@ struct CalculatorContentView: View {
             VStack(spacing: 0) {
                 if history.isEmpty {
                     Text("Ancora nessun calcolo.")
-                        .font(.system(size: 11.5))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 8)
@@ -446,7 +438,7 @@ struct CalculatorContentView: View {
                                             size: 13, color: DesignColor.textSecondary, weight: .regular)
                             Spacer(minLength: 0)
                             Text(entry.output)
-                                .font(.system(size: 13, weight: .medium).monospacedDigit())
+                                .font(DesignFont.label.monospacedDigit())
                                 .foregroundStyle(DesignColor.textPrimary)
                         }
                         .padding(.vertical, 7)
@@ -471,14 +463,14 @@ struct CalculatorContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text("Salva il risultato in")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                 ForEach(Self.variableNames, id: \.self) { name in
                     Button {
                         if let solved { variables[name] = solved.value }
                     } label: {
                         Text(name)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DesignFont.action)
                             .foregroundStyle(solved == nil ? DesignColor.textTertiary : DesignColor.brandPrimary)
                             .frame(minWidth: 24)
                             .padding(.horizontal, 7)
@@ -500,7 +492,7 @@ struct CalculatorContentView: View {
 
             if solved == nil {
                 Text("Premi prima = : si salva il risultato mostrato.")
-                    .font(.system(size: 10.5))
+                    .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.textTertiary)
                     .padding(.bottom, 8)
                     .padding(.horizontal, 2)
@@ -510,17 +502,17 @@ struct CalculatorContentView: View {
                 HStack(spacing: 8) {
                     Button { insert(name) } label: {
                         Text(name)
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .font(DesignFont.action)
                             .foregroundStyle(DesignColor.brandPrimary)
                             .frame(width: 34, alignment: .leading)
                     }
                     .buttonStyle(.plain)
                     Text(CalcFormatter.string(variables[name] ?? 0))
-                        .font(.system(size: 12.5).monospacedDigit())
+                        .font(DesignFont.caption.monospacedDigit())
                         .foregroundStyle(DesignColor.textPrimary)
                     Spacer(minLength: 0)
                     Button("rimuovi") { variables.removeValue(forKey: name) }
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                         .buttonStyle(.plain)
                 }

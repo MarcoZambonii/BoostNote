@@ -185,7 +185,7 @@ struct PenToolbarView: View {
     @ViewBuilder
     private var dragHandle: some View {
         Image(systemName: "circle.grid.3x3.fill")
-            .font(.system(size: 15))
+            .font(.system(size: DesignIcon.md))
             .foregroundStyle(DesignColor.textTertiary)
             .frame(width: 34, height: 34)
             .contentShape(Rectangle())
@@ -222,11 +222,11 @@ struct PenToolbarView: View {
                         .tint(magicAction != nil ? magicAction!.color : .white)
                 } else {
                     Image(systemName: magicAction?.systemImage ?? "wand.and.stars")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: DesignIcon.md))
                 }
                 if axis == .horizontal {
                     Text(isMagicProcessing ? "Elaborazione…" : (magicAction?.label ?? "Magica"))
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DesignFont.action)
                 }
             }
             .padding(.horizontal, axis == .horizontal ? 14 : 0)
@@ -346,7 +346,7 @@ struct PenToolbarView: View {
         .popover(isPresented: $showingInkPicker) {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 Text("Altri inchiostri")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textTertiary)
 
                 ForEach(secondaryInks) { tool in
@@ -356,15 +356,15 @@ struct PenToolbarView: View {
                     } label: {
                         HStack(spacing: DesignSpace.s3) {
                             Image(systemName: tool.systemImage)
-                                .font(.system(size: 16))
+                                .font(.system(size: DesignIcon.md))
                                 .frame(width: 24)
                                 .foregroundStyle(selectedTool == tool ? DesignColor.brandPrimary : DesignColor.textSecondary)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(tool.label)
-                                    .font(.system(size: 14, weight: .medium))
+                                    .font(DesignFont.body)
                                     .foregroundStyle(DesignColor.textPrimary)
                                 Text(tool.hint)
-                                    .font(.system(size: 11))
+                                    .font(DesignFont.caption)
                                     .foregroundStyle(DesignColor.textTertiary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -393,7 +393,7 @@ struct PenToolbarView: View {
         let range = tool.widthRange
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text(tool.hint)
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             inkOptionsBody(color: color, width: width, widthRange: range)
@@ -403,7 +403,7 @@ struct PenToolbarView: View {
     private func inkOptionsBody(color: Binding<Color>, width: Binding<CGFloat>, widthRange: ClosedRange<CGFloat>) -> some View {
         VStack(alignment: .leading, spacing: DesignSpace.s4) {
             Text("Colore")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textTertiary)
 
             HStack(spacing: DesignSpace.s2) {
@@ -429,13 +429,13 @@ struct PenToolbarView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 HStack {
                     Text("Spessore punta")
-                        .font(.system(size: 13))
+                        .font(DesignFont.label)
                         .foregroundStyle(DesignColor.textSecondary)
                     Spacer()
                     // In punti: i millimetri qui confondevano (deciso
                     // dall'utente); restano sul passo dei quadretti.
                     Text(Double(width.wrappedValue).formatted(.number.precision(.fractionLength(0...1))))
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(DesignFont.mono)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 // Passo proporzionale all'intervallo: con `step: 1` fisso
@@ -484,7 +484,7 @@ struct PenToolbarView: View {
     private var eraserOptions: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s4) {
             Text("Gomma")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textTertiary)
 
             // Una sola gomma, a oggetti. La "Precisa" (parziale) è stata
@@ -493,18 +493,18 @@ struct PenToolbarView: View {
             // dell'utente, senza indagare oltre per ora. Il codice di
             // divisione (InkEraser.split) resta, dormiente.
             Text("Toglie il tratto intero che tocchi.")
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 HStack {
                     Text("Dimensione")
-                        .font(.system(size: 13))
+                        .font(DesignFont.label)
                         .foregroundStyle(DesignColor.textSecondary)
                     Spacer()
                     Text("\(Int(eraserWidth))")
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(DesignFont.mono)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 Slider(value: $eraserWidth, in: 10...80, step: 2)
@@ -550,14 +550,14 @@ struct PenToolbarView: View {
         .popover(isPresented: $showingLassoInfo) {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 Text("Selezione")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textTertiary)
                 lassoStep("1", "Cerchia quello che ti interessa.")
                 lassoStep("2", "Trascina la selezione per spostarla.")
                 lassoStep("3", "Usa la barretta sopra la selezione per duplicare, copiare, tagliare o eliminare.")
                 Divider()
                 Text("Con qualcosa negli appunti, un tocco su un punto vuoto lo incolla lì. Funziona sull'inchiostro, non sulle caselle di testo: quelle si spostano trascinandole direttamente.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -570,12 +570,12 @@ struct PenToolbarView: View {
     private func lassoStep(_ number: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: DesignSpace.s2) {
             Text(number)
-                .font(.system(size: 11, weight: .bold))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.brandPrimary)
                 .frame(width: 16, height: 16)
                 .background(DesignColor.brandPrimarySubtle, in: Circle())
             Text(text)
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -584,7 +584,7 @@ struct PenToolbarView: View {
     @ViewBuilder
     private func toolIcon(_ systemImage: String, isSelected: Bool, tint: Color? = nil) -> some View {
         Image(systemName: systemImage)
-            .font(.system(size: 17, weight: .medium))
+            .font(.system(size: DesignIcon.md))
             .foregroundStyle(isSelected ? (tint ?? DesignColor.brandPrimary) : DesignColor.textPrimary)
             .frame(width: 34, height: 34)
             .background(
@@ -612,10 +612,10 @@ private struct MagicActionPickerView: View {
         VStack(spacing: 0) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(DesignColor.textTertiary)
                 TextField("Cerca azioni", text: $query)
-                    .font(.system(size: 14))
+                    .font(DesignFont.body)
                     .textFieldStyle(.plain)
             }
             .padding(DesignSpace.s3)
@@ -630,15 +630,15 @@ private struct MagicActionPickerView: View {
                         } label: {
                             HStack(spacing: DesignSpace.s3) {
                                 Image(systemName: action.systemImage)
-                                    .font(.system(size: 15))
+                                    .font(.system(size: DesignIcon.md))
                                     .foregroundStyle(current == action ? action.color : DesignColor.textSecondary)
                                     .frame(width: 22)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(action.label)
-                                        .font(.system(size: 14, weight: current == action ? .semibold : .medium))
+                                        .font(current == action ? DesignFont.cardTitle : DesignFont.body)
                                         .foregroundStyle(current == action ? action.color : DesignColor.textPrimary)
                                     Text(action.subtitle)
-                                        .font(.system(size: 11))
+                                        .font(DesignFont.caption)
                                         .foregroundStyle(DesignColor.textTertiary)
                                 }
                                 Spacer()
@@ -660,11 +660,11 @@ private struct MagicActionPickerView: View {
                         } label: {
                             HStack(spacing: DesignSpace.s3) {
                                 Image(systemName: "xmark.circle")
-                                    .font(.system(size: 15))
+                                    .font(.system(size: DesignIcon.md))
                                     .foregroundStyle(DesignColor.danger)
                                     .frame(width: 22)
                                 Text("Disattiva")
-                                    .font(.system(size: 14, weight: .medium))
+                                    .font(DesignFont.body)
                                     .foregroundStyle(DesignColor.danger)
                                 Spacer()
                             }

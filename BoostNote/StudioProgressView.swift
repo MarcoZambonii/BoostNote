@@ -26,14 +26,14 @@ struct StudioProgressView: View {
             HStack(spacing: DesignSpace.s3) {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Torna a Studio")
 
                 Text("Analisi dei progressi")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                 Spacer()
                 Picker("Studio", selection: $filterStudy) {
@@ -102,14 +102,14 @@ struct StudioProgressView: View {
         VStack(alignment: .leading, spacing: DesignSpace.s2) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(color)
                 Text(label)
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
             }
             Text(value)
-                .font(.system(size: 24, weight: .semibold))
+                .font(DesignFont.display)
                 .foregroundStyle(DesignColor.textPrimary)
         }
         .padding(DesignSpace.s4)
@@ -148,7 +148,7 @@ struct StudioProgressView: View {
     private var dailyChart: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text("ESERCIZI PER GIORNO — ULTIME 2 SETTIMANE")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
 
@@ -185,7 +185,7 @@ struct StudioProgressView: View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 8, height: 8)
             Text(label)
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         }
     }
@@ -211,7 +211,7 @@ struct StudioProgressView: View {
     private var accuracyByDifficulty: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text("ACCURATEZZA PER DIFFICOLTÀ")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
             // I teorici non compaiono qui, e non per una svista: una
@@ -220,7 +220,7 @@ struct StudioProgressView: View {
             // riquadro sembri sbagliata rispetto ai totali in alto.
             if attempts.contains(where: { $0.difficulty == nil }) {
                 Text("Solo esercizi da risolvere: i teorici non hanno un livello.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
             }
 
@@ -232,7 +232,7 @@ struct StudioProgressView: View {
                 .foregroundStyle(stat.difficulty.color)
                 .annotation(position: .trailing) {
                     Text("\(Int(stat.accuracy * 100))% · \(stat.count) es.")
-                        .font(.system(size: 10))
+                        .font(DesignFont.micro)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -270,13 +270,13 @@ struct StudioProgressView: View {
     private var accuracyByCategory: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text("TEORIA E PRATICA")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
 
             if categoryStats.count < 2 {
                 Text("Qui il confronto compare quando hai svolto sia esercizi da risolvere sia esercizi teorici: sapere risolvere e sapere spiegare sono due bravure diverse, e vale la pena vederle affiancate.")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -289,7 +289,7 @@ struct StudioProgressView: View {
                 .foregroundStyle(stat.category == .practical ? DesignColor.toolWolfram : DesignColor.toolExplain)
                 .annotation(position: .trailing) {
                     Text("\(Int(stat.accuracy * 100))% · \(stat.count)")
-                        .font(.system(size: 10))
+                        .font(DesignFont.micro)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -381,30 +381,30 @@ struct StudioProgressView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 HStack(spacing: DesignSpace.s2) {
                     Image(systemName: "target")
-                        .font(.system(size: 13))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.danger)
                     Text("DOVE SEI PIÙ IN DIFFICOLTÀ")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.micro)
                         .tracking(0.6)
                         .foregroundStyle(DesignColor.textTertiary)
                     Spacer()
                     Text(folder.name)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 VStack(spacing: DesignSpace.s2) {
                     ForEach(Array(sameVault), id: \.topic) { stat in
                         HStack(spacing: DesignSpace.s3) {
                             Text(stat.topic)
-                                .font(.system(size: 13, weight: .medium))
+                                .font(DesignFont.label)
                                 .foregroundStyle(DesignColor.textPrimary)
                                 .lineLimit(1)
                             Spacer(minLength: DesignSpace.s3)
                             Text("\(Int(stat.accuracy * 100))%")
-                                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                .font(DesignFont.cardTitle.monospacedDigit())
                                 .foregroundStyle(DesignColor.danger)
                             Text("\(stat.correct)/\(stat.total)")
-                                .font(.system(size: 11).monospacedDigit())
+                                .font(DesignFont.caption.monospacedDigit())
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     }
@@ -414,7 +414,7 @@ struct StudioProgressView: View {
                         onGenerateWeak(folder, sameVault.map(\.topic))
                     } label: {
                         Label("Genera esercizi su questi argomenti", systemImage: "sparkles")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.textOnBrand)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, DesignSpace.s3)
@@ -422,7 +422,7 @@ struct StudioProgressView: View {
                     }
                     .buttonStyle(.plain)
                     Text("Nuovo studio dal Vault “\(folder.name)”, con questi argomenti già selezionati e solo il modulo esercizi.")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -436,7 +436,7 @@ struct StudioProgressView: View {
     private var topicCoverage: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text("ARGOMENTI PIÙ ESERCITATI")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
 
@@ -445,12 +445,12 @@ struct StudioProgressView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
                             Text(stat.topic)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textPrimary)
                                 .lineLimit(1)
                             Spacer()
                             Text("\(stat.correct)/\(stat.total)")
-                                .font(.system(size: 11))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                         GeometryReader { geo in

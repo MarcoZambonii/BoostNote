@@ -35,7 +35,7 @@ struct NoteSettingsSheet: View {
                                                         .stroke(DesignColor.borderDefault, lineWidth: 1)
                                                 )
                                             Text("\(index + 1)")
-                                                .font(.system(size: 11))
+                                                .font(DesignFont.caption)
                                                 .foregroundStyle(DesignColor.textTertiary)
                                         }
                                     }
@@ -50,7 +50,7 @@ struct NoteSettingsSheet: View {
                                 Label("Vedi tutte le pagine (\(pageCount))", systemImage: "square.grid.2x2")
                             }
                             Text("Le anteprime vengono renderizzate una per una: su note lunghe può volerci qualche istante.")
-                                .font(.caption)
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     }
@@ -86,7 +86,7 @@ struct NoteSettingsSheet: View {
                     // campo sbagliato. Qui resta solo l'informazione vera.
                     if note.sortedPages.contains(where: { $0.pdfPageData != nil }) {
                         Text("Sulle pagine importate da un PDF il pattern resta coperto dal documento: qui scegli quello delle pagine bianche.")
-                            .font(.caption)
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textSecondary)
                     }
 
@@ -100,7 +100,7 @@ struct NoteSettingsSheet: View {
                             // In millimetri veri: il passo base del pattern è
                             // 24 pt = 6,35 mm, moltiplicato per la scala.
                             Text("Dimensione pattern — \(RealUnits.mmLabel(fromPoints: 24 * note.patternScale))")
-                                .font(.caption)
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textSecondary)
                             Slider(value: $note.patternScale, in: 0.5...2.0, step: 0.1)
                         }

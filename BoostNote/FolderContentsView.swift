@@ -38,10 +38,10 @@ struct FolderContentsView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s8) {
                 HStack(spacing: DesignSpace.s3) {
                     Image(systemName: "folder.fill")
-                        .font(.system(size: 24))
+                        .font(.system(size: DesignIcon.xl))
                         .foregroundStyle(folder.folderColor.color)
                     Text(folder.name)
-                        .font(.system(size: 26, weight: .semibold))
+                        .font(DesignFont.screenTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                     Spacer()
                     viewModePicker
@@ -62,7 +62,7 @@ struct FolderContentsView: View {
                 if !subfolders.isEmpty {
                     VStack(alignment: .leading, spacing: DesignSpace.s3) {
                         Text("SOTTOCARTELLE")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.6)
                             .foregroundStyle(DesignColor.textTertiary)
 
@@ -98,13 +98,13 @@ struct FolderContentsView: View {
 
                 VStack(alignment: .leading, spacing: DesignSpace.s3) {
                     Text("NOTE")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.micro)
                         .tracking(0.6)
                         .foregroundStyle(DesignColor.textTertiary)
 
                     if notes.isEmpty {
                         Text("Nessuna nota qui ancora.")
-                            .font(.system(size: 13))
+                            .font(DesignFont.label)
                             .foregroundStyle(DesignColor.textTertiary)
                     } else {
                         switch viewMode {
@@ -196,7 +196,7 @@ struct FolderContentsView: View {
                     viewModeRaw = mode.rawValue
                 } label: {
                     Image(systemName: mode.systemImage)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(viewMode == mode ? DesignColor.brandPrimary : DesignColor.textTertiary)
                         .frame(width: 30, height: 30)
                         .background(
@@ -215,15 +215,15 @@ struct FolderContentsView: View {
     private func folderListRow(_ subfolder: Folder) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: "folder.fill")
-                .font(.system(size: 15))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(subfolder.folderColor.color)
                 .frame(width: 22)
             Text(subfolder.name)
-                .font(.system(size: 14, weight: .medium))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textPrimary)
             Spacer()
             Text("\(subfolder.notes.count) note")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         }
         .padding(.horizontal, DesignSpace.s3 + 2)
@@ -235,15 +235,15 @@ struct FolderContentsView: View {
     private func noteListRow(_ note: Note) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: "note.text")
-                .font(.system(size: 15))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textSecondary)
                 .frame(width: 22)
             Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                .font(.system(size: 14, weight: .medium))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textPrimary)
             Spacer()
             Text(note.updatedAt.formatted(date: .abbreviated, time: .omitted))
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         }
         .padding(.horizontal, DesignSpace.s3 + 2)
@@ -258,13 +258,13 @@ struct FolderContentsView: View {
                 RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
                     .fill(color.opacity(0.12))
                     .frame(width: 36, height: 36)
-                    .overlay(Image(systemName: icon).font(.system(size: 16, weight: .medium)).foregroundStyle(color))
+                    .overlay(Image(systemName: icon).font(.system(size: DesignIcon.md)).foregroundStyle(color))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -279,15 +279,15 @@ struct FolderContentsView: View {
     private func folderCard(_ subfolder: Folder) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: "folder.fill")
-                .font(.system(size: 20))
+                .font(.system(size: DesignIcon.lg))
                 .foregroundStyle(subfolder.folderColor.color)
             VStack(alignment: .leading, spacing: 2) {
                 Text(subfolder.name)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
                 Text("\(subfolder.notes.count) note")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
             }
             Spacer()
@@ -313,7 +313,7 @@ struct FolderContentsView: View {
             .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm).stroke(DesignColor.borderDefault))
 
             Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
                 .lineLimit(1)
         }

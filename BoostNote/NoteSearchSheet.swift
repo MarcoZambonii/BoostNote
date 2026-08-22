@@ -69,10 +69,10 @@ struct NoteSearchSheet: View {
     private var searchField: some View {
         HStack(spacing: DesignSpace.s2) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textTertiary)
             TextField("Cerca nella nota", text: $query)
-                .font(.system(size: 15))
+                .font(DesignFont.body)
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
             if !query.isEmpty {
@@ -81,7 +81,7 @@ struct NoteSearchSheet: View {
                     results = []
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 .buttonStyle(.plain)
@@ -113,7 +113,7 @@ struct NoteSearchSheet: View {
                         HStack(spacing: DesignSpace.s2) {
                             ProgressView().controlSize(.mini)
                             Text("Leggo la scrittura a mano — pagina \(scanningPage + 1) di \(totalPages)")
-                                .font(.system(size: 11))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                         .padding(.horizontal, DesignSpace.s3)
@@ -127,13 +127,13 @@ struct NoteSearchSheet: View {
     private var hint: some View {
         VStack(spacing: DesignSpace.s3) {
             Image(systemName: "text.magnifyingglass")
-                .font(.system(size: 30))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(DesignColor.textTertiary)
             Text("Cerca nella nota")
-                .font(.system(size: 15, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
             Text("Trova sia il testo che hai digitato sia quello scritto a mano. La scrittura richiede qualche secondo per essere riconosciuta.")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, DesignSpace.s5)
@@ -145,12 +145,12 @@ struct NoteSearchSheet: View {
         VStack(alignment: .leading, spacing: DesignSpace.s2) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: DesignIcon.sm))
                 Text(title)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DesignFont.micro)
                     .tracking(0.6)
                 Text("\(results.count)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.textTertiary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
@@ -165,11 +165,11 @@ struct NoteSearchSheet: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(highlighted(result))
-                            .font(.system(size: 13))
+                            .font(DesignFont.label)
                             .lineLimit(3)
                             .multilineTextAlignment(.leading)
                         Text("Pagina \(result.pageIndex + 1)")
-                            .font(.system(size: 11))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -52,7 +52,7 @@ struct StudyDetailView: View {
             HStack(spacing: DesignSpace.s3) {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                 }
                 .buttonStyle(.plain)
@@ -60,10 +60,10 @@ struct StudyDetailView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(study.name)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                     Text(study.subjectOrPlaceholder + " · creato il " + study.createdAt.formatted(date: .abbreviated, time: .omitted))
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 Spacer()
@@ -72,7 +72,7 @@ struct StudyDetailView: View {
                 } label: {
                     Label("Come funziona", systemImage: "info.circle")
                         .fixedSize()
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DesignFont.action)
                         .foregroundStyle(DesignColor.brandPrimary)
                 }
                 .buttonStyle(.plain)
@@ -85,7 +85,7 @@ struct StudyDetailView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 17))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                 }
             }
@@ -100,7 +100,7 @@ struct StudyDetailView: View {
                     if !study.materials.isEmpty {
                         VStack(alignment: .leading, spacing: DesignSpace.s2) {
                             Text("MATERIALI")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.micro)
                                 .tracking(0.6)
                                 .foregroundStyle(DesignColor.textTertiary)
                             VStack(spacing: 1) {
@@ -113,7 +113,7 @@ struct StudyDetailView: View {
                     } else if !study.sources.isEmpty {
                         VStack(alignment: .leading, spacing: DesignSpace.s2) {
                             Text("MATERIALI")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.micro)
                                 .tracking(0.6)
                                 .foregroundStyle(DesignColor.textTertiary)
                             FlowChips(items: study.sources.map { source in
@@ -147,21 +147,21 @@ struct StudyDetailView: View {
     private func materialRow(_ material: StudyMaterial) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: material.kind.systemImage)
-                .font(.system(size: 14))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(material.hasText ? DesignColor.brandPrimary : DesignColor.textTertiary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 1) {
                 Text(material.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
                 if let error = material.extractionError {
                     Text(error)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.attention)
                 } else {
                     Text("\(material.extractedText.count) caratteri letti")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -169,7 +169,7 @@ struct StudyDetailView: View {
             if material.isExamPaper {
                 Text("Tema d'esame")
                     .fixedSize()
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.attention)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
@@ -222,7 +222,7 @@ struct StudyDetailView: View {
                 headerRow(module, kind: kind)
                 if expandedInfo.contains(module.id), module.status == .ready, let info = module.generationError {
                     Text(info)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.attention)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -240,12 +240,12 @@ struct StudyDetailView: View {
                         .frame(width: 38, height: 38)
                         .overlay(
                             Image(systemName: kind?.systemImage ?? "questionmark")
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: DesignIcon.md))
                                 .foregroundStyle(kind?.color ?? DesignColor.textSecondary)
                         )
                     VStack(alignment: .leading, spacing: 2) {
                         Text(kind?.label ?? module.kindRaw)
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.textPrimary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
@@ -260,7 +260,7 @@ struct StudyDetailView: View {
                             regenerate(module)
                         } label: {
                             Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.system(size: DesignIcon.md))
                                 .foregroundStyle(DesignColor.textSecondary)
                                 .frame(width: 30, height: 30)
                                 .background(DesignColor.surfacePage, in: Circle())
@@ -270,7 +270,7 @@ struct StudyDetailView: View {
 
                         if module.status == .ready {
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.system(size: DesignIcon.md))
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     }
@@ -282,7 +282,7 @@ struct StudyDetailView: View {
         switch module.status {
         case .pending:
             Text("In coda…")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         case .generating:
             VStack(alignment: .leading, spacing: 4) {
@@ -292,14 +292,14 @@ struct StudyDetailView: View {
                     // gemini-flash-latest (3/5)…"): la stessa attesa,
                     // ma leggibile invece che cieca.
                     Text(GenerationProgress.shared.text[module.id] ?? "Generazione in corso…")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Button("Annulla") {
                         StudioGenerationService.cancelGeneration(for: study.id)
                     }
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DesignFont.action)
                     .foregroundStyle(DesignColor.danger)
                     .buttonStyle(.plain)
                 }
@@ -308,7 +308,7 @@ struct StudyDetailView: View {
                 // scoprire esercizi più semplici a generazione conclusa.
                 if let notice = module.generationError, !notice.isEmpty {
                     Text(notice)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                         .lineLimit(3)
                 }
@@ -316,38 +316,38 @@ struct StudyDetailView: View {
         case .failed:
             VStack(alignment: .leading, spacing: 4) {
                 Text("Generazione non riuscita")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.danger)
                 if let reason = module.generationError {
                     Text(reason)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                         .lineLimit(4)
                 }
                 Text("Tocca la freccia circolare per riprovare.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
             }
         case .ready:
             VStack(alignment: .leading, spacing: 2) {
                 Text(readySummary(module))
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                 // Con quale provider è stato generato questo contenuto.
                 if module.generatedByRaw != "none" && module.generatedByRaw != "mock" {
                     Label("Generato con \(module.generatedByRaw)", systemImage: "sparkles")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.success)
                     // La verifica che scarta è più credibile di una che
                     // approva sempre: si dice quanto ha buttato.
                     if module.discardedCount > 0 {
                         Label("\(module.discardedCount) scartati dalla verifica", systemImage: "checkmark.shield")
-                            .font(.system(size: 11))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                     if !module.reportedIDs.isEmpty {
                         Label("\(module.reportedIDs.count) segnalati da te", systemImage: "flag.fill")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.danger)
                     }
                     // Copertura parziale: la generazione è riuscita ma non
@@ -381,14 +381,14 @@ struct StudyDetailView: View {
             // per riga (visto succedere in orizzontale).
             HStack(alignment: .center, spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(.system(size: DesignIcon.sm))
                 Text(briefInfo(text))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: DesignIcon.sm))
             }
-            .font(.system(size: 11))
+            .font(.system(size: DesignIcon.sm))
             .foregroundStyle(DesignColor.attention)
         }
         .buttonStyle(.plain)
@@ -451,9 +451,9 @@ struct StudyDetailView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: DesignIcon.md))
                         Text(study.name)
-                            .font(.system(size: 14, weight: .medium))
+                            .font(DesignFont.body)
                     }
                     .foregroundStyle(DesignColor.textSecondary)
                 }
@@ -462,7 +462,7 @@ struct StudyDetailView: View {
                 Spacer()
                 if let kind = module.kind {
                     Label(kind.label, systemImage: kind.systemImage)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(kind.color)
                 }
             }
@@ -568,11 +568,11 @@ struct CitationDisclosure: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: citation.verified ? "checkmark.seal.fill" : (meaning == .inspiration ? "wand.and.stars" : "questionmark.circle"))
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: DesignIcon.sm))
                         Text(label)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.caption)
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: DesignIcon.sm))
                     }
                     .foregroundStyle(tint)
                     .padding(.horizontal, DesignSpace.s2 + 2)
@@ -584,17 +584,17 @@ struct CitationDisclosure: View {
                 if expanded {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(meaning == .inspiration ? "Passaggio di riferimento:" : "Passaggio citato:")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.textTertiary)
-                        StudioRichText(text: citation.text, size: 12)
+                        StudioRichText(text: citation.text, font: DesignFont.caption)
                         if let source = citation.sourceTitle {
                             Text("— \(source)")
-                                .font(.system(size: 11))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                         if !citation.verified || meaning == .inspiration {
                             Text(explanation)
-                                .font(.system(size: 11))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(tint)
                         }
                     }
@@ -622,9 +622,9 @@ struct ReportButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: isReported ? "flag.fill" : "flag")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DesignIcon.sm))
                 Text(isReported ? "Segnalato" : "Segnala errore")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignFont.caption)
             }
             .fixedSize()
             .foregroundStyle(isReported ? DesignColor.danger : DesignColor.textTertiary)
@@ -646,7 +646,7 @@ private struct FlowChips: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: DesignSpace.s2)], alignment: .leading, spacing: DesignSpace.s2) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 Text(item.0)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DesignFont.caption)
                     .foregroundStyle(item.1)
                     .lineLimit(1)
                     .padding(.horizontal, DesignSpace.s2 + 2)
@@ -669,7 +669,7 @@ private struct SummaryModuleView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 ForEach(content.sections) { section in
                     VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                        StudioRichText(text: section.title, size: 16, weight: .semibold, color: DesignColor.textPrimary)
+                        StudioRichText(text: section.title, font: DesignFont.cardTitle, color: DesignColor.textPrimary)
                         StudioRichText(text: section.body)
                         HStack(spacing: DesignSpace.s2) {
                             CitationDisclosure(citation: section.quote)
@@ -824,7 +824,7 @@ private struct ExercisesModuleView: View {
             Spacer()
             if !finished && !exercises.isEmpty {
                 Text("\(min(index + 1, exercises.count)) di \(exercises.count)")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textTertiary)
             }
         }
@@ -845,7 +845,7 @@ private struct ExercisesModuleView: View {
                         goTo(position)
                     } label: {
                         Text("\(position + 1)")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(DesignFont.action)
                             .foregroundStyle(chipForeground(isCurrent: isCurrent, outcome: outcome))
                             .frame(width: 32, height: 32)
                             .background(chipBackground(isCurrent: isCurrent, outcome: outcome), in: Circle())
@@ -892,7 +892,7 @@ private struct ExercisesModuleView: View {
             } label: {
                 Label("Precedente", systemImage: "chevron.left")
                     .fixedSize()
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.action)
                     .foregroundStyle(index > 0 ? DesignColor.textSecondary : DesignColor.textTertiary.opacity(0.5))
             }
             .buttonStyle(.plain)
@@ -906,7 +906,7 @@ private struct ExercisesModuleView: View {
                 Label("Successivo", systemImage: "chevron.right")
                     .fixedSize()
                     .labelStyle(.titleAndIcon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.action)
                     .foregroundStyle(index < exercises.count - 1 ? DesignColor.textSecondary : DesignColor.textTertiary.opacity(0.5))
             }
             .buttonStyle(.plain)
@@ -927,7 +927,7 @@ private struct ExercisesModuleView: View {
                     // ispirandosi ai materiali, "Nei materiali: X" se era
                     // già lì. Cambia come si affronta l'esercizio.
                     Label(exercise.originLabel, systemImage: exercise.origin.systemImage)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.caption)
                         .foregroundStyle(exercise.origin.color)
                         .lineLimit(1)
                         .padding(.horizontal, DesignSpace.s2 + 2)
@@ -937,7 +937,7 @@ private struct ExercisesModuleView: View {
                 }
 
                 VStack(alignment: .leading, spacing: DesignSpace.s3) {
-                    StudioRichText(text: exercise.prompt, size: 17, color: DesignColor.textPrimary)
+                    StudioRichText(text: exercise.prompt, font: DesignFont.cardTitle, color: DesignColor.textPrimary)
                     // La figura della traccia, se il modello l'ha scritta:
                     // compilata con TikZJax alla prima apertura, poi
                     // l'SVG vive nel payload. Se il TeX non compila, la
@@ -967,7 +967,7 @@ private struct ExercisesModuleView: View {
                         // manca qualcosa. La traccia resta risolvibile:
                         // è una nota, non un errore.
                         Label("Per questa traccia servirebbe una figura, ma il modello non l'ha generata: disegnala tu prima di risolvere.", systemImage: "scribble.variable")
-                            .font(.system(size: 12))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -979,13 +979,13 @@ private struct ExercisesModuleView: View {
                 if revealedSteps > 0 {
                     VStack(alignment: .leading, spacing: DesignSpace.s3) {
                         Text("SOLUZIONE GUIDATA")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.6)
                             .foregroundStyle(DesignColor.textTertiary)
                         ForEach(Array(exercise.steps.prefix(revealedSteps).enumerated()), id: \.offset) { stepIndex, step in
                             HStack(alignment: .top, spacing: DesignSpace.s3) {
                                 Text("\(stepIndex + 1)")
-                                    .font(.system(size: 12, weight: .bold))
+                                    .font(DesignFont.micro)
                                     .foregroundStyle(DesignColor.toolExplain)
                                     .frame(width: 22, height: 22)
                                     .background(DesignColor.toolExplainBg, in: Circle())
@@ -998,14 +998,14 @@ private struct ExercisesModuleView: View {
                 if showAnswer {
                     VStack(alignment: .leading, spacing: DesignSpace.s2) {
                         Text("RISPOSTA")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignFont.micro)
                             .tracking(0.6)
                             .foregroundStyle(DesignColor.success)
                         StudioRichText(text: exercise.answer, color: DesignColor.textPrimary)
 
                         if let verification = exercise.verification.label, exercise.verification == .agreed {
                             Label(verification, systemImage: "checkmark.seal.fill")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.success)
                         }
 
@@ -1026,7 +1026,7 @@ private struct ExercisesModuleView: View {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.mini)
                             Text("Rigenero…")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     } else {
@@ -1061,7 +1061,7 @@ private struct ExercisesModuleView: View {
                     } label: {
                         Label(revealedSteps == 0 ? "Soluzione guidata" : "Passo successivo", systemImage: "lightbulb")
                             .fixedSize()
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.toolExplain)
                             .padding(.horizontal, DesignSpace.s4)
                             .padding(.vertical, DesignSpace.s2 + 2)
@@ -1074,7 +1074,7 @@ private struct ExercisesModuleView: View {
                 } label: {
                     Label("Mostra risposta", systemImage: "eye")
                         .fixedSize()
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.brandPrimary)
                         .padding(.horizontal, DesignSpace.s4)
                         .padding(.vertical, DesignSpace.s2 + 2)
@@ -1085,7 +1085,7 @@ private struct ExercisesModuleView: View {
         } else {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 Text("Com'è andata?")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
                 HStack(spacing: DesignSpace.s3) {
                     assessButton(correct: false, exercise: exercise)
@@ -1101,7 +1101,7 @@ private struct ExercisesModuleView: View {
         } label: {
             Label(correct ? "Giusto" : "Sbagliato", systemImage: correct ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .fixedSize()
-                .font(.system(size: 15, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(correct ? DesignColor.success : DesignColor.danger)
                 .padding(.horizontal, DesignSpace.s5)
                 .padding(.vertical, DesignSpace.s3)
@@ -1114,13 +1114,13 @@ private struct ExercisesModuleView: View {
         VStack(spacing: DesignSpace.s4) {
             Spacer()
             Image(systemName: sessionCorrect == sessionTotal ? "trophy.fill" : "flag.checkered")
-                .font(.system(size: 40))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(sessionCorrect == sessionTotal ? DesignColor.toolSearch : DesignColor.brandPrimary)
             Text("Sessione completata")
-                .font(.system(size: 20, weight: .semibold))
+                .font(DesignFont.sectionTitle)
                 .foregroundStyle(DesignColor.textPrimary)
             Text("\(sessionCorrect) giusti su \(sessionTotal) — i tentativi sono registrati in Analisi dei progressi.")
-                .font(.system(size: 14))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textSecondary)
             Button("Ricomincia") { restartSession() }
                 .buttonStyle(.boostFilled)
@@ -1142,16 +1142,16 @@ private struct ExercisesModuleView: View {
             if let check = wolframResults[exercise.id] {
                 VStack(alignment: .leading, spacing: 4) {
                     Label("Verifica indipendente (Wolfram Alpha)", systemImage: "function")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.toolWolfram)
                     // Solo il risultato che risponde alla domanda: prima
                     // si incollavano tutti i pod, e per esempio accanto
                     // all'integrale definito (quello giusto) compariva
                     // anche l'indefinito, che sembra un'altra risposta.
-                    StudioRichText(text: check.headline, size: 13, weight: .medium, color: DesignColor.textPrimary)
+                    StudioRichText(text: check.headline, font: DesignFont.label, color: DesignColor.textPrimary)
                         .textSelection(.enabled)
                     Text("Confrontalo con la risposta qui sopra: se non coincide, uno dei due è sbagliato.")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
 
                     if !check.detail.isEmpty {
@@ -1159,10 +1159,10 @@ private struct ExercisesModuleView: View {
                             ForEach(check.detail) { pod in
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(pod.title)
-                                        .font(.system(size: 10, weight: .semibold))
+                                        .font(DesignFont.micro)
                                         .foregroundStyle(DesignColor.textTertiary)
                                     Text(pod.text)
-                                        .font(.system(size: 11))
+                                        .font(DesignFont.caption)
                                         .foregroundStyle(DesignColor.textSecondary)
                                 }
                             }
@@ -1175,7 +1175,7 @@ private struct ExercisesModuleView: View {
                             }
                         } label: {
                             Text(expandedWolframIDs.contains(exercise.id) ? "Nascondi gli altri passaggi" : "Mostra gli altri passaggi (\(check.detail.count))")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.toolWolfram)
                         }
                         .buttonStyle(.plain)
@@ -1185,12 +1185,12 @@ private struct ExercisesModuleView: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
                     Text("Calcolo indipendente in corso…")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             } else if wolframAppID.isEmpty {
                 Text("Aggiungi la chiave Wolfram Alpha nel Profilo per verificare questo risultato con un calcolo indipendente.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
             } else {
                 Button {
@@ -1198,7 +1198,7 @@ private struct ExercisesModuleView: View {
                 } label: {
                     Label("Verifica con Wolfram", systemImage: "function")
                         .fixedSize()
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DesignFont.action)
                         .foregroundStyle(DesignColor.toolWolfram)
                         .padding(.horizontal, DesignSpace.s3)
                         .padding(.vertical, 6)
@@ -1285,7 +1285,7 @@ private struct ExercisesModuleView: View {
 
     private func chip(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold))
+            .font(DesignFont.caption)
             .foregroundStyle(color)
             .lineLimit(1)
             .padding(.horizontal, DesignSpace.s2 + 2)
@@ -1335,7 +1335,7 @@ private struct ReviewPointsModuleView: View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
                         HStack(alignment: .top, spacing: DesignSpace.s3) {
                             Text("\(pointIndex + 1)")
-                                .font(.system(size: 13, weight: .bold))
+                                .font(DesignFont.micro)
                                 .foregroundStyle(DesignColor.toolExplain)
                                 .frame(width: 26, height: 26)
                                 .background(DesignColor.toolExplainBg, in: Circle())
@@ -1351,13 +1351,13 @@ private struct ReviewPointsModuleView: View {
                                 // la risposta prima ancora che venga
                                 // letta. Ora scende insieme alla
                                 // soluzione.
-                                StudioRichText(text: point.question, size: 15, color: DesignColor.textPrimary)
+                                StudioRichText(text: point.question, font: DesignFont.body, color: DesignColor.textPrimary)
                             }
                         }
 
                         if revealed {
-                            StudioRichText(text: point.statement, size: 13, color: DesignColor.textPrimary)
-                            StudioRichText(text: point.answer, size: 13)
+                            StudioRichText(text: point.statement, font: DesignFont.label, color: DesignColor.textPrimary)
+                            StudioRichText(text: point.answer, font: DesignFont.label)
                                 .padding(DesignSpace.s3)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(DesignColor.successBg, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
@@ -1388,7 +1388,7 @@ private struct ReviewPointsModuleView: View {
                                 revealedIDs.insert(point.id)
                             } label: {
                                 Label("Mostra risposta", systemImage: "eye")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(DesignFont.action)
                                     .foregroundStyle(DesignColor.brandPrimary)
                             }
                             .buttonStyle(.plain)
@@ -1406,7 +1406,7 @@ private struct ReviewPointsModuleView: View {
             record(correct: correct, point: point)
         } label: {
             Label(title, systemImage: icon)
-                .font(.system(size: 12, weight: .semibold))
+                .font(DesignFont.action)
                 .foregroundStyle(isSelected ? DesignColor.textOnBrand : color)
                 .padding(.horizontal, DesignSpace.s3)
                 .padding(.vertical, 6)
@@ -1473,7 +1473,7 @@ private struct FlashcardsModuleView: View {
         VStack(spacing: DesignSpace.s6) {
             Spacer()
             Text("\(index + 1) di \(content.cards.count)")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textTertiary)
 
             let card = content.cards[min(index, content.cards.count - 1)]
@@ -1482,8 +1482,9 @@ private struct FlashcardsModuleView: View {
             } label: {
                 StudioRichText(
                     text: flipped ? card.back : card.front,
-                    size: 18,
-                    weight: flipped ? .regular : .semibold,
+                    // 18 → sectionTitle per tabella; il fronte perdeva
+                    // comunque il semibold col ruolo unico.
+                    font: DesignFont.sectionTitle,
                     color: DesignColor.textPrimary
                 )
                     .padding(DesignSpace.s8)
@@ -1502,7 +1503,7 @@ private struct FlashcardsModuleView: View {
             .buttonStyle(.plain)
 
             Text("Tocca la carta per girarla")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
 
             HStack(spacing: 10) {
@@ -1524,7 +1525,7 @@ private struct FlashcardsModuleView: View {
     private func arrowButton(systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textSecondary)
                 .frame(width: 40, height: 40)
                 .background(DesignColor.surfacePage, in: Circle())

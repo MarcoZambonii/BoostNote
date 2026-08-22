@@ -481,7 +481,7 @@ struct NoteEditorView: View {
                     withAnimation { isSidePanelHidden = true }
                 } label: {
                     Image(systemName: panelSide == .leading ? "chevron.left" : "chevron.right")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: DesignIcon.sm))
                         .foregroundStyle(DesignColor.textSecondary)
                         .frame(width: 28, height: 28)
                         .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
@@ -491,7 +491,7 @@ struct NoteEditorView: View {
                 .accessibilityLabel("Nascondi pannello")
 
                 Text(sidePanelTools.count == 1 ? "1 strumento" : "\(sidePanelTools.count) strumenti")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textSecondary)
                 Spacer()
 
@@ -502,7 +502,7 @@ struct NoteEditorView: View {
                     showingToolsPicker = true
                 } label: {
                     Text("Aggiungi")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DesignFont.action)
                         .foregroundStyle(DesignColor.textPrimary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
@@ -525,7 +525,7 @@ struct NoteEditorView: View {
                     Image(systemName: panelSide == .leading
                           ? "rectangle.trailinghalf.inset.filled"
                           : "rectangle.leadinghalf.inset.filled")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                         .frame(width: 28, height: 28)
                         .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
@@ -566,12 +566,12 @@ struct NoteEditorView: View {
         return VStack(spacing: 0) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: tool.systemImage)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(DesignColor.brandPrimary)
                     .frame(width: 26, height: 26)
                     .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
                 Text(tool.label)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -627,7 +627,7 @@ struct NoteEditorView: View {
     private func cardButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: DesignIcon.sm))
                 .foregroundStyle(DesignColor.textSecondary)
                 .frame(width: 26, height: 26)
                 .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
@@ -658,7 +658,7 @@ struct NoteEditorView: View {
             withAnimation { isSidePanelHidden = false }
         } label: {
             Image(systemName: panelSide == .leading ? "chevron.right" : "chevron.left")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: DesignIcon.sm))
                 .foregroundStyle(DesignColor.textSecondary)
                 .frame(width: 22, height: 44)
                 .background(.ultraThinMaterial, in: shape)
@@ -703,7 +703,7 @@ struct NoteEditorView: View {
             VStack(spacing: 0) {
                 HStack(spacing: DesignSpace.s2) {
                     Text(documentPreviewName.isEmpty ? "Documento" : documentPreviewName)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DesignFont.label)
                         .foregroundStyle(DesignColor.textSecondary)
                         .lineLimit(1)
                     Spacer()
@@ -721,7 +721,7 @@ struct NoteEditorView: View {
                             Label("Da WeBeep", systemImage: "graduationcap")
                         }
                     }
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DesignFont.action)
                     Button {
                         self.documentPreviewData = nil
                         documentPreviewName = ""
@@ -748,10 +748,10 @@ struct NoteEditorView: View {
             VStack(spacing: DesignSpace.s4) {
                 Spacer()
                 Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 32))
+                    .font(.system(size: DesignIcon.xl))
                     .foregroundStyle(DesignColor.textTertiary)
                 Text("Apri un PDF qui per leggerlo a fianco mentre scrivi — resta nel pannello, non entra nella nota.")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, DesignSpace.s5)
@@ -764,7 +764,7 @@ struct NoteEditorView: View {
                         showingPDFPicker = true
                     } label: {
                         Label("Da file", systemImage: "folder")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(.white)
                             .padding(.horizontal, DesignSpace.s4)
                             .padding(.vertical, DesignSpace.s3)
@@ -777,7 +777,7 @@ struct NoteEditorView: View {
                         showingWebeepDocPicker = true
                     } label: {
                         Label("Da WeBeep", systemImage: "graduationcap")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.brandPrimary)
                             .padding(.horizontal, DesignSpace.s4)
                             .padding(.vertical, DesignSpace.s3)
@@ -950,7 +950,7 @@ struct NoteEditorView: View {
     private var backButton: some View {
         Button(action: onBack) {
             Image(systemName: "chevron.left")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textPrimary)
                 .frame(width: headerRowHeight, height: headerRowHeight)
                 .background(.regularMaterial, in: Circle())
@@ -1053,7 +1053,7 @@ struct NoteEditorView: View {
             }
             .accessibilityLabel("Impostazioni e rinomina")
         }
-        .font(.system(size: 15, weight: .medium))
+        .font(.system(size: DesignIcon.md))
         .foregroundStyle(DesignColor.textPrimary)
         .buttonStyle(.plain)
         // Ogni voce diventa un bersaglio quadrato pieno invece della sola

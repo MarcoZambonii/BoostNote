@@ -47,7 +47,7 @@ struct NoteCreateSheet: View {
                                     newFolderColor = option
                                 } label: {
                                     Image(systemName: "folder.fill")
-                                        .font(.system(size: 16))
+                                        .font(.system(size: DesignIcon.md))
                                         .foregroundStyle(option.color)
                                         .frame(width: 28, height: 28)
                                         .overlay(

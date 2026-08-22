@@ -146,13 +146,13 @@ struct StudioHomeView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text("Studio")
-                    .font(.system(size: 26, weight: .semibold))
+                    .font(DesignFont.screenTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                 Image(systemName: "graduationcap.fill")
                     .foregroundStyle(DesignColor.brandPrimary)
             }
             Text(subtitleText)
-                .font(.system(size: 14))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textTertiary)
                 .lineLimit(compactSubtitle ? 1 : nil)
                 .fixedSize(horizontal: compactSubtitle, vertical: false)
@@ -186,7 +186,7 @@ struct StudioHomeView: View {
     private func headerButton(title: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.action)
                 .lineLimit(1)
                 .fixedSize()
                 .foregroundStyle(tint)
@@ -210,13 +210,13 @@ struct StudioHomeView: View {
     private var emptyState: some View {
         VStack(spacing: DesignSpace.s3) {
             Image(systemName: "archivebox")
-                .font(.system(size: 36))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(DesignColor.textTertiary)
             Text("Nessun Vault, per ora")
-                .font(.system(size: 16, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
             Text("Un Vault per corso: ci metti dentro note, dispense, temi d'esame e file WeBeep. Vengono letti una volta e restano pronti per generare riassunti, esercizi e flashcard senza rileggere niente.")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textTertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
@@ -224,7 +224,7 @@ struct StudioHomeView: View {
                 folderSheet = .new(parent: nil)
             } label: {
                 Label("Crea il primo Vault", systemImage: "plus")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textOnBrand)
                     .padding(.horizontal, DesignSpace.s5)
                     .padding(.vertical, DesignSpace.s3)
@@ -241,14 +241,14 @@ struct StudioHomeView: View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: icon)
-                    .font(.system(size: 13))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(tint)
                 Text(title.uppercased())
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignFont.micro)
                     .tracking(0.6)
                     .foregroundStyle(DesignColor.textSecondary)
                 Text("\(studies.count)")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
@@ -262,7 +262,7 @@ struct StudioHomeView: View {
                             vaultFolder = folder
                         } label: {
                             Label("\(folder.vaultDocuments.count) nel Vault", systemImage: "archivebox.fill")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.brandPrimary)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
@@ -289,7 +289,7 @@ struct StudioHomeView: View {
                         Text("Gli studi dentro non vengono eliminati.")
                     } label: {
                         Image(systemName: "ellipsis")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: DesignIcon.md))
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                 }
@@ -297,7 +297,7 @@ struct StudioHomeView: View {
 
             if studies.isEmpty {
                 Text("Nessuno studio in questa cartella. Dal menu ⋯ apri il Vault del corso: il materiale viene letto una volta e resta pronto per studi, esercizi e ripassi.")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .padding(.vertical, DesignSpace.s2)
             } else {
@@ -325,15 +325,15 @@ struct StudioHomeView: View {
                     .frame(width: 40, height: 40)
                     .overlay(
                         Image(systemName: "books.vertical.fill")
-                            .font(.system(size: 16))
+                            .font(.system(size: DesignIcon.md))
                             .foregroundStyle(folder.folderColor.color)
                     )
                 VStack(alignment: .leading, spacing: 2) {
                     Text(folder.name)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                     Text(vaultSubtitle(for: documents))
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 Spacer()
@@ -341,7 +341,7 @@ struct StudioHomeView: View {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
                         Text("Leggo…")
-                            .font(.system(size: 12))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                 } else if !documents.isEmpty {
@@ -353,7 +353,7 @@ struct StudioHomeView: View {
                         vaultFolder = folder
                     } label: {
                         Label("Gestisci Vault", systemImage: "archivebox")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DesignFont.action)
                     }
                     .buttonStyle(.boostOutlined)
                     .controlSize(.small)
@@ -372,7 +372,7 @@ struct StudioHomeView: View {
                     Text("Gli studi dentro non vengono eliminati.")
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textTertiary)
                         .frame(width: 28, height: 28)
                 }
@@ -388,7 +388,7 @@ struct StudioHomeView: View {
                     vaultFolder = folder
                 } label: {
                     Label("Aggiungi il materiale del corso", systemImage: "plus")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(DesignFont.action)
                         .foregroundStyle(DesignColor.brandPrimary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, DesignSpace.s3)
@@ -405,7 +405,7 @@ struct StudioHomeView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 HStack(spacing: DesignSpace.s2) {
                     Text(documents.isEmpty ? "STUDI" : "STUDI GENERATI DAL VAULT")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.micro)
                         .tracking(0.6)
                         .foregroundStyle(DesignColor.textTertiary)
                     Spacer()
@@ -418,7 +418,7 @@ struct StudioHomeView: View {
                             onCreateStudy(folder)
                         } label: {
                             Label("Nuovo studio dal Vault", systemImage: "sparkles")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(DesignFont.action)
                                 .foregroundStyle(DesignColor.textOnBrand)
                                 .padding(.horizontal, DesignSpace.s4)
                                 .padding(.vertical, DesignSpace.s2)
@@ -463,19 +463,19 @@ struct StudioHomeView: View {
         let read = document.readCount
         if document.pages.isEmpty {
             Text("In attesa di lettura…")
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
         } else if pending > 0 {
             Label("\(pending) pagine da leggere", systemImage: "clock")
-                .font(.system(size: 11, weight: .medium))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.attention)
         } else if failed > 0 {
             Label("\(read) lette · \(failed) non riuscite", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 11, weight: .medium))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.attention)
         } else {
             Label("\(read) pagine lette", systemImage: "checkmark")
-                .font(.system(size: 11, weight: .medium))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.success)
         }
     }
@@ -484,12 +484,12 @@ struct StudioHomeView: View {
         let readPages = documents.reduce(0) { $0 + $1.readCount }
         return VStack(spacing: DesignSpace.s2) {
             Text("Nessuno studio ancora")
-                .font(.system(size: 14, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
             Text(readPages > 0
                  ? "Il Vault è pronto: \(readPages) pagine già lette. Genera il primo studio quando vuoi — il materiale non verrà riletto."
                  : "Aggiungi il materiale del corso al Vault, oppure crea uno studio partendo dalle note.")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textTertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
@@ -498,7 +498,7 @@ struct StudioHomeView: View {
                     onCreateStudy(folder)
                 } label: {
                     Label("Crea da questo Vault", systemImage: "plus")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DesignFont.action)
                         .foregroundStyle(DesignColor.brandPrimary)
                         .padding(.horizontal, DesignSpace.s4)
                         .padding(.vertical, DesignSpace.s2 + 2)
@@ -548,16 +548,16 @@ struct StudioHomeView: View {
                         .frame(width: 36, height: 36)
                         .overlay(
                             Image(systemName: "book.closed.fill")
-                                .font(.system(size: 15))
+                                .font(.system(size: DesignIcon.md))
                                 .foregroundStyle(DesignColor.brandPrimary)
                         )
                     VStack(alignment: .leading, spacing: 1) {
                         Text(study.name)
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.textPrimary)
                             .lineLimit(1)
                         Text(study.updatedAt.formatted(date: .abbreviated, time: .omitted))
-                            .font(.system(size: 11))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                     Spacer(minLength: 0)
@@ -571,10 +571,10 @@ struct StudioHomeView: View {
                             if let kind = module.kind {
                                 HStack(spacing: 4) {
                                     Image(systemName: kind.systemImage)
-                                        .font(.system(size: 10, weight: .medium))
+                                        .font(.system(size: DesignIcon.sm))
                                     if module.status == .failed {
                                         Image(systemName: "exclamationmark.triangle.fill")
-                                            .font(.system(size: 8))
+                                            .font(.system(size: DesignIcon.sm))
                                     } else if module.status == .generating {
                                         ProgressView().controlSize(.mini)
                                     }
@@ -597,10 +597,10 @@ struct StudioHomeView: View {
                 if let folder, let newPages = vaultNewPages(for: study, in: folder) {
                     HStack(spacing: 4) {
                         Image(systemName: newPages == 0 ? "checkmark.shield" : "clock")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: DesignIcon.sm))
                         Text(newPages == 0 ? "Al passo con il Vault" : "\(newPages) pagine nuove nel Vault")
                     }
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DesignFont.caption)
                     .foregroundStyle(newPages == 0 ? DesignColor.success : DesignColor.attention)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -744,18 +744,18 @@ struct StudyFolderEditSheet: View {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 HStack(spacing: DesignSpace.s3) {
                     Image(systemName: "folder.fill")
-                        .font(.system(size: 22))
+                        .font(.system(size: DesignIcon.lg))
                         .foregroundStyle(color.color)
                     TextField("Nome del corso (es. Analisi 2)", text: $name)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 16, weight: .medium))
+                        .font(DesignFont.body)
                 }
                 .padding(DesignSpace.s3)
                 .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
 
                 VStack(alignment: .leading, spacing: DesignSpace.s2) {
                     Text("COLORE")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.micro)
                         .tracking(0.6)
                         .foregroundStyle(DesignColor.textTertiary)
                     HStack(spacing: DesignSpace.s3) {
@@ -764,7 +764,7 @@ struct StudyFolderEditSheet: View {
                                 color = option
                             } label: {
                                 Image(systemName: "folder.fill")
-                                    .font(.system(size: 18))
+                                    .font(.system(size: DesignIcon.lg))
                                     .foregroundStyle(option.color)
                                     .frame(width: 38, height: 38)
                                     .background(Circle().fill(option.color.opacity(color == option ? 0.15 : 0)))

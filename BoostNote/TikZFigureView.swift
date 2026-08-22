@@ -36,14 +36,14 @@ struct TikZFigureView: View {
                 // una figura non serviva": la traccia parlava di un
                 // disegno che non arrivava mai, senza dire perché.
                 Label("La figura di questa traccia non è compilabile: disegnala tu prima di risolvere.", systemImage: "scribble.variable")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if !failed {
                 HStack(spacing: DesignSpace.s2) {
                     ProgressView().controlSize(.small)
                     Text("Preparo la figura…")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
                 .frame(maxWidth: .infinity)

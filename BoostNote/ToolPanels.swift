@@ -46,7 +46,7 @@ struct GraphPanelContent: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text("Caricamento di Desmos…")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             case .ready:
@@ -54,14 +54,14 @@ struct GraphPanelContent: View {
             case .failed(let reason):
                 VStack(spacing: DesignSpace.s2) {
                     Text(reason)
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.danger)
                         .multilineTextAlignment(.center)
                     Button {
                         reloadToken += 1
                     } label: {
                         Label("Riprova", systemImage: "arrow.clockwise")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(DesignFont.action)
                     }
                     .buttonStyle(.boostOutlined)
                 }
@@ -89,13 +89,13 @@ struct TodoPanelContent: View {
                             }
                             .buttonStyle(.plain)
                             Text(item.text)
-                                .font(.system(size: 14))
+                                .font(DesignFont.body)
                                 .strikethrough(item.isDone)
                                 .foregroundStyle(item.isDone ? DesignColor.textTertiary : DesignColor.textPrimary)
                             Spacer(minLength: 0)
                             Button { remove(item) } label: {
                                 Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 14))
+                                    .font(.system(size: DesignIcon.md))
                                     .foregroundStyle(DesignColor.textTertiary)
                             }
                             .buttonStyle(.plain)
@@ -106,7 +106,7 @@ struct TodoPanelContent: View {
 
             HStack {
                 TextField("Aggiungi elemento", text: $newText)
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .textFieldStyle(.plain)
                     .onSubmit(add)
                 Button(action: add) {
@@ -132,7 +132,7 @@ struct TodoPanelContent: View {
             .overlay {
                 if isDone {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: DesignIcon.sm))
                         .foregroundStyle(.white)
                 }
             }
@@ -176,12 +176,12 @@ struct PomodoroPanelContent: View {
         VStack(spacing: DesignSpace.s5) {
             Spacer()
             Text(timeLabel)
-                .font(.system(size: 56, weight: .bold, design: .monospaced))
+                .font(DesignFont.readout(size: 46).monospacedDigit())
                 .foregroundStyle(remainingSeconds == 0 ? DesignColor.success : DesignColor.brandPrimary)
 
             if remainingSeconds == 0 {
                 Text("Tempo scaduto — pausa!")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.success)
             }
 
@@ -194,7 +194,7 @@ struct PomodoroPanelContent: View {
                 Button(isRunning ? "Pausa" : "Avvia") {
                     isRunning.toggle()
                 }
-                .font(.system(size: 15, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(.white)
                 .padding(.horizontal, DesignSpace.s5)
                 .padding(.vertical, DesignSpace.s2)
@@ -211,7 +211,7 @@ struct PomodoroPanelContent: View {
                 isRunning = false
                 remainingSeconds = totalSeconds
             }
-            .font(.system(size: 13, weight: .medium))
+            .font(DesignFont.action)
             .foregroundStyle(DesignColor.textSecondary)
             .buttonStyle(.plain)
             Spacer()
@@ -234,7 +234,7 @@ struct PomodoroPanelContent: View {
     private func stepButton(_ icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.textPrimary)
                 .frame(width: 32, height: 32)
                 .background(DesignColor.surfaceSunken, in: Circle())
@@ -389,14 +389,14 @@ struct WolframPanelContent: View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             if wolframAppID.isEmpty {
                 Text("Aggiungi la tua chiave AppID nel Profilo per usare questo strumento.")
-                    .font(.system(size: 13))
+                    .font(DesignFont.label)
                     .foregroundStyle(DesignColor.textSecondary)
             } else {
                 mathField
 
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.danger)
                 }
 
@@ -435,7 +435,7 @@ struct WolframPanelContent: View {
 
             HStack(spacing: 6) {
                 TextField("Espressione da risolvere", text: $expression)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(DesignFont.mono)
                     .textFieldStyle(.plain)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
@@ -449,7 +449,7 @@ struct WolframPanelContent: View {
                         Task { await solve() }
                     } label: {
                         Image(systemName: "arrow.right.circle.fill")
-                            .font(.system(size: 18))
+                            .font(.system(size: DesignIcon.lg))
                             .foregroundStyle(DesignColor.toolWolfram)
                     }
                     .buttonStyle(.plain)
@@ -487,7 +487,7 @@ struct WolframPanelContent: View {
                             fieldFocused = false
                             Task { await solve() }
                         }
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(DesignFont.action)
                     }
                 }
             }
@@ -497,7 +497,7 @@ struct WolframPanelContent: View {
     private func keyboardKey(_ label: String, monospaced: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label.replacingOccurrences(of: "(", with: ""))
-                .font(.system(size: monospaced ? 11.5 : 13, weight: .medium, design: monospaced ? .monospaced : .default))
+                .font(monospaced ? DesignFont.mono : DesignFont.action)
                 .foregroundStyle(DesignColor.textPrimary)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
@@ -517,7 +517,7 @@ struct WolframPanelContent: View {
     private var resultBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("RISULTATO")
-                .font(.system(size: 10.5, weight: .bold))
+                .font(DesignFont.micro)
                 .tracking(0.8)
                 .foregroundStyle(DesignColor.textTertiary)
             if let resultText {
@@ -554,7 +554,7 @@ struct WolframPanelContent: View {
     private var capabilityCatalog: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s2) {
             Text("COSA SA FARE · QUERY PRONTE")
-                .font(.system(size: 10.5, weight: .bold))
+                .font(DesignFont.micro)
                 .tracking(0.8)
                 .foregroundStyle(DesignColor.textTertiary)
 
@@ -568,7 +568,7 @@ struct WolframPanelContent: View {
                         }
                     } label: {
                         Text(capability.title)
-                            .font(.system(size: 11.5, weight: .medium))
+                            .font(DesignFont.action)
                             .foregroundStyle(isOpen ? DesignColor.toolWolfram : DesignColor.textSecondary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.85)
@@ -587,7 +587,7 @@ struct WolframPanelContent: View {
                         withAnimation(.easeInOut(duration: 0.18)) { showingCatalog.toggle() }
                     } label: {
                         Text(showingCatalog ? "meno" : "+\(Self.capabilities.count - 6)")
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(DesignFont.action)
                             .foregroundStyle(DesignColor.toolWolfram)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 5)
@@ -608,16 +608,16 @@ struct WolframPanelContent: View {
                             HStack(alignment: .top, spacing: 8) {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(example.label)
-                                        .font(.system(size: 12.5, weight: .medium))
+                                        .font(DesignFont.action)
                                         .foregroundStyle(DesignColor.textPrimary)
                                     Text(example.query)
-                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .font(DesignFont.mono)
                                         .foregroundStyle(DesignColor.textSecondary)
                                         .lineLimit(2)
                                 }
                                 Spacer(minLength: 4)
                                 Image(systemName: "return")
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: DesignIcon.sm))
                                     .foregroundStyle(DesignColor.toolWolfram)
                             }
                             .padding(.vertical, 7)

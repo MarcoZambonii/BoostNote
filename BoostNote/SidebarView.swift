@@ -180,14 +180,18 @@ struct SidebarView: View {
         }
     }
 
+    // Il marchio: atomo di brand del kit (Wordmark in App.jsx, pesi
+    // 200/600), fuori dalla scala tipografica per definizione.
+    private static let wordmarkLight = Font.system(size: 22, weight: .ultraLight)
+    private static let wordmarkStrong = Font.system(size: 22, weight: .semibold)
+
     private var header: some View {
         HStack(spacing: 0) {
             Text("Boost")
-                .fontWeight(.ultraLight)
+                .font(Self.wordmarkLight)
             Text("Note")
-                .fontWeight(.semibold)
+                .font(Self.wordmarkStrong)
         }
-        .font(.system(size: 23))
         .foregroundStyle(DesignColor.textPrimary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 24)
@@ -202,14 +206,14 @@ struct SidebarView: View {
     private var folderListHeader: some View {
         HStack(spacing: DesignSpace.s2) {
             Text("Cartelle")
-                .font(.system(size: 10.5, weight: .bold))
+                .font(DesignFont.micro)
                 .tracking(1.4)
                 .textCase(.uppercase)
                 .foregroundStyle(DesignColor.textTertiary)
 
             if dropTargetingRoot {
                 Text("· rilascia per togliere dalla cartella")
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(DesignFont.micro)
                     .foregroundStyle(DesignColor.brandPrimary)
                     .lineLimit(1)
             }
@@ -240,7 +244,7 @@ struct SidebarView: View {
                 }
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: DesignIcon.sm))
                     .foregroundStyle(DesignColor.textSecondary)
                     .frame(width: 22, height: 22)
                     .overlay {
@@ -300,11 +304,11 @@ struct SidebarView: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: isActive ? .semibold : .regular))
+                    .font(.system(size: DesignIcon.md))
                     .foregroundStyle(isActive ? DesignColor.brandPrimary : DesignColor.textSecondary)
                     .frame(width: 18)
                 Text(label)
-                    .font(.system(size: 14, weight: isActive ? .semibold : .regular))
+                    .font(isActive ? DesignFont.cardTitle : DesignFont.body)
                     .foregroundStyle(isActive ? DesignColor.brandPrimary : DesignColor.textPrimary)
                 Spacer(minLength: 0)
                 if let dot {
@@ -375,10 +379,10 @@ struct SidebarView: View {
                     // sagoma no.
                     if initials.isEmpty {
                         Image(systemName: "person")
-                            .font(.system(size: 13, weight: .regular))
+                            .font(.system(size: DesignIcon.md))
                     } else {
                         Text(initials)
-                            .font(.system(size: 11, weight: .bold))
+                            .font(DesignFont.micro)
                             .tracking(0.3)
                     }
                 }
@@ -390,12 +394,12 @@ struct SidebarView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(profileName.isEmpty ? "Profilo" : profileName)
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Text("Profilo e impostazioni")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                         .lineLimit(1)
                 }
@@ -403,7 +407,7 @@ struct SidebarView: View {
                 Spacer(minLength: 0)
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DesignIcon.sm))
                     .foregroundStyle(DesignColor.textTertiary)
             }
             .padding(.horizontal, 20)
@@ -492,7 +496,7 @@ struct SidebarView: View {
                     .padding(.horizontal, 3)
 
                 Text(folder.name)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(DesignFont.body)
                     .foregroundStyle(selectedFolder == folder ? DesignColor.brandPrimary : DesignColor.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -500,7 +504,7 @@ struct SidebarView: View {
                 Spacer(minLength: 4)
 
                 Text("\(folder.notes.count)")
-                    .font(.system(size: 12).monospacedDigit())
+                    .font(DesignFont.caption.monospacedDigit())
                     .foregroundStyle(DesignColor.textTertiary)
             }
             .padding(.vertical, 9)
@@ -557,10 +561,10 @@ struct SidebarView: View {
             let isSelected = selectedNote == note
             HStack(spacing: 8) {
                 Image(systemName: note.isWhiteboard ? "scribble.variable" : "note.text")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: DesignIcon.sm))
                     .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.textTertiary)
                 Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                    .font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))
+                    .font(DesignFont.label)
                     .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -695,11 +699,11 @@ struct FolderEditSheet: View {
                 VStack(alignment: .leading, spacing: DesignSpace.s2) {
                     HStack(spacing: DesignSpace.s3) {
                         Image(systemName: "folder.fill")
-                            .font(.system(size: 22))
+                            .font(.system(size: DesignIcon.lg))
                             .foregroundStyle(color.color)
                         TextField("Nome cartella", text: $name)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 16, weight: .medium))
+                            .font(DesignFont.body)
                     }
                     .padding(DesignSpace.s3)
                     .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
@@ -707,7 +711,7 @@ struct FolderEditSheet: View {
 
                 VStack(alignment: .leading, spacing: DesignSpace.s2) {
                     Text("COLORE")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.micro)
                         .tracking(0.6)
                         .foregroundStyle(DesignColor.textTertiary)
 
@@ -717,7 +721,7 @@ struct FolderEditSheet: View {
                                 color = option
                             } label: {
                                 Image(systemName: "folder.fill")
-                                    .font(.system(size: 18))
+                                    .font(.system(size: DesignIcon.lg))
                                     .foregroundStyle(option.color)
                                     .frame(width: 38, height: 38)
                                     .background(

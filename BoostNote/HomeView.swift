@@ -153,7 +153,7 @@ struct HomeView: View {
     private var greetingBlock: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(greeting)
-                .font(.system(size: 26, weight: .semibold))
+                .font(DesignFont.screenTitle)
                 .foregroundStyle(DesignColor.textPrimary)
                 // Non comprimibile: è ciò che permette a `ViewThatFits` di
                 // accorgersi che la riga singola non entra, invece di farla
@@ -161,7 +161,7 @@ struct HomeView: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
             Text(Date.now.formatted(date: .long, time: .omitted))
-                .font(.system(size: 14))
+                .font(DesignFont.body)
                 .foregroundStyle(DesignColor.textTertiary)
         }
     }
@@ -206,7 +206,7 @@ struct HomeView: View {
     @ViewBuilder
     private func headerActionLabel(title: String, icon: String, tint: Color?) -> some View {
         let label = Label(title, systemImage: icon)
-            .font(.system(size: 13, weight: .semibold))
+            .font(DesignFont.action)
             // Mai a capo: se lo spazio manca, il pulsante non si spezza
             // lettera per lettera (successo su iPhone).
             .lineLimit(1)
@@ -232,7 +232,7 @@ struct HomeView: View {
     private var resumeSection: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text("RIPRENDI DA DOVE ERI")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
 
@@ -259,7 +259,7 @@ struct HomeView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
                 HStack(spacing: DesignSpace.s2) {
@@ -267,7 +267,7 @@ struct HomeView: View {
                         folderChip(folder)
                     }
                     Text(relativeTime(note.updatedAt))
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -286,7 +286,7 @@ struct HomeView: View {
                 .fill(folder.folderColor.color)
                 .frame(width: 9, height: 9)
             Text(folder.name)
-                .font(.system(size: 12, weight: .medium))
+                .font(DesignFont.caption)
                 .foregroundStyle(folder.folderColor.color)
         }
         .padding(.horizontal, 8)
@@ -329,7 +329,7 @@ struct HomeView: View {
         if flashcards != nil || wrong > 0 {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
                 Text("DA RIPASSARE")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignFont.micro)
                     .tracking(0.6)
                     .foregroundStyle(DesignColor.textTertiary)
 
@@ -367,15 +367,15 @@ struct HomeView: View {
                 .frame(width: 44, height: 44)
                 .overlay(
                     Image(systemName: icon)
-                        .font(.system(size: 17, weight: .medium))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(tint)
                 )
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .lineLimit(1)
             }
@@ -383,9 +383,9 @@ struct HomeView: View {
             Button(action: action) {
                 HStack(spacing: 4) {
                     Text(buttonLabel)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DesignIcon.sm))
                 }
                 .foregroundStyle(tint)
                 .padding(.horizontal, DesignSpace.s4)
@@ -401,13 +401,13 @@ struct HomeView: View {
     private var emptyState: some View {
         VStack(spacing: DesignSpace.s3) {
             Image(systemName: "square.and.pencil")
-                .font(.system(size: 34))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(DesignColor.textTertiary)
             Text("Ancora nessuna nota")
-                .font(.system(size: 16, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
             Text("Crea una nota o importa un PDF su cui scrivere: i pulsanti sono qui sopra.")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textTertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)

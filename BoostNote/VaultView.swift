@@ -110,14 +110,14 @@ struct VaultView: View {
                 Image(systemName: "archivebox.fill")
                     .foregroundStyle(folder.folderColor.color)
                 Text(folder.name)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(DesignFont.sectionTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                 Spacer()
                 if isIngesting {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
                         Text("Leggo…")
-                            .font(.system(size: 12))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textSecondary)
                     }
                 } else if !documents.isEmpty {
@@ -127,7 +127,7 @@ struct VaultView: View {
                         // Bordata col raggio dei bottoni, non una capsula:
                         // nel Vault le stondature sono una scala sola.
                         Label("Aggiorna", systemImage: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(DesignFont.action)
                             .foregroundStyle(DesignColor.textPrimary)
                             .padding(.horizontal, 13)
                             .padding(.vertical, 7)
@@ -141,7 +141,7 @@ struct VaultView: View {
                 }
             }
             Text("Il Vault è la memoria del corso: tutto il materiale viene letto una volta sola, pagina per pagina, e resta pronto per studi, esercizi e ripassi. Le note restano collegate: quando le modifichi, si rileggono solo le pagine cambiate.")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textSecondary)
         }
     }
@@ -153,18 +153,18 @@ struct VaultView: View {
                 .frame(width: 36, height: 36)
                 .overlay(
                     Image(systemName: document.kind == .note ? "note.text" : "doc.richtext")
-                        .font(.system(size: 15))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.brandPrimary)
                 )
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: DesignSpace.s2) {
                     Text(document.title.isEmpty ? "Senza titolo" : document.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                         .lineLimit(1)
                     if document.kind == .note {
                         Text("Nota collegata")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.insight)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -172,7 +172,7 @@ struct VaultView: View {
                     }
                     if document.isExamPaper {
                         Text("Tema d'esame")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(DesignFont.micro)
                             .foregroundStyle(DesignColor.attention)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -207,13 +207,13 @@ struct VaultView: View {
         let failed = document.failedCount
         if total == 0 {
             Label("In attesa di lettura…", systemImage: "clock")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textSecondary)
         } else if read == total {
             VStack(alignment: .leading, spacing: 4) {
                 let characters = document.fullText.count
                 Label("\(total) pagine lette · \(characters.formatted()) caratteri", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.success)
                 // L'indice: gli argomenti che il Vault ha riconosciuto.
                 // È la prova visibile che il materiale non è solo
@@ -221,12 +221,12 @@ struct VaultView: View {
                 let topics = document.allTopics
                 if !topics.isEmpty {
                     Text(topics.prefix(8).joined(separator: " · ") + (topics.count > 8 ? " · +\(topics.count - 8)" : ""))
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.brandPrimary)
                         .lineLimit(2)
                 } else if isIngesting {
                     Text("Costruisco l'indice degli argomenti…")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                 }
             }
@@ -236,15 +236,15 @@ struct VaultView: View {
                     if isIngesting {
                         ProgressView().controlSize(.mini)
                     } else {
-                        Image(systemName: "clock").font(.system(size: 12))
+                        Image(systemName: "clock").font(.system(size: DesignIcon.sm))
                     }
                     Text("\(read) di \(total) pagine lette")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                 }
                 .foregroundStyle(DesignColor.attention)
                 if failed > 0 {
                     Text("\(failed) pagine non lette: si ritenteranno al prossimo aggiornamento.")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                 }
             }
@@ -262,8 +262,8 @@ struct VaultView: View {
     private func addAction(_ title: String, icon: String, filled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 7) {
-                Image(systemName: icon).font(.system(size: 15))
-                Text(title).font(.system(size: 13.5, weight: .semibold))
+                Image(systemName: icon).font(.system(size: DesignIcon.md))
+                Text(title).font(DesignFont.action)
             }
             .foregroundStyle(filled ? DesignColor.textOnBrand : DesignColor.textPrimary)
             .frame(maxWidth: .infinity)
@@ -296,13 +296,13 @@ struct VaultView: View {
     private var emptyState: some View {
         VStack(spacing: DesignSpace.s2) {
             Image(systemName: "archivebox")
-                .font(.system(size: 30))
+                .font(.system(size: DesignIcon.xl))
                 .foregroundStyle(DesignColor.textTertiary)
             Text("Il Vault è vuoto")
-                .font(.system(size: 15, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
             Text("Metti qui tutto il materiale del corso: note, dispense, temi d'esame, file WeBeep. Verrà letto una volta e resterà pronto per studi, esercizi e ripassi.")
-                .font(.system(size: 12))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
@@ -354,12 +354,12 @@ struct VaultSourcePicker: View {
                 if foldersWithVault.isEmpty {
                     VStack(spacing: DesignSpace.s2) {
                         Image(systemName: "archivebox")
-                            .font(.system(size: 30))
+                            .font(.system(size: DesignIcon.xl))
                             .foregroundStyle(DesignColor.textTertiary)
                         Text("Nessun Vault con materiale")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                         Text("Apri una cartella di Studio e aggiungi note, PDF o file WeBeep al suo Vault: da lì gli studi si creano senza rileggere niente.")
-                            .font(.system(size: 12))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 360)
@@ -412,14 +412,14 @@ struct VaultSourcePicker: View {
                     .foregroundStyle(selected.contains(document.id) ? DesignColor.brandPrimary : DesignColor.textTertiary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(document.title.isEmpty ? "Senza titolo" : document.title)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(DesignFont.body)
                         .foregroundStyle(isPicked ? DesignColor.textTertiary : DesignColor.textPrimary)
                     statusText(document)
                 }
                 Spacer()
                 if document.isExamPaper {
                     Text("Tema d'esame")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(DesignFont.micro)
                         .foregroundStyle(DesignColor.attention)
                 }
             }
@@ -433,11 +433,11 @@ struct VaultSourcePicker: View {
         let read = document.readCount
         if total > 0 && read == total {
             Text("\(total) pagine pronte")
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.success)
         } else {
             Text(total == 0 ? "Non ancora letto" : "Letto in parte (\(read) di \(total)): verrà aggiornato alla creazione")
-                .font(.system(size: 11))
+                .font(DesignFont.caption)
                 .foregroundStyle(DesignColor.attention)
         }
     }
@@ -486,10 +486,10 @@ private struct VaultNotePicker: View {
                             .foregroundStyle(DesignColor.brandPrimary)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(note.title.isEmpty ? "Senza titolo" : note.title)
-                                .font(.system(size: 14, weight: .medium))
+                                .font(DesignFont.body)
                                 .foregroundStyle(DesignColor.textPrimary)
                             Text("\(note.pages.count) pagine")
-                                .font(.system(size: 11))
+                                .font(DesignFont.caption)
                                 .foregroundStyle(DesignColor.textTertiary)
                         }
                     }

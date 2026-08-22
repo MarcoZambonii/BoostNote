@@ -37,18 +37,18 @@ struct MagicResultSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignSpace.s4) {
                     Label(result.action.label, systemImage: result.action.systemImage)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(result.action.color)
 
                     if result.recognizedText != nil {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 4) {
                                 Text("RICONOSCIUTO")
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(DesignFont.micro)
                                     .foregroundStyle(DesignColor.textTertiary)
                                 if let via = result.recognizedVia {
                                     Text("· \(via)")
-                                        .font(.system(size: 11, weight: .medium))
+                                        .font(DesignFont.caption)
                                         .foregroundStyle(DesignColor.textTertiary)
                                 }
                             }
@@ -56,7 +56,7 @@ struct MagicResultSheet: View {
                             // sbagliato qualcosa, si corregge qui e si
                             // riesegue, senza dover riscrivere sul foglio.
                             TextField("Testo riconosciuto", text: $editedText, axis: .vertical)
-                                .font(.system(size: 14, design: .monospaced))
+                                .font(DesignFont.mono)
                                 .foregroundStyle(DesignColor.textPrimary)
                                 .textFieldStyle(.plain)
                                 .autocorrectionDisabled()
@@ -83,7 +83,7 @@ struct MagicResultSheet: View {
 
                     if let errorMessage = result.errorMessage {
                         Text(errorMessage)
-                            .font(.system(size: 14))
+                            .font(DesignFont.body)
                             .foregroundStyle(DesignColor.danger)
                     }
 

@@ -82,7 +82,7 @@ struct StudioCreateFlowView: View {
             HStack(spacing: DesignSpace.s3) {
                 Button(action: onCancel) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: DesignIcon.md))
                         .foregroundStyle(DesignColor.textSecondary)
                 }
                 .buttonStyle(.plain)
@@ -90,7 +90,7 @@ struct StudioCreateFlowView: View {
                 .disabled(preparation != nil)
 
                 Text("Crea nuovo studio")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(DesignFont.cardTitle)
                     .foregroundStyle(DesignColor.textPrimary)
                 Spacer()
             }
@@ -199,7 +199,7 @@ struct StudioCreateFlowView: View {
     private var nameField: some View {
         TextField("Nome (es. Ripasso Analisi 1 — primo parziale)", text: $name)
             .textFieldStyle(.plain)
-            .font(.system(size: 15, weight: .medium))
+            .font(DesignFont.body)
             .padding(DesignSpace.s3)
             .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
     }
@@ -207,7 +207,7 @@ struct StudioCreateFlowView: View {
     private var subjectField: some View {
         TextField("Materia (es. Analisi 1)", text: $subject)
             .textFieldStyle(.plain)
-            .font(.system(size: 15))
+            .font(DesignFont.body)
             .padding(DesignSpace.s3)
             .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
     }
@@ -224,9 +224,9 @@ struct StudioCreateFlowView: View {
         } label: {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: "archivebox.fill")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: DesignIcon.md))
                 Text("Scegli dal Vault")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignFont.cardTitle)
             }
             .foregroundStyle(DesignColor.textOnBrand)
             .padding(.horizontal, DesignSpace.s5)
@@ -255,9 +255,9 @@ struct StudioCreateFlowView: View {
         } label: {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: DesignIcon.md))
                 Text("Aggiungi file")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(DesignFont.action)
             }
             .foregroundStyle(DesignColor.textSecondary)
             .padding(.horizontal, DesignSpace.s4)
@@ -273,7 +273,7 @@ struct StudioCreateFlowView: View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             sectionHeader(number: 2, title: "Scegli i materiali di partenza")
             Text("Il Vault del corso è già letto: sceglierne i documenti non costa nessuna rilettura. Puoi comunque aggiungere un file al volo, ma verrà letto adesso.")
-                .font(.system(size: 13))
+                .font(DesignFont.label)
                 .foregroundStyle(DesignColor.textTertiary)
 
             ViewThatFits(in: .horizontal) {
@@ -333,22 +333,22 @@ struct StudioCreateFlowView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 if let focus = pendingFocusTopics, !focus.isEmpty {
                     Label("Argomenti preselezionati dai tuoi risultati: sono quelli dove sbagli di più. Puoi cambiarli.", systemImage: "target")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.insight)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: DesignSpace.s2) {
                     Text("ARGOMENTI DAL VAULT")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DesignFont.micro)
                         .tracking(0.6)
                         .foregroundStyle(DesignColor.textTertiary)
                     Text("\(selectedTopics.count)/\(topics.count)")
-                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .font(DesignFont.caption.monospacedDigit())
                         .foregroundStyle(DesignColor.brandPrimary)
                     Spacer()
                     if !excludedTopics.isEmpty {
                         Button("Tutti") { excludedTopics.removeAll() }
-                            .font(.system(size: 12, weight: .medium))
+                            .font(DesignFont.action)
                             .buttonStyle(.plain)
                             .foregroundStyle(DesignColor.brandPrimary)
                     }
@@ -361,7 +361,7 @@ struct StudioCreateFlowView: View {
                 Text(selectedTopics.count == topics.count
                      ? "Tutti gli argomenti del materiale scelto. Toglierne qualcuno concentra la generazione sui rimanenti: meno argomenti, più esercizi per ciascuno."
                      : "La generazione userà solo questi argomenti — e solo le parti di materiale che li trattano.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -399,9 +399,9 @@ struct StudioCreateFlowView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 11))
+                    .font(.system(size: DesignIcon.sm))
                 Text(topic)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DesignFont.action)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
             }
@@ -420,17 +420,17 @@ struct StudioCreateFlowView: View {
     private func sourceRow(_ source: StudySourceMaterial) -> some View {
         HStack(spacing: DesignSpace.s3) {
             Image(systemName: source.kind.systemImage)
-                .font(.system(size: 14))
+                .font(.system(size: DesignIcon.md))
                 .foregroundStyle(DesignColor.brandPrimary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 1) {
                 Text(source.title)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(DesignFont.body)
                     .foregroundStyle(DesignColor.textPrimary)
                     .lineLimit(1)
                 if let subtitle = source.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -443,7 +443,7 @@ struct StudioCreateFlowView: View {
             } label: {
                 Text("Tema d'esame")
                     .fixedSize()
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignFont.caption)
                     .foregroundStyle(source.isExamPaper ? DesignColor.attention : DesignColor.textTertiary)
                     .padding(.horizontal, DesignSpace.s2 + 2)
                     .padding(.vertical, 5)
@@ -496,21 +496,21 @@ struct StudioCreateFlowView: View {
                 RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
                     .fill(kind.color.opacity(0.12))
                     .frame(width: 38, height: 38)
-                    .overlay(Image(systemName: kind.systemImage).font(.system(size: 16, weight: .medium)).foregroundStyle(kind.color))
+                    .overlay(Image(systemName: kind.systemImage).font(.system(size: DesignIcon.md)).foregroundStyle(kind.color))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(kind.label)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textPrimary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                     Text(kind.subtitle)
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                         .multilineTextAlignment(.leading)
                 }
                 Spacer()
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
+                    .font(.system(size: DesignIcon.lg))
                     .foregroundStyle(isSelected ? DesignColor.brandPrimary : DesignColor.borderDefault)
             }
             .padding(DesignSpace.s4)
@@ -529,7 +529,7 @@ struct StudioCreateFlowView: View {
     private var exerciseOptions: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             Text("OPZIONI ESERCIZI")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
 
@@ -551,20 +551,20 @@ struct StudioCreateFlowView: View {
                 HStack(spacing: DesignSpace.s3) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Quanti esercizi")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(DesignFont.body)
                             .foregroundStyle(DesignColor.textPrimary)
                         Text("Tracce da risolvere, inventate sui temi d'esame")
-                            .font(.system(size: 11))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                     Spacer(minLength: DesignSpace.s3)
                     HStack(spacing: DesignSpace.s2) {
                         Text("\(exerciseCount)")
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .font(DesignFont.cardTitle)
                             .foregroundStyle(DesignColor.brandPrimary)
                             .frame(minWidth: 22)
                         Text("per argomento")
-                            .font(.system(size: 11))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                         Stepper(value: $exerciseCount, in: 1...3) { EmptyView() }
                             .labelsHidden()
@@ -572,12 +572,12 @@ struct StudioCreateFlowView: View {
                     }
                 }
                 Text("Gli **argomenti li individua l'app** leggendo i materiali, e li copre tutti. Questo numero dice quanti esercizi fare **per ciascun argomento**: alzalo per insistere di più su ogni cosa.")
-                    .font(.system(size: 11))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 if exerciseCount > 2 {
                     Label("Con molti argomenti nei materiali il totale cresce in fretta: oltre 15 esercizi la generazione riduce da sola il numero per argomento, per coprirli comunque tutti.", systemImage: "info.circle")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.attention)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -587,9 +587,9 @@ struct StudioCreateFlowView: View {
 
             Toggle(isOn: $verifyExercises) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Verifica gli esercizi").font(.system(size: 13, weight: .medium))
+                    Text("Verifica gli esercizi").font(DesignFont.label)
                     Text("Ogni esercizio viene risolto una seconda volta in modo indipendente; se le due soluzioni non coincidono viene scartato. Usa una chiamata in più.")
-                        .font(.system(size: 11))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textTertiary)
                 }
             }
@@ -607,7 +607,7 @@ struct StudioCreateFlowView: View {
             difficulty = level
         } label: {
             Text(label)
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignFont.action)
                 .foregroundStyle(isSelected ? DesignColor.textOnBrand : DesignColor.textSecondary)
                 .padding(.horizontal, DesignSpace.s3 + 2)
                 .padding(.vertical, 7)
@@ -645,7 +645,7 @@ struct StudioCreateFlowView: View {
                 HStack(spacing: DesignSpace.s2) {
                     ProgressView().controlSize(.small)
                     Text("Leggo i materiali — \(preparation.current) di \(preparation.total): \(preparation.title)\(preparation.detail.map { " (\($0))" } ?? "")")
-                        .font(.system(size: 12))
+                        .font(DesignFont.caption)
                         .foregroundStyle(DesignColor.textSecondary)
                         .lineLimit(1)
                     Spacer()
@@ -654,7 +654,7 @@ struct StudioCreateFlowView: View {
 
             if !missingRequirements.isEmpty {
                 Label("Manca ancora: \(missingRequirements.joined(separator: ", ")).", systemImage: "info.circle")
-                    .font(.system(size: 12))
+                    .font(DesignFont.caption)
                     .foregroundStyle(DesignColor.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -668,7 +668,7 @@ struct StudioCreateFlowView: View {
                         showingQuotaInfo = true
                     } label: {
                         Image(systemName: "info.circle")
-                            .font(.system(size: 16))
+                            .font(.system(size: DesignIcon.md))
                             .foregroundStyle(DesignColor.textSecondary)
                             .frame(width: 32, height: 32)
                     }
@@ -691,7 +691,7 @@ struct StudioCreateFlowView: View {
                             Image(systemName: "sparkles")
                             Text("Genera studio")
                         }
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(DesignFont.cardTitle)
                         .foregroundStyle(DesignColor.textOnBrand)
                         .padding(.horizontal, DesignSpace.s5)
                         .padding(.vertical, DesignSpace.s3)
@@ -704,7 +704,7 @@ struct StudioCreateFlowView: View {
                     .disabled(!canGenerate || preparation != nil)
                     if canGenerate, AIService.selectedProvider == .gemini {
                         Text(callEstimateLabel)
-                            .font(.system(size: 11))
+                            .font(DesignFont.caption)
                             .foregroundStyle(DesignColor.textTertiary)
                     }
                 }
@@ -837,12 +837,12 @@ struct StudioCreateFlowView: View {
     private func sectionHeader(number: Int, title: String) -> some View {
         HStack(spacing: DesignSpace.s2 + 2) {
             Text("\(number)")
-                .font(.system(size: 13, weight: .bold))
+                .font(DesignFont.micro)
                 .foregroundStyle(DesignColor.textOnBrand)
                 .frame(width: 24, height: 24)
                 .background(DesignColor.brandPrimary, in: Circle())
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
+                .font(DesignFont.cardTitle)
                 .foregroundStyle(DesignColor.textPrimary)
         }
     }
@@ -851,9 +851,9 @@ struct StudioCreateFlowView: View {
         Button(action: action) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: icon)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: DesignIcon.md))
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignFont.cardTitle)
             }
             .foregroundStyle(DesignColor.brandPrimary)
             .padding(.horizontal, DesignSpace.s4)
@@ -915,7 +915,7 @@ private struct StudioNotePickerSheet: View {
                                 .foregroundStyle(.primary)
                             if let folder = note.folder {
                                 Text(folder.name)
-                                    .font(.caption)
+                                    .font(DesignFont.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -972,12 +972,12 @@ private struct StudioWebeepPickerSheet: View {
                 if token == nil {
                     VStack(spacing: DesignSpace.s3) {
                         Image(systemName: "building.columns")
-                            .font(.system(size: 32))
+                            .font(.system(size: DesignIcon.xl))
                             .foregroundStyle(DesignColor.textTertiary)
                         Text("WeBeep non è collegato")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(DesignFont.cardTitle)
                         Text("Accedi dall'ambiente WeBeep nella barra laterale, poi torna qui per scegliere i materiali del corso.")
-                            .font(.system(size: 13))
+                            .font(DesignFont.label)
                             .foregroundStyle(DesignColor.textTertiary)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 300)
@@ -1050,7 +1050,7 @@ private struct StudioWebeepPickerSheet: View {
                                 .foregroundStyle(.primary)
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: DesignIcon.sm))
                                 .foregroundStyle(.tertiary)
                         }
                     }
@@ -1104,7 +1104,7 @@ private struct StudioWebeepPickerSheet: View {
                 Spacer()
                 if StudioCreateFlowView.looksLikeExamPaper(cleanName) {
                     Text("Tema d'esame")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(DesignFont.micro)
                         .foregroundStyle(DesignColor.attention)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
