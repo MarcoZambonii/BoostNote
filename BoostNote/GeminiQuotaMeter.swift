@@ -105,8 +105,8 @@ struct GeminiQuotaPanel: View {
                 .frame(width: 56, alignment: .leading)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(DesignColor.gray100)
-                    Capsule().fill(color)
+                    RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).fill(DesignColor.gray100)
+                    RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).fill(color)
                         .frame(width: max(6, proxy.size.width * min(1, CGFloat(used) / CGFloat(max(limit, 1)))))
                 }
             }

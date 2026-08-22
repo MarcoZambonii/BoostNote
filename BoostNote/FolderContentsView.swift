@@ -28,6 +28,7 @@ struct FolderContentsView: View {
     @State private var showingNoteCreate = false
     @State private var showingNewFolderSheet = false
     @State private var showingPDFImporter = false
+    @State private var importErrorMessage: String?
 
     private var subfolders: [Folder] { folder.children.sorted { $0.name < $1.name } }
     private var notes: [Note] { folder.notes.sorted { $0.updatedAt > $1.updatedAt } }
@@ -156,18 +157,34 @@ struct FolderContentsView: View {
             }
         }
         // Stesso flusso dell'Importa PDF della Home, ma la nota nasce
-        // dentro QUESTA cartella invece che senza cartella.
+        // dentro QUESTA cartella invece che senza cartella. Come lì, un
+        // file illeggibile o non-PDF va DETTO, non inghiottito.
         .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf]) { result in
             guard case .success(let url) = result else { return }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { return }
+            guard let data = try? Data(contentsOf: url) else {
+                importErrorMessage = "Non riesco a leggere \"\(url.lastPathComponent)\". Se il file sta su un cloud, aprilo prima nell'app File per scaricarlo."
+                return
+            }
             let title = url.deletingPathExtension().lastPathComponent
             let note = Note(title: title.isEmpty ? "Nuova nota" : title, folder: folder)
             context.insert(note)
-            note.appendPages(fromPDF: data, in: context)
+            guard note.appendPages(fromPDF: data, in: context) else {
+                context.delete(note)
+                importErrorMessage = "\"\(title)\" non è un PDF leggibile: il file è danneggiato o non è un vero PDF."
+                return
+            }
             selectedFolder = nil
             selectedNote = note
+        }
+        .alert("Import non riuscito", isPresented: Binding(
+            get: { importErrorMessage != nil },
+            set: { if !$0 { importErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { importErrorMessage = nil }
+        } message: {
+            Text(importErrorMessage ?? "")
         }
     }
 

@@ -114,6 +114,9 @@ struct NoteEditorView: View {
     @State private var documentPreviewName: String = ""
 
     @State private var showingToolsPicker = false
+    // Strumenti ridotti alla sola intestazione: restano nella pila e non
+    // perdono lo stato, ma smettono di occupare il pannello.
+    @State private var collapsedTools: Set<String> = []
     // TUTTI gli strumenti vivono nel pannello laterale persistente (non
     // più widget flottanti sul foglio): resta aperto mentre si scrive e
     // si chiude con un pulsante esplicito.
@@ -149,6 +152,9 @@ struct NoteEditorView: View {
     @State private var webeepPickerTarget: PDFPickerTarget = .documentPanel
 
     @State private var magicResult: MagicResult?
+    // Errore d'import PDF (file illeggibile, non-PDF): prima spariva in
+    // silenzio e "importa" sembrava non fare niente.
+    @State private var pdfImportError: String?
     // Formula sul foglio aperta per la correzione del suo LaTeX.
     @State private var editingFormula: NoteMedia?
     // Immagine e sorgente della formula PRIMA della modifica: il "prima"
@@ -294,11 +300,22 @@ struct NoteEditorView: View {
                 photosPickerItem = nil
             }
         }
+        .alert("Import non riuscito", isPresented: Binding(
+            get: { pdfImportError != nil },
+            set: { if !$0 { pdfImportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { pdfImportError = nil }
+        } message: {
+            Text(pdfImportError ?? "")
+        }
         .fileImporter(isPresented: $showingPDFPicker, allowedContentTypes: [.pdf]) { result in
             guard case .success(let url) = result else { return }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { return }
+            guard let data = try? Data(contentsOf: url) else {
+                pdfImportError = "Non riesco a leggere \"\(url.lastPathComponent)\". Se il file sta su un cloud, aprilo prima nell'app File per scaricarlo."
+                return
+            }
             switch pdfPickerTarget {
             case .notePages:
                 // Import diretto come pagine in coda alla nota aperta: si
@@ -422,7 +439,7 @@ struct NoteEditorView: View {
                 Rectangle()
                     .fill(DesignColor.borderDefault)
                     .frame(width: 1)
-                Capsule()
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     .fill(DesignColor.textTertiary.opacity(liveResizeWidth == nil ? 0.35 : 0.8))
                     .frame(width: 4, height: 42)
             }
@@ -467,16 +484,36 @@ struct NoteEditorView: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(DesignColor.textSecondary)
                         .frame(width: 28, height: 28)
-                        .background(DesignColor.surfacePage, in: Circle())
+                        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                         .contentShape(Rectangle().inset(by: -8))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Nascondi pannello")
 
-                Text(sidePanelTools.count == 1 ? "Strumento" : "\(sidePanelTools.count) strumenti")
+                Text(sidePanelTools.count == 1 ? "1 strumento" : "\(sidePanelTools.count) strumenti")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
                 Spacer()
+
+                // La porta per aggiungere uno strumento sta QUI, sopra la
+                // pila: prima era solo nella barra della penna, dove chi
+                // guardava il pannello non la cercava.
+                Button {
+                    showingToolsPicker = true
+                } label: {
+                    Text("Aggiungi")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DesignColor.textPrimary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                                .strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Aggiungi strumento")
 
                 // Il pannello passa dall'altro lato del foglio: chi scrive
                 // con la destra ci appoggia sopra la mano.
@@ -491,7 +528,7 @@ struct NoteEditorView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(DesignColor.textSecondary)
                         .frame(width: 28, height: 28)
-                        .background(DesignColor.surfacePage, in: Circle())
+                        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                         .contentShape(Rectangle().inset(by: -6))
                 }
                 .buttonStyle(.plain)
@@ -525,38 +562,42 @@ struct NoteEditorView: View {
     // semplici divisori non facevano capire dove finiva uno e iniziava
     // l'altro. L'intestazione colorata del tipo fa da appiglio visivo.
     private func sidePanelSection(for tool: NoteTool) -> some View {
-        VStack(spacing: 0) {
+        let isCollapsed = collapsedTools.contains(tool.rawValue)
+        return VStack(spacing: 0) {
             HStack(spacing: DesignSpace.s2) {
                 Image(systemName: tool.systemImage)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(DesignColor.brandPrimary)
                     .frame(width: 26, height: 26)
-                    .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                    .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
                 Text(tool.label)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13.5, weight: .semibold))
                     .foregroundStyle(DesignColor.textPrimary)
-                Spacer()
-                Button {
-                    withAnimation { closeSidePanel(tool) }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(DesignColor.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(DesignColor.surfaceSunken, in: Circle())
-                        // Area sensibile più larga del cerchio: 28pt di
-                        // grafica sono belli ma sotto il minimo comodo per
-                        // il dito, e la chiusura mancava spesso.
-                        .contentShape(Rectangle().inset(by: -8))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+
+                // Due tasti gemelli: riduci e chiudi. Erano uno solo, e
+                // per togliere di mezzo uno strumento senza perderne lo
+                // stato bisognava chiuderlo e riaprirlo.
+                cardButton(isCollapsed ? "chevron.down" : "chevron.up", label: isCollapsed ? "Espandi \(tool.label)" : "Riduci \(tool.label)") {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        if isCollapsed { collapsedTools.remove(tool.rawValue) } else { collapsedTools.insert(tool.rawValue) }
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Rimuovi \(tool.label)")
+                cardButton("xmark", label: "Rimuovi \(tool.label)") {
+                    withAnimation { closeSidePanel(tool) }
+                }
             }
-            .padding(.horizontal, DesignSpace.s3)
+            .padding(.leading, DesignSpace.s3)
+            .padding(.trailing, DesignSpace.s2 + 2)
             .padding(.vertical, DesignSpace.s2 + 2)
 
-            Divider().opacity(0.6)
+            if !isCollapsed {
+                Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
+            }
 
+            if !isCollapsed {
             Group {
                 switch tool {
                 case .calculator: CalculatorContentView()
@@ -571,15 +612,31 @@ struct NoteEditorView: View {
                 }
             }
             .padding(DesignSpace.s3)
+            }
         }
-        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
+        .background(DesignColor.surfacePage)
+        .clipShape(RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous)
                 .stroke(DesignColor.borderSubtle, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
         .padding(.horizontal, DesignSpace.s3)
-        .padding(.vertical, DesignSpace.s2)
+        .padding(.vertical, DesignSpace.s2 - 2)
+    }
+
+    private func cardButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(DesignColor.textSecondary)
+                .frame(width: 26, height: 26)
+                .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                // Area sensibile più larga del disegno: 26pt di grafica
+                // sono belli ma sotto il minimo comodo per il dito.
+                .contentShape(Rectangle().inset(by: -7))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     // Maniglia sul bordo destro quando il pannello è nascosto: si tira
@@ -1004,8 +1061,8 @@ struct NoteEditorView: View {
         // mancare il tocco era la norma.
         .padding(.horizontal, DesignSpace.s2)
         .frame(height: headerRowHeight)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(DesignColor.borderDefault.opacity(0.6), lineWidth: 1))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).stroke(DesignColor.borderDefault.opacity(0.6), lineWidth: 1))
         .shadow(color: .black.opacity(0.10), radius: 12, y: 3)
     }
 
@@ -1050,19 +1107,24 @@ struct NoteEditorView: View {
             kind = item.kind; data = item.data; sourceText = item.sourceText
         }
 
-        func make(note: Note) -> NoteMedia {
-            NoteMedia(x: x, y: y, width: width, height: height, kind: kind, data: data, sourceText: sourceText, note: note)
+        func make() -> NoteMedia {
+            NoteMedia(x: x, y: y, width: width, height: height, kind: kind, data: data, sourceText: sourceText)
         }
     }
 
+    // L'aggancio dei media passa dal lato GENITORE (media.append), mai
+    // solo da item.note: la mutazione fatta sul solo lato figlio può non
+    // notificare l'osservazione di `media` — trappola documentata su
+    // Note.attach in Models.swift.
     private func recordMediaLifecycle(_ name: String, ref: MediaRef, snapshot: MediaSnapshot, inserted: Bool) {
         let remove = { [context] in
             context.delete(ref.item)
             note.updatedAt = .now
         }
         let restore = { [context] in
-            let reborn = snapshot.make(note: note)
+            let reborn = snapshot.make()
             context.insert(reborn)
+            note.media.append(reborn)
             ref.item = reborn
             note.updatedAt = .now
         }
@@ -1071,8 +1133,9 @@ struct NoteEditorView: View {
 
     private func insertMedia(kind: NoteMediaKind, data: Data) {
         let offset = Double(note.media.count % 6) * 24
-        let item = NoteMedia(x: 60 + offset, y: currentPageTop + offset, kind: kind, data: data, note: note)
+        let item = NoteMedia(x: 60 + offset, y: currentPageTop + offset, kind: kind, data: data)
         context.insert(item)
+        note.media.append(item)
         note.updatedAt = .now
         recordMediaLifecycle("Inserimento", ref: MediaRef(item), snapshot: MediaSnapshot(item), inserted: true)
     }
@@ -1105,7 +1168,14 @@ struct NoteEditorView: View {
     // (diff sugli ID persistenti), il ripeti le ricrea dagli stessi byte.
     private func appendPDFPagesRecorded(_ data: Data) {
         let before = Set(note.pages.map(\.persistentModelID))
-        note.appendPages(fromPDF: data, in: context)
+        guard note.appendPages(fromPDF: data, in: context) else {
+            // È il caso per cui appendPages ritorna un Bool: byte che non
+            // sono un PDF (per esempio una pagina di errore scaricata al
+            // posto del file). Prima veniva ignorato e sembrava che
+            // l'import non facesse niente.
+            pdfImportError = "Il file non è un PDF leggibile: è danneggiato, o non è un vero PDF."
+            return
+        }
         note.updatedAt = .now
         let ref = PagesRef()
         ref.pages = note.pages.filter { !before.contains($0.persistentModelID) }
@@ -1267,7 +1337,9 @@ struct NoteEditorView: View {
 
         switch action {
         case .wolfram:
-            let appID = UserDefaults.standard.string(forKey: "wolframAlphaAppID") ?? ""
+            // Dal Keychain via AIService, l'unico punto di accesso (era
+            // una lettura a mano di UserDefaults con la chiave duplicata).
+            let appID = AIService.wolframAppID ?? ""
             if appID.isEmpty {
                 result.errorMessage = "Aggiungi la tua chiave Wolfram Alpha nel Profilo per usare questa funzione."
             } else {
@@ -1356,10 +1428,10 @@ struct NoteEditorView: View {
                         data: data,
                         // Il sorgente resta attaccato all'immagine: è ciò
                         // che permette di riaprirla e correggerla.
-                        sourceText: text,
-                        note: note
+                        sourceText: text
                     )
                     context.insert(item)
+                    note.media.append(item)
                     note.updatedAt = .now
                     recordMediaLifecycle("Formula", ref: MediaRef(item), snapshot: MediaSnapshot(item), inserted: true)
                 } else {

@@ -72,7 +72,7 @@ struct FormulaEditSheet: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.boostFilled)
                     .tint(DesignColor.toolLatex)
                     .disabled(isRendering || latex.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
@@ -82,7 +82,7 @@ struct FormulaEditSheet: View {
                         Label("Copia il codice LaTeX", systemImage: "doc.on.doc")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.boostOutlined)
                     .tint(DesignColor.toolLatex)
                 }
                 .padding(DesignSpace.s5)

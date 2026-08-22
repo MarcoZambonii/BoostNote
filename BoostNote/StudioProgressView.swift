@@ -455,8 +455,8 @@ struct StudioProgressView: View {
                         }
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
-                                Capsule().fill(DesignColor.borderSubtle)
-                                Capsule()
+                                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).fill(DesignColor.borderSubtle)
+                                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                                     .fill(DesignColor.brandPrimary)
                                     .frame(width: geo.size.width * CGFloat(stat.correct) / CGFloat(max(stat.total, 1)))
                             }

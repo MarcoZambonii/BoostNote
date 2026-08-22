@@ -60,14 +60,17 @@ struct NoteCreateSheet: View {
                 }
 
                 Section("Pattern foglio") {
-                    Picker("Pattern", selection: $template) {
-                        ForEach(NoteTemplate.allCases) { option in
-                            Text(option.label).tag(option)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    BoostSegmented(
+                        options: NoteTemplate.allCases.map { ($0, $0.label) },
+                        selection: $template
+                    )
                 }
             }
+            // Il fondo grigio di sistema sotto il Form non è di
+            // quest'app: sotto ci va il foglio bianco come nel resto
+            // delle schermate.
+            .scrollContentBackground(.hidden)
+            .background(DesignColor.surfacePage)
             .navigationTitle("Nuova nota")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

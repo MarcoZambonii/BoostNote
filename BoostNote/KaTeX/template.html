@@ -187,6 +187,26 @@
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(reportHeight);
   }
+
+  // RETE DI SICUREZZA sull'altezza, e non è ridondanza: i tre annunci
+  // qui sopra sono a tempo (subito, 60 ms, 250 ms) e sperano che a quel
+  // punto KaTeX abbia finito di comporre. Con formule dentro la frase, o
+  // coi font già in cache — che fanno scattare fonts.ready PRIMA che la
+  // matematica sia impaginata — l'ultima altezza annunciata è più bassa
+  // di quella vera, e siccome la vista Swift si ritaglia su quel numero
+  // il testo finisce tagliato a metà frase. Con l'osservatore l'altezza
+  // si riannuncia a OGNI cambio di impaginazione, comunque e quando
+  // succede.
+  if (window.ResizeObserver) {
+    var pending = null;
+    new ResizeObserver(function () {
+      if (pending) { return; }
+      pending = requestAnimationFrame(function () {
+        pending = null;
+        reportHeight();
+      });
+    }).observe(document.body);
+  }
 </script>
 </body>
 </html>

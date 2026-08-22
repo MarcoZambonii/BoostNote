@@ -51,17 +51,24 @@ enum StudyMaterialPreparation {
         }
 
         for (index, source) in sources.enumerated() {
+            // Lo studio può essere eliminato mentre la preparazione gira
+            // (l'estrazione dura, e lo studio è già visibile in Studio).
+            guard !study.isDeleted else { return }
             onProgress(Progress(current: index + 1, total: sources.count, title: source.title))
 
+            // Inserimento e aggancio dal lato GENITORE (materials.append):
+            // impostare solo material.study può non notificare
+            // l'osservazione di `materials` — trappola documentata su
+            // Note.attach in Models.swift.
             let material = StudyMaterial(
                 title: source.title,
                 subtitle: source.subtitle,
                 kind: source.kind,
                 isExamPaper: source.isExamPaper,
-                noteID: source.noteID,
-                study: study
+                noteID: source.noteID
             )
             context.insert(material)
+            study.materials.append(material)
 
             switch source.kind {
             case .vault:

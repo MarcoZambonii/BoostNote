@@ -14,6 +14,7 @@ struct StudyDetailView: View {
     var onDelete: () -> Void
 
     @State private var showingTrustSheet = false
+    @State private var showingDeleteConfirmation = false
     // Avvisi dei moduli aperti nel dettaglio (vedi infoDisclosure).
     @State private var expandedInfo: Set<UUID> = []
 
@@ -28,13 +29,19 @@ struct StudyDetailView: View {
         .sheet(isPresented: $showingTrustSheet) {
             StudioTrustSheet(study: study)
         }
+        .alert("Eliminare lo studio?", isPresented: $showingDeleteConfirmation) {
+            Button("Elimina", role: .destructive, action: onDelete)
+            Button("Annulla", role: .cancel) {}
+        } message: {
+            Text("“\(study.name)”, i suoi moduli generati e i tentativi registrati nell'analisi dei progressi verranno eliminati.")
+        }
         // L'esito della verifica è scritto una volta sola, alla
         // generazione: senza un ricontrollo, un contenuto marcato "non
         // verificato" da un confronto troppo severo resterebbe tale per
-        // sempre. Costa un confronto di stringhe sul contenuto già in
-        // archivio, e riscrive solo se qualcosa cambia davvero.
+        // sempre. Il lavoro pesante gira fuori dal MainActor (vedi
+        // reverifyCitations): qui si aspetta e basta.
         .task(id: study.id) {
-            StudioGenerationService.reverifyCitations(in: study)
+            await StudioGenerationService.reverifyCitations(in: study)
         }
     }
 
@@ -71,7 +78,9 @@ struct StudyDetailView: View {
                 .buttonStyle(.plain)
 
                 Menu {
-                    Button(role: .destructive, action: onDelete) {
+                    Button(role: .destructive) {
+                        showingDeleteConfirmation = true
+                    } label: {
                         Label("Elimina studio", systemImage: "trash")
                     }
                 } label: {
@@ -164,7 +173,7 @@ struct StudyDetailView: View {
                     .foregroundStyle(DesignColor.attention)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(DesignColor.attentionBg, in: Capsule())
+                    .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
         }
         .padding(.horizontal, DesignSpace.s3 + 2)
@@ -568,7 +577,7 @@ struct CitationDisclosure: View {
                     .foregroundStyle(tint)
                     .padding(.horizontal, DesignSpace.s2 + 2)
                     .padding(.vertical, 4)
-                    .background(tintBackground, in: Capsule())
+                    .background(tintBackground, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
 
@@ -621,7 +630,7 @@ struct ReportButton: View {
             .foregroundStyle(isReported ? DesignColor.danger : DesignColor.textTertiary)
             .padding(.horizontal, DesignSpace.s2 + 2)
             .padding(.vertical, 4)
-            .background(isReported ? DesignColor.dangerBg : Color.clear, in: Capsule())
+            .background(isReported ? DesignColor.dangerBg : Color.clear, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -643,7 +652,7 @@ private struct FlowChips: View {
                     .padding(.horizontal, DesignSpace.s2 + 2)
                     .padding(.vertical, 5)
                     .frame(maxWidth: .infinity)
-                    .background(DesignColor.surfaceSunken, in: Capsule())
+                    .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
         }
     }
@@ -712,8 +721,10 @@ private struct ExercisesModuleView: View {
 
     // Verifica Wolfram, eseguita su richiesta alla rivelazione della
     // risposta: è un oracolo ESTERNO al modello, quindi vale molto più di
-    // un'autovalutazione dell'AI. Chiave presa dal Profilo (BYOK).
-    @AppStorage("wolframAlphaAppID") private var wolframAppID = ""
+    // un'autovalutazione dell'AI. Chiave dal Keychain via AIService, che
+    // è l'unico punto di accesso (era una @AppStorage in chiaro,
+    // quintuplicata in giro per l'app).
+    private var wolframAppID: String { AIService.wolframAppID ?? "" }
     // Risultati Wolfram PER ESERCIZIO: con un solo valore condiviso, la
     // verifica di un esercizio restava visibile passando al successivo,
     // facendo sembrare verificato un risultato che non lo era.
@@ -921,7 +932,7 @@ private struct ExercisesModuleView: View {
                         .lineLimit(1)
                         .padding(.horizontal, DesignSpace.s2 + 2)
                         .padding(.vertical, 4)
-                        .background(exercise.origin.color.opacity(0.1), in: Capsule())
+                        .background(exercise.origin.color.opacity(0.1), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     Spacer()
                 }
 
@@ -1054,7 +1065,7 @@ private struct ExercisesModuleView: View {
                             .foregroundStyle(DesignColor.toolExplain)
                             .padding(.horizontal, DesignSpace.s4)
                             .padding(.vertical, DesignSpace.s2 + 2)
-                            .background(DesignColor.toolExplainBg, in: Capsule())
+                            .background(DesignColor.toolExplainBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -1067,7 +1078,7 @@ private struct ExercisesModuleView: View {
                         .foregroundStyle(DesignColor.brandPrimary)
                         .padding(.horizontal, DesignSpace.s4)
                         .padding(.vertical, DesignSpace.s2 + 2)
-                        .background(DesignColor.brandPrimarySubtle, in: Capsule())
+                        .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -1112,7 +1123,7 @@ private struct ExercisesModuleView: View {
                 .font(.system(size: 14))
                 .foregroundStyle(DesignColor.textSecondary)
             Button("Ricomincia") { restartSession() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.boostFilled)
                 .tint(DesignColor.brandPrimary)
             Spacer()
         }
@@ -1191,7 +1202,7 @@ private struct ExercisesModuleView: View {
                         .foregroundStyle(DesignColor.toolWolfram)
                         .padding(.horizontal, DesignSpace.s3)
                         .padding(.vertical, 6)
-                        .background(DesignColor.toolWolframBg, in: Capsule())
+                        .background(DesignColor.toolWolframBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -1279,7 +1290,7 @@ private struct ExercisesModuleView: View {
             .lineLimit(1)
             .padding(.horizontal, DesignSpace.s2 + 2)
             .padding(.vertical, 4)
-            .background(color.opacity(0.1), in: Capsule())
+            .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
     }
 }
 
@@ -1296,6 +1307,11 @@ private struct ReviewPointsModuleView: View {
     // mostrare quale delle due si è scelta e a non contare due volte la
     // stessa domanda se ci si ripassa sopra.
     @State private var outcomes: [UUID: Bool] = [:]
+    // Il tentativo REGISTRATO per ogni domanda in questa sessione:
+    // cambiare idea deve sostituirlo, e per sostituirlo bisogna sapere
+    // quale record eliminare — prima si inseriva un secondo tentativo
+    // lasciando il primo, e l'analisi contava doppio.
+    @State private var recordedAttempts: [UUID: ExerciseAttempt] = [:]
     @State private var startedAt = Date.now
 
     var body: some View {
@@ -1394,16 +1410,21 @@ private struct ReviewPointsModuleView: View {
                 .foregroundStyle(isSelected ? DesignColor.textOnBrand : color)
                 .padding(.horizontal, DesignSpace.s3)
                 .padding(.vertical, 6)
-                .background(isSelected ? color : color.opacity(0.12), in: Capsule())
+                .background(isSelected ? color : color.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
     }
 
     private func record(correct: Bool, point: ReviewPoint) {
-        // Cambiare idea sostituisce il tentativo invece di aggiungerne
-        // uno: due tentativi sulla stessa domanda nella stessa sessione
-        // gonfierebbero i conteggi.
+        // Cambiare idea SOSTITUISCE il tentativo invece di aggiungerne
+        // uno: il record precedente della stessa domanda si elimina,
+        // altrimenti due tentativi nella stessa sessione gonfiavano i
+        // conteggi dell'analisi (il commento lo prometteva già, il
+        // codice inseriva e basta).
         if let previous = outcomes[point.id], previous == correct { return }
+        if let previousAttempt = recordedAttempts[point.id] {
+            context.delete(previousAttempt)
+        }
         let attempt = ExerciseAttempt(
             isCorrect: correct,
             durationSeconds: Date.now.timeIntervalSince(startedAt),
@@ -1417,6 +1438,7 @@ private struct ReviewPointsModuleView: View {
             study: study
         )
         context.insert(attempt)
+        recordedAttempts[point.id] = attempt
         outcomes[point.id] = correct
         startedAt = .now
     }
@@ -1432,6 +1454,22 @@ private struct FlashcardsModuleView: View {
     @State private var flipped = false
 
     var body: some View {
+        // Un payload corrotto o di un formato futuro decodifica in un
+        // mazzo VUOTO (il viewer usa `?? FlashcardsContent()`): senza
+        // questa guardia l'indice andava a -1 e il modulo crashava
+        // all'apertura. Stesso trattamento del player esercizi.
+        if content.cards.isEmpty {
+            ContentUnavailableView(
+                "Nessuna carta",
+                systemImage: "rectangle.on.rectangle.slash",
+                description: Text("Il contenuto di questo modulo non è leggibile: rigeneralo dalla card dello studio.")
+            )
+        } else {
+            deck
+        }
+    }
+
+    private var deck: some View {
         VStack(spacing: DesignSpace.s6) {
             Spacer()
             Text("\(index + 1) di \(content.cards.count)")
@@ -1479,6 +1517,7 @@ private struct FlashcardsModuleView: View {
     private func go(_ delta: Int) {
         flipped = false
         let count = content.cards.count
+        guard count > 0 else { return }
         index = (index + delta + count) % count
     }
 

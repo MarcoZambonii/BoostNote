@@ -75,6 +75,7 @@ struct StudioCreateFlowView: View {
     // dell'utente vale solo dentro la callback del file importer.
     @State private var pdfPayloads: [UUID: Data] = [:]
     @State private var preparation: StudyMaterialPreparation.Progress?
+    @State private var fileImportError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -133,8 +134,17 @@ struct StudioCreateFlowView: View {
                 sources.append(contentsOf: picked)
             }
         }
+        .alert("File non leggibile", isPresented: Binding(
+            get: { fileImportError != nil },
+            set: { if !$0 { fileImportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { fileImportError = nil }
+        } message: {
+            Text(fileImportError ?? "")
+        }
         .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
+            var unreadable: [String] = []
             for url in urls {
                 // Il contenuto va letto ORA: l'accesso security-scoped
                 // all'URL scelto dall'utente non sopravvive a questa
@@ -142,7 +152,12 @@ struct StudioCreateFlowView: View {
                 // leggibile.
                 let accessed = url.startAccessingSecurityScopedResource()
                 defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                guard let data = try? Data(contentsOf: url) else { continue }
+                guard let data = try? Data(contentsOf: url) else {
+                    // Va DETTO: prima il file spariva in silenzio e
+                    // sembrava di averlo aggiunto.
+                    unreadable.append(url.lastPathComponent)
+                    continue
+                }
 
                 let title = url.deletingPathExtension().lastPathComponent
                 let source = StudySourceMaterial(
@@ -153,6 +168,9 @@ struct StudioCreateFlowView: View {
                 )
                 pdfPayloads[source.id] = data
                 sources.append(source)
+            }
+            if !unreadable.isEmpty {
+                fileImportError = "Non riesco a leggere: \(unreadable.joined(separator: ", ")). Se il file sta su un cloud, aprilo prima nell'app File per scaricarlo."
             }
         }
     }
@@ -213,7 +231,7 @@ struct StudioCreateFlowView: View {
             .foregroundStyle(DesignColor.textOnBrand)
             .padding(.horizontal, DesignSpace.s5)
             .padding(.vertical, DesignSpace.s3)
-            .background(DesignColor.brandPrimary, in: Capsule())
+            .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
 
@@ -245,7 +263,7 @@ struct StudioCreateFlowView: View {
             .padding(.horizontal, DesignSpace.s4)
             .padding(.vertical, DesignSpace.s2 + 2)
             .background(
-                Capsule().strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+                RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).strokeBorder(DesignColor.borderDefault, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -431,10 +449,10 @@ struct StudioCreateFlowView: View {
                     .padding(.vertical, 5)
                     .background(
                         source.isExamPaper ? DesignColor.attentionBg : DesignColor.surfacePage,
-                        in: Capsule()
+                        in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                     )
                     .overlay(
-                        Capsule().stroke(source.isExamPaper ? DesignColor.attention.opacity(0.4) : DesignColor.borderDefault, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).stroke(source.isExamPaper ? DesignColor.attention.opacity(0.4) : DesignColor.borderDefault, lineWidth: 1)
                     )
             }
             .buttonStyle(.plain)
@@ -595,9 +613,9 @@ struct StudioCreateFlowView: View {
                 .padding(.vertical, 7)
                 .background(
                     isSelected ? DesignColor.brandPrimary : DesignColor.surfacePage,
-                    in: Capsule()
+                    in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                 )
-                .overlay(Capsule().stroke(isSelected ? Color.clear : DesignColor.borderDefault, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).stroke(isSelected ? Color.clear : DesignColor.borderDefault, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -730,6 +748,17 @@ struct StudioCreateFlowView: View {
     }
 
     private func createStudy() {
+        // La guardia contro il doppio tocco va messa QUI, in modo
+        // sincrono: `preparation` diventava non-nil solo al primo
+        // onProgress dentro il Task, e nella finestra tra i due tocchi
+        // si creavano DUE studi con doppia preparazione e doppia quota.
+        guard preparation == nil else { return }
+        preparation = StudyMaterialPreparation.Progress(
+            current: 0,
+            total: sources.count,
+            title: "Preparo i materiali…",
+            detail: nil
+        )
         let study = Study(name: name.trimmingCharacters(in: .whitespaces))
         // La "materia" È la cartella: si crea (o si riusa) subito, invece
         // di salvare un campo testo che una migrazione trasformerà in
@@ -761,9 +790,13 @@ struct StudioCreateFlowView: View {
         options.selectedTopics = selectedTopics.count == topics.count ? [] : selectedTopics
 
         // L'ordine dei moduli segue l'ordine di dichiarazione dei tipi.
+        // Aggancio dal lato GENITORE (modules.append): impostare solo
+        // module.study può non notificare l'osservazione di `modules` —
+        // trappola documentata su Note.attach in Models.swift.
         for (index, kind) in StudyModuleKind.allCases.filter({ selectedKinds.contains($0) }).enumerated() {
-            let module = StudyModule(kind: kind, order: index, options: options, study: study)
+            let module = StudyModule(kind: kind, order: index, options: options)
             context.insert(module)
+            study.modules.append(module)
         }
 
         let pickedSources = sources
@@ -825,7 +858,7 @@ struct StudioCreateFlowView: View {
             .foregroundStyle(DesignColor.brandPrimary)
             .padding(.horizontal, DesignSpace.s4)
             .padding(.vertical, DesignSpace.s2 + 2)
-            .background(DesignColor.brandPrimarySubtle, in: Capsule())
+            .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -930,6 +963,7 @@ private struct StudioWebeepPickerSheet: View {
     @State private var selectedCourse: WebeepCourse?
     @State private var sections: [WebeepSection] = []
     @State private var isLoading = false
+    @State private var loadError: String?
     @State private var selected: [String: StudySourceMaterial] = [:]  // per fileurl
 
     var body: some View {
@@ -949,6 +983,25 @@ private struct StudioWebeepPickerSheet: View {
                             .frame(maxWidth: 300)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let loadError {
+                    VStack(spacing: DesignSpace.s3) {
+                        ContentUnavailableView(
+                            "WeBeep non risponde",
+                            systemImage: "wifi.exclamationmark",
+                            description: Text(loadError)
+                        )
+                        Button("Riprova") {
+                            Task {
+                                if let course = selectedCourse {
+                                    await loadSections(course)
+                                } else {
+                                    await loadCourses()
+                                }
+                            }
+                        }
+                        .buttonStyle(.boostFilled)
+                        .padding(.bottom, DesignSpace.s6)
+                    }
                 } else if let course = selectedCourse {
                     fileList(course)
                 } else {
@@ -1055,7 +1108,7 @@ private struct StudioWebeepPickerSheet: View {
                         .foregroundStyle(DesignColor.attention)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(DesignColor.attentionBg, in: Capsule())
+                        .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
             }
         }
@@ -1064,19 +1117,33 @@ private struct StudioWebeepPickerSheet: View {
     private func loadCourses() async {
         guard let token else { return }
         isLoading = true
+        loadError = nil
         defer { isLoading = false }
-        guard let info = await WebeepService.siteInfo(token: token) else {
+        do {
+            let info = try await WebeepService.siteInfo(token: token)
+            courses = try await WebeepService.courses(token: token, userID: info.userid)
+        } catch WebeepServiceError.invalidToken {
+            // Solo il token dichiarato morto da Moodle porta al login:
+            // un errore di rete NON deve buttare un token valido.
             WebeepService.signOut()
             self.token = nil
-            return
+        } catch {
+            loadError = "Controlla la connessione e riprova: il collegamento a WeBeep resta attivo."
         }
-        courses = await WebeepService.courses(token: token, userID: info.userid)
     }
 
     private func loadSections(_ course: WebeepCourse) async {
         guard let token else { return }
         isLoading = true
+        loadError = nil
         defer { isLoading = false }
-        sections = await WebeepService.contents(token: token, courseID: course.id)
+        do {
+            sections = try await WebeepService.contents(token: token, courseID: course.id)
+        } catch WebeepServiceError.invalidToken {
+            WebeepService.signOut()
+            self.token = nil
+        } catch {
+            loadError = "Controlla la connessione e riprova: il collegamento a WeBeep resta attivo."
+        }
     }
 }

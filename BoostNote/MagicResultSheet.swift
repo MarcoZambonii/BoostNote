@@ -76,7 +76,7 @@ struct MagicResultSheet: View {
                                 Label("Riesegui col testo corretto", systemImage: "arrow.clockwise")
                                     .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.boostOutlined)
                             .tint(result.action.color)
                         }
                     }
@@ -147,7 +147,7 @@ struct MagicResultSheet: View {
                                     Label("Apri nel pannello Grafici", systemImage: "sidebar.right")
                                         .frame(maxWidth: .infinity)
                                 }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.boostFilled)
                                 .tint(result.action.color)
                             } else {
                                 Button {
@@ -157,7 +157,7 @@ struct MagicResultSheet: View {
                                     Label(insertLabel, systemImage: "plus.circle.fill")
                                         .frame(maxWidth: .infinity)
                                 }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.boostFilled)
                                 .tint(result.action.color)
 
                                 // Il foglio riceve la formula composta:
@@ -174,7 +174,7 @@ struct MagicResultSheet: View {
                                         )
                                         .frame(maxWidth: .infinity)
                                     }
-                                    .buttonStyle(.bordered)
+                                    .buttonStyle(.boostOutlined)
                                     .tint(result.action.color)
                                 }
 
@@ -186,7 +186,7 @@ struct MagicResultSheet: View {
                                         Label("Apri nel pannello", systemImage: "sidebar.right")
                                             .frame(maxWidth: .infinity)
                                     }
-                                    .buttonStyle(.bordered)
+                                    .buttonStyle(.boostOutlined)
                                     .tint(result.action.color)
                                 }
                             }

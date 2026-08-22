@@ -102,6 +102,9 @@ enum StudioGenerationService {
     // gratuità (inferenza sempre lato client, mai centralizzata).
     @MainActor
     static func generateModules(for study: Study, in context: ModelContext) async {
+        // Lo studio può essere stato eliminato tra l'avvio del task e
+        // questo momento: toccare un @Model eliminato è terreno minato.
+        guard !study.isDeleted else { return }
         let resolved = resolveSources(for: study, in: context)
         let hasText = resolved.contains { !$0.text.isEmpty }
         let pending = study.sortedModules.filter { $0.status == .pending || $0.status == .failed }
@@ -134,7 +137,9 @@ enum StudioGenerationService {
         // domani. Il registro conosce solo i modelli già provati, quindi
         // l'avviso può mancare (prima generazione del giorno), mai essere
         // sbagliato. La card lo mostra sotto "Generazione in corso…".
-        if await AIService.capableQuotaLooksExhausted() {
+        let capableAlreadyExhausted = await AIService.capableQuotaLooksExhausted()
+        guard !study.isDeleted else { return }
+        if capableAlreadyExhausted {
             for module in pending where module.kind == .exercises {
                 module.generationError = "Quota dei modelli migliori esaurita per oggi: questi esercizi usciranno dal modello veloce, più semplici del solito. Si azzera a mezzanotte (fuso del Pacifico)."
             }
@@ -188,7 +193,15 @@ enum StudioGenerationService {
             return results
         }
 
-        // I @Model si toccano solo qui, tornati sul MainActor.
+        // I @Model si toccano solo qui, tornati sul MainActor — MA solo se
+        // esistono ancora: l'utente può aver eliminato lo studio mentre i
+        // moduli giravano (l'eliminazione annulla il task, però il gruppo
+        // può essere già oltre i punti di cancellazione). Scrivere su
+        // moduli eliminati è il crash che si vuole evitare.
+        guard !study.isDeleted else {
+            for module in pending { GenerationProgress.shared.text[module.id] = nil }
+            return
+        }
         // Col Vault il troncamento non esiste: al suo posto parla la nota
         // di selezione dentro l'esito.
         let notice = vaultChunks.isEmpty ? truncationNotice(for: resolved) : nil
@@ -201,6 +214,7 @@ enum StudioGenerationService {
         let capableExhausted = await AIService.capableQuotaLooksExhausted()
         for (offset, module) in pending.enumerated() {
             GenerationProgress.shared.text[module.id] = nil
+            guard !module.isDeleted else { continue }
             switch outcomes[offset] {
             case .success(let generated, let discarded, let modelID, let outcomeWarning):
                 module.contentJSON = generated
@@ -211,10 +225,14 @@ enum StudioGenerationService {
                 // sembrerebbe un peggioramento inspiegabile. `modelID` è
                 // quello del SUO esito, non una variabile condivisa.
                 var warningParts = [notice, outcomeWarning].compactMap { $0 }
-                if module.kind == .exercises, AIService.isLiteModel(modelID) {
+                // Vale per ENTRAMBI i moduli che inventano: da quando
+                // anche i teorici partono dai capaci, finire sui Lite
+                // cambia cosa ricevi anche lì (domande di definizione
+                // invece che di ragionamento) e va detto uguale.
+                if let kind = module.kind, invents(kind), AIService.isLiteModel(modelID) {
                     warningParts.append(capableExhausted
-                        ? "Quota dei modelli migliori esaurita per oggi: questi esercizi sono stati generati con il modello veloce e possono essere più semplici. Rigenerali domani per averli migliori."
-                        : "I modelli migliori erano momentaneamente sovraccarichi: questi esercizi sono stati generati con il modello veloce e possono essere più semplici. Riprova a rigenerarli tra qualche minuto.")
+                        ? "Quota dei modelli migliori esaurita per oggi: questo modulo è stato generato con il modello veloce e può essere più semplice del solito. Rigeneralo domani per averlo migliore."
+                        : "I modelli migliori erano momentaneamente sovraccarichi: questo modulo è stato generato con il modello veloce e può essere più semplice del solito. Riprova a rigenerarlo tra qualche minuto.")
                 }
                 module.generationError = warningParts.isEmpty ? nil : warningParts.joined(separator: " ")
                 module.discardedCount = discarded
@@ -385,6 +403,9 @@ enum StudioGenerationService {
             // 2026-08-17): il declassamento qui non è un rallentamento,
             // è un esercizio peggiore.
             qualityFirst: kind == .exercises,
+            // Esercizi e teorici partono da porte diverse: girano in
+            // parallelo e prima si contendevano lo stesso primo modello.
+            chainStart: kind == .reviewPoints ? GeminiModelTier.alternateCapableModel : nil,
             onAttempt: { modelID, position, total, previousFailure in
                 // Il motivo del salto va detto: tre "era sovraccarico" di
                 // fila sono Google che arranca, tre "non ha risposto in
@@ -427,6 +448,10 @@ enum StudioGenerationService {
         guard let json = AIService.extractJSON(from: raw) else {
             return .failure("Il modello non ha restituito JSON.")
         }
+        // I materiali si normalizzano UNA volta per set, non una volta
+        // per citazione: su quindici esercizi la differenza è 15× il
+        // costo del passo più pesante della verifica.
+        let prepared = PreparedCitationSources(sources)
         // Decodifica negli DTO "da modello" (senza id) e mappa nei payload
         // veri.
         let emptyError = "Il modello non ha prodotto nessun contenuto utilizzabile."
@@ -439,7 +464,7 @@ enum StudioGenerationService {
             }
             guard !dto.sections.isEmpty else { return .failure(emptyError) }
             return .success(encodePayload(SummaryContent(sections: dto.sections.map {
-                SummarySection(title: $0.title, body: $0.body, quote: makeCitation(quote: $0.quote, source: $0.source, in: sources))
+                SummarySection(title: $0.title, body: $0.body, quote: makeCitation(quote: $0.quote, source: $0.source, in: prepared))
             }), modelID: modelID))
         case .exercises:
             let dto: AIExercisesDTO
@@ -457,10 +482,10 @@ enum StudioGenerationService {
                     difficultyRaw: (ExerciseDifficulty(rawValue: item.difficulty ?? "") ?? .base).rawValue,
                     topic: snap(item.topic ?? "Senza argomento", in: vocabularyIndex),
                     prompt: item.prompt,
-                    steps: item.steps,
-                    answer: item.answer,
+                    steps: item.steps.map(mathWrapped),
+                    answer: mathWrapped(item.answer),
                     sourceTitle: item.source,
-                    quote: makeCitation(quote: item.quote, source: item.source, in: sources),
+                    quote: makeCitation(quote: item.quote, source: item.source, in: prepared),
                     checkExpression: item.checkExpression,
                     verificationRaw: ExerciseVerification.notChecked.rawValue,
                     originRaw: (ExerciseOrigin(rawValue: item.origin ?? "") ?? .invented).rawValue,
@@ -532,7 +557,7 @@ enum StudioGenerationService {
             let pointVocabulary = TopicVocabulary(vocabulary)
             return .success(encodePayload(ReviewPointsContent(points: dto.points.map {
                 ReviewPoint(statement: $0.statement, question: $0.question, answer: $0.answer,
-                            quote: makeCitation(quote: $0.quote, source: $0.source, in: sources),
+                            quote: makeCitation(quote: $0.quote, source: $0.source, in: prepared),
                             topic: $0.topic.map { snap($0, in: pointVocabulary) })
             }), modelID: modelID))
         case .flashcards:
@@ -543,7 +568,7 @@ enum StudioGenerationService {
             }
             guard !dto.cards.isEmpty else { return .failure(emptyError) }
             return .success(encodePayload(FlashcardsContent(cards: dto.cards.map {
-                Flashcard(front: $0.front, back: $0.back, quote: makeCitation(quote: $0.quote, source: $0.source, in: sources))
+                Flashcard(front: $0.front, back: $0.back, quote: makeCitation(quote: $0.quote, source: $0.source, in: prepared))
             }), modelID: modelID))
         }
     }
@@ -813,8 +838,9 @@ enum StudioGenerationService {
               !dto.sections.isEmpty else {
             return nil
         }
+        let prepared = PreparedCitationSources([source])
         return dto.sections.map {
-            SummarySection(title: $0.title, body: $0.body, quote: makeCitation(quote: $0.quote, source: $0.source, in: [source]))
+            SummarySection(title: $0.title, body: $0.body, quote: makeCitation(quote: $0.quote, source: $0.source, in: prepared))
         }
     }
 
@@ -833,6 +859,9 @@ enum StudioGenerationService {
         feedback: String,
         context: ModelContext
     ) async -> String? {
+        guard !study.isDeleted, !module.isDeleted else {
+            return "Lo studio non esiste più."
+        }
         guard var content = module.decodeContent(ExerciseSetContent.self),
               let index = content.exercises.firstIndex(where: { $0.id == exerciseID }) else {
             return "Esercizio non trovato nel modulo."
@@ -888,15 +917,20 @@ enum StudioGenerationService {
             return "La rigenerazione non è riuscita. L'esercizio segnalato è rimasto invariato."
         }
 
+        // Studio o modulo eliminati durante la chiamata: non c'è più
+        // niente su cui scrivere, e scriverci sarebbe un crash.
+        guard !study.isDeleted, !module.isDeleted else { return nil }
+
+        let prepared = PreparedCitationSources(sources)
         content.exercises[index] = StudyExercise(
             categoryRaw: ExerciseCategory.practical.rawValue,
             difficultyRaw: (ExerciseDifficulty(rawValue: item.difficulty ?? "") ?? old.difficulty).rawValue,
             topic: snap(item.topic ?? old.topic, in: vocabulary),
             prompt: item.prompt,
-            steps: item.steps,
-            answer: item.answer,
+            steps: item.steps.map(mathWrapped),
+            answer: mathWrapped(item.answer),
             sourceTitle: item.source,
-            quote: makeCitation(quote: item.quote, source: item.source, in: sources),
+            quote: makeCitation(quote: item.quote, source: item.source, in: prepared),
             checkExpression: item.checkExpression,
             originRaw: (ExerciseOrigin(rawValue: item.origin ?? "") ?? .invented).rawValue,
             // La figura del VECCHIO esercizio non si eredita: la traccia
@@ -944,7 +978,8 @@ enum StudioGenerationService {
         - che i dati siano diversi da quelli degli esempi del corso. Devono esserlo.
         - che tu avresti impostato il problema in un altro modo, se anche la strada proposta arriva al risultato giusto.
 
-        In entrambi i casi boccia anche quando: i passaggi si contraddicono fra loro o con la risposta, la traccia non porta abbastanza per poter rispondere, oppure la risposta non risponde alla domanda posta.
+        Boccia anche quando: i passaggi si contraddicono fra loro o con la risposta, la traccia non porta abbastanza per poter rispondere, oppure la risposta non risponde alla domanda posta.
+        Rientra in quest'ultimo caso, e va bocciato, l'esercizio la cui traccia chiede DUE cose e la cui risposta ne copre una sola — "calcola X e determina Y" con la sola X è incompleto, anche quando la X è giusta. Conta le richieste della traccia prima di giudicare.
 
         COME RISPONDERE — l'ordine dei campi è vincolante e va rispettato:
         1) "risultato": il risultato a cui sei arrivato TU rifacendo il conto. Scrivilo per primo, PRIMA di formulare il giudizio. Se la traccia non porta i dati per arrivarci, scrivi qui che cosa manca.
@@ -1329,6 +1364,9 @@ enum StudioGenerationService {
 
             Ricorda le regole di formattazione: le funzioni, le espressioni e i risultati con esponenti o frazioni vanno in LaTeX tra $$ su riga propria, sia nella traccia sia nei passi sia nella risposta.
 
+            LA RISPOSTA DEVE CHIUDERE TUTTE LE RICHIESTE DELLA TRACCIA. Se la traccia chiede due cose ("calcola X e determina Y"), la risposta finale le contiene entrambe: una soluzione che ne copre una sola è sbagliata anche se quella che copre è giusta. Se ti accorgi di non poter rispondere a una delle due, togli quella richiesta dalla traccia invece di lasciarla senza risposta.
+            CASO PARTICOLARE — le richieste di DISEGNARE (un profilo, un reticolo, un diagramma). Puoi farle, ma la soluzione non può contenere un disegno: allora la risposta deve descriverlo con i NUMERI che lo determinano — i punti di svolta, le pendenze, i valori agli estremi — così chi ha disegnato può confrontarsi. Esempio: "profilo lineare a 150/giorno da t=0 a t=4, poi 50/giorno fino a t=6; punti (0,0), (4,600), (6,700)".
+
             Ogni esercizio ha una soluzione guidata in 3-5 passi concreti e una risposta finale; "topic" è l'argomento in 2-4 parole; "source" è il titolo del materiale a cui ti sei ispirato e "quote" il passaggio originale (servono solo alla tracciabilità, NON vanno citati nella traccia).
             Indica "origin": "invented" se hai scritto tu la traccia ispirandoti ai materiali (è il caso normale), "fromMaterials" solo se la traccia è già presente come tale nei materiali e l'hai riportata.
             FIGURA — decisione OBBLIGATORIA. Per ogni esercizio devi indicare "figuraServe": true oppure false. Non omettere mai questo campo.
@@ -1561,6 +1599,31 @@ enum StudioGenerationService {
         }
     }
 
+    // FORMULA NUDA, senza i delimitatori. Il prompt chiede il LaTeX fra
+    // "$", ma capita che il modello scriva la risposta come pura formula
+    // e i delimitatori se li dimentichi: KaTeX compone SOLO ciò che sta
+    // fra i delimitatori, quindi quella riga finiva a schermo come
+    // sorgente grezzo — "3(x_{X1} + x_{X2}) + 4(x_{Y1} + x_{Y2}) \\le 5",
+    // visto davvero.
+    //
+    // Si avvolge solo ciò che è formula E BASTA: si tolgono i comandi
+    // LaTeX e si guarda cosa resta di alfabetico. Se sono tutte sigle di
+    // una o due lettere (nomi di variabili) è una formula; se compare una
+    // parola vera è prosa con dentro un simbolo, e avvolgerla la
+    // spaccherebbe — meglio lasciarla com'è.
+    private static func mathWrapped(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("$"),
+              !trimmed.contains("\\("), !trimmed.contains("\\["),
+              trimmed.range(of: "\\\\[a-zA-Z]+|[_^]\\{|[A-Za-z0-9][_^][A-Za-z0-9]", options: .regularExpression) != nil else { return text }
+        let withoutCommands = trimmed.replacingOccurrences(
+            of: "\\\\[a-zA-Z]+", with: " ", options: .regularExpression
+        )
+        let words = withoutCommands.split(whereSeparator: { !$0.isLetter })
+        guard words.allSatisfy({ $0.count <= 2 }) else { return text }
+        return "$$\(trimmed)$$"
+    }
+
     // MARK: - Figura mancante
     //
     // Due rilevatori di forza molto diversa, entrambi programmatici: non
@@ -1607,7 +1670,7 @@ enum StudioGenerationService {
     // normalizza spazi, maiuscole e apostrofi/virgolette tipografiche,
     // perché i modelli riformattano la punteggiatura anche quando citano
     // fedelmente.
-    private static func normalizedForMatching(_ text: String) -> String {
+    private nonisolated static func normalizedForMatching(_ text: String) -> String {
         var result = text.lowercased()
         let replacements = ["’": "'", "‘": "'", "“": "\"", "”": "\"", "–": "-", "—": "-", "\n": " ", "\t": " "]
         for (from, to) in replacements {
@@ -1627,12 +1690,47 @@ enum StudioGenerationService {
     // allucinazioni: una parafrasi continua a non corrispondere. Toglie
     // solo decorazioni aggiunte sopra il testo e le spaziature strane che
     // l'estrazione da PDF produce a caso.
-    private static func strippedForMatching(_ text: String) -> String {
-        var result = normalizedForMatching(text)
+    private nonisolated static func strippedForMatching(_ text: String) -> String {
+        stripped(fromNormalized: normalizedForMatching(text))
+    }
+
+    // Variante che parte dal testo GIÀ normalizzato: la normalizzazione è
+    // il passo costoso, e chi prepara i materiali una volta sola non deve
+    // ripagarla per ottenere anche la forma spogliata.
+    private nonisolated static func stripped(fromNormalized normalized: String) -> String {
+        var result = normalized
         for marker in ["$$", "$", "**", "__", "`", "\\(", "\\)", "\\[", "\\]"] {
             result = result.replacingOccurrences(of: marker, with: "")
         }
         return result.components(separatedBy: .whitespacesAndNewlines).joined()
+    }
+
+    // I testi dei materiali preparati UNA volta per il confronto delle
+    // citazioni. Prima ogni citazione rinormalizzava l'INTERO testo di
+    // ogni materiale (lowercase + sostituzioni + collasso spazi, su testi
+    // anche da 100k caratteri): con quindici esercizi il costo esplodeva,
+    // ed era il freeze che si sentiva aprendo uno studio.
+    struct PreparedCitationSources: Sendable {
+        fileprivate struct Entry: Sendable {
+            let normalized: String
+            let stripped: String
+        }
+        fileprivate let entries: [Entry]
+
+        nonisolated init(_ sources: [ResolvedSource]) {
+            entries = sources.map { source in
+                let normalized = StudioGenerationService.normalizedForMatching(source.text)
+                return Entry(normalized: normalized, stripped: StudioGenerationService.stripped(fromNormalized: normalized))
+            }
+        }
+
+        fileprivate nonisolated func containsNormalized(_ needle: String) -> Bool {
+            entries.contains { $0.normalized.contains(needle) }
+        }
+
+        fileprivate nonisolated func containsStripped(_ needle: String) -> Bool {
+            entries.contains { $0.stripped.contains(needle) }
+        }
     }
 
     // Ricontrolla le citazioni già salvate di uno studio.
@@ -1647,61 +1745,83 @@ enum StudioGenerationService {
     // contenuto diverso (riassunto, esercizi, punti di ripasso...) ma le
     // citazioni hanno tutte la stessa forma, e così ne resta fuori
     // nessuna — comprese quelle dei tipi che verranno.
+    //
+    // Il lavoro pesante (normalizzare i materiali e riconfrontare ogni
+    // citazione) gira FUORI dal MainActor su fotografie dei dati: prima
+    // era tutto sincrono sul main a ogni apertura dello studio, e con
+    // dispense grandi si sentiva come un freeze dell'interfaccia.
     @discardableResult
-    static func reverifyCitations(in study: Study) -> Int {
+    @MainActor
+    static func reverifyCitations(in study: Study) async -> Int {
+        guard !study.isDeleted else { return 0 }
         let sources = study.materials.compactMap { material -> ResolvedSource? in
             let text = material.extractedText
             guard !text.isEmpty else { return nil }
             return ResolvedSource(title: material.title, text: text, isExamPaper: material.isExamPaper)
         }
         guard !sources.isEmpty else { return 0 }
+        let payloads = study.modules.map { (id: $0.id, json: $0.contentJSON) }
 
-        var changed = 0
-        for module in study.modules {
-            guard let data = module.contentJSON.data(using: .utf8),
-                  let root = try? JSONSerialization.jsonObject(with: data) else { continue }
-            let updated = revisit(root, in: sources, changed: &changed)
-            guard changed > 0,
-                  let newData = try? JSONSerialization.data(withJSONObject: updated),
-                  let json = String(data: newData, encoding: .utf8) else { continue }
-            module.contentJSON = json
+        let outcome = await Task.detached(priority: .utility) { () -> (changed: Int, jsons: [UUID: String]) in
+            let prepared = PreparedCitationSources(sources)
+            var totalChanged = 0
+            var updatedJSONs: [UUID: String] = [:]
+            for payload in payloads {
+                guard let data = payload.json.data(using: .utf8),
+                      let root = try? JSONSerialization.jsonObject(with: data) else { continue }
+                var changed = 0
+                let updated = revisit(root, prepared: prepared, changed: &changed)
+                guard changed > 0,
+                      let newData = try? JSONSerialization.data(withJSONObject: updated),
+                      let json = String(data: newData, encoding: .utf8) else { continue }
+                totalChanged += changed
+                updatedJSONs[payload.id] = json
+            }
+            return (totalChanged, updatedJSONs)
+        }.value
+
+        guard !outcome.jsons.isEmpty, !study.isDeleted else { return outcome.changed }
+        for module in study.modules where !module.isDeleted {
+            if let json = outcome.jsons[module.id] {
+                module.contentJSON = json
+            }
         }
-        return changed
+        return outcome.changed
     }
 
     // Scende ricorsivamente nel JSON e ricalcola "verified" ovunque trovi
     // la coppia che identifica una citazione.
-    private static func revisit(_ node: Any, in sources: [ResolvedSource], changed: inout Int) -> Any {
+    private nonisolated static func revisit(_ node: Any, prepared: PreparedCitationSources, changed: inout Int) -> Any {
         if var object = node as? [String: Any] {
             if let text = object["text"] as? String, object["verified"] is Bool {
-                let verified = makeCitation(quote: text, source: nil, in: sources)?.verified ?? false
+                let verified = makeCitation(quote: text, source: nil, in: prepared)?.verified ?? false
                 if object["verified"] as? Bool != verified {
                     object["verified"] = verified
                     changed += 1
                 }
             }
             for (key, value) in object {
-                object[key] = revisit(value, in: sources, changed: &changed)
+                object[key] = revisit(value, prepared: prepared, changed: &changed)
             }
             return object
         }
         if let array = node as? [Any] {
-            return array.map { revisit($0, in: sources, changed: &changed) }
+            return array.map { revisit($0, prepared: prepared, changed: &changed) }
         }
         return node
     }
 
-    private static func makeCitation(quote: String?, source: String?, in sources: [ResolvedSource]) -> SourceCitation? {
+    private nonisolated static func makeCitation(quote: String?, source: String?, in prepared: PreparedCitationSources) -> SourceCitation? {
         guard let quote, quote.count >= 12 else { return nil }
         let needle = normalizedForMatching(quote)
-        var verified = sources.contains { normalizedForMatching($0.text).contains(needle) }
+        var verified = prepared.containsNormalized(needle)
         if !verified {
             let strippedNeedle = strippedForMatching(quote)
             // La soglia sui caratteri va ricontrollata dopo lo spoglio:
             // una "citazione" fatta quasi solo di simboli si ridurrebbe a
             // un pugno di caratteri, che si ritrovano ovunque.
             if strippedNeedle.count >= 12 {
-                verified = sources.contains { strippedForMatching($0.text).contains(strippedNeedle) }
+                verified = prepared.containsStripped(strippedNeedle)
             }
         }
         return SourceCitation(text: quote, sourceTitle: source, verified: verified)

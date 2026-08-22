@@ -31,7 +31,7 @@ enum NoteTool: String, CaseIterable, Identifiable {
         switch self {
         case .todo: "Una lista di cose da fare, a fianco della nota."
         case .pomodoro: "Un timer Pomodoro per restare concentrato senza uscire dalla nota."
-        case .calculator: "Calcolatrice rapida per i calcoli al volo."
+        case .calculator: "Scientifica: si scrive l'espressione intera, con funzioni, potenze e memoria."
         case .research: "Cerca paper accademici su arXiv e aggiungili alla nota."
         case .graphing: "Traccia il grafico di una funzione mentre studi."
         case .wolfram: "Risolvi espressioni ed equazioni con Wolfram Alpha."

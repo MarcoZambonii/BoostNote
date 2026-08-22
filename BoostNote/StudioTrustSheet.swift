@@ -15,7 +15,8 @@ struct StudioTrustSheet: View {
     @Environment(\.dismiss) private var dismiss
     let study: Study
 
-    @AppStorage("wolframAlphaAppID") private var wolframAppID = ""
+    // Dal Keychain via AIService, unico punto di accesso alla chiave.
+    private var wolframAppID: String { AIService.wolframAppID ?? "" }
 
     // La verifica è un'opzione per modulo: qui interessa se è accesa sul
     // modulo esercizi di QUESTO studio.

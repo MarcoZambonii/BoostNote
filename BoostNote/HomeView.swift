@@ -26,6 +26,7 @@ struct HomeView: View {
     @State private var showingPDFImporter = false
     @State private var showingNewFolderSheet = false
     @State private var showingWebeepPDFPicker = false
+    @State private var importErrorMessage: String?
 
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: .now)
@@ -77,16 +78,34 @@ struct HomeView: View {
             guard case .success(let url) = result else { return }
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { return }
+            guard let data = try? Data(contentsOf: url) else {
+                importErrorMessage = "Non riesco a leggere \"\(url.lastPathComponent)\". Se il file sta su un cloud, aprilo prima nell'app File per scaricarlo."
+                return
+            }
             importPDFNote(data: data, title: url.deletingPathExtension().lastPathComponent)
+        }
+        .alert("Import non riuscito", isPresented: Binding(
+            get: { importErrorMessage != nil },
+            set: { if !$0 { importErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { importErrorMessage = nil }
+        } message: {
+            Text(importErrorMessage ?? "")
         }
     }
 
     // Una nota nuova con il PDF come pagine, qualunque sia la fonte.
+    // `appendPages` ritorna false quando i byte non sono un PDF valido:
+    // ignorarlo (com'era) creava una nota vuota senza spiegazioni — il
+    // motivo per cui quel Bool esiste (vedi Models.swift).
     private func importPDFNote(data: Data, title: String) {
         let note = Note(title: title.isEmpty ? "Nuova nota" : title, folder: nil)
         context.insert(note)
-        note.appendPages(fromPDF: data, in: context)
+        guard note.appendPages(fromPDF: data, in: context) else {
+            context.delete(note)
+            importErrorMessage = "\"\(title)\" non è un PDF leggibile: il file è danneggiato o non è un vero PDF."
+            return
+        }
         selectedNote = note
     }
 
@@ -272,7 +291,7 @@ struct HomeView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .background(folder.folderColor.color.opacity(0.12), in: Capsule())
+        .background(folder.folderColor.color.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
     }
 
     private func relativeTime(_ date: Date) -> String {
@@ -371,7 +390,7 @@ struct HomeView: View {
                 .foregroundStyle(tint)
                 .padding(.horizontal, DesignSpace.s4)
                 .padding(.vertical, DesignSpace.s2 + 2)
-                .background(tint.opacity(0.12), in: Capsule())
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
             .buttonStyle(.plain)
         }

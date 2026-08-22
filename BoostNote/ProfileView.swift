@@ -4,6 +4,10 @@ import PhotosUI
 // Schermata Profilo: dati utente, sincronizzazioni (iCloud/Obsidian),
 // WeBeep/PolimiApp, chiave Wolfram Alpha, About.
 struct ProfileView: View {
+    // Presente quando il Profilo è un popup (iPad): la testata porta il
+    // suo "Chiudi". Su iPhone resta un foglio e ci pensa il sistema.
+    var onClose: (() -> Void)?
+
     @AppStorage("profileName") private var name = ""
     @AppStorage("profileSurname") private var surname = ""
     // SOLO per migrare: la foto stava qui come base64, ma sopra i 4 MB
@@ -14,15 +18,12 @@ struct ProfileView: View {
     @AppStorage("profilePhotoData") private var photoDataBase64 = ""
     @State private var profilePhoto: UIImage?
 
-    @AppStorage("syncICloud") private var syncICloud = false
-    @AppStorage("syncObsidian") private var syncObsidian = false
-
     // Le chiavi salvate NON vengono mai rimesse nei campi di testo: una
     // chiave si aggiunge, si sostituisce o si rimuove, ma non si rilegge
     // dallo schermo. Prima i campi venivano precompilati col valore
     // salvato — comodo, ma significava lasciare la credenziale visibile
     // a chiunque avesse l'iPad in mano aperto sul Profilo.
-    @AppStorage("wolframAlphaAppID") private var wolframAppID = ""
+    @State private var wolframSaved = AIService.wolframAppID != nil
     @State private var wolframDraft = ""
     @State private var wolframEditing = false
 
@@ -55,30 +56,59 @@ struct ProfileView: View {
     @State private var webeepSiteInfo: WebeepSiteInfo?
     @State private var showingWebeepAuth = false
     @State private var isConnectingWebeep = false
+    // WeBeep non risponde ma il token è (per quanto ne sappiamo) ancora
+    // buono: stato separato dal "non collegato", perché la cura è
+    // riprovare, non ri-autenticarsi.
+    @State private var webeepUnreachable = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DesignSpace.s8) {
-                profileSection
-                archiveSection
-                syncSection
-                webeepSection
-                aiSection
-                wolframSection
-                anthropicSection
-                developmentSection
-                aboutSection
+        VStack(spacing: 0) {
+            if onClose != nil {
+                HStack {
+                    Text("Profilo")
+                        .font(.system(size: 20, weight: .ultraLight))
+                        .foregroundStyle(DesignColor.textPrimary)
+                    Spacer()
+                    Button("Chiudi") { onClose?() }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DesignColor.brandPrimary)
+                        .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 14)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(DesignColor.borderSubtle).frame(height: 1)
+                }
             }
-            .padding(DesignSpace.s6)
-            .frame(maxWidth: 560, alignment: .leading)
-            .frame(maxWidth: .infinity)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    profileSection
+                    archiveSection
+                    syncSection
+                    webeepSection
+                    aiSection
+                    wolframSection
+                    developmentSection
+                    aboutSection
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 20)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity)
+            }
         }
         .task {
             loadProfilePhoto()
             if let token = webeepToken { await loadWebeepSiteInfo(token: token) }
         }
         .background(DesignColor.surfacePage)
-        .navigationTitle("Profilo")
+        // Niente titolo di sistema: il nome della schermata lo dà la
+        // testata qui dentro, insieme al "Chiudi". Con tutti e due si
+        // leggeva "Profilo" due volte, una sopra l'altra.
+        .toolbar(.hidden, for: .navigationBar)
         .fullScreenCover(isPresented: $showingWebeepAuth) {
             WebeepAuthView(
                 onToken: { token in
@@ -95,12 +125,22 @@ struct ProfileView: View {
 
     private func loadWebeepSiteInfo(token: String) async {
         isConnectingWebeep = true
-        webeepSiteInfo = await WebeepService.siteInfo(token: token)
-        isConnectingWebeep = false
-        if webeepSiteInfo == nil {
-            // Il token salvato non funziona più (scaduto o revocato).
+        webeepUnreachable = false
+        defer { isConnectingWebeep = false }
+        do {
+            webeepSiteInfo = try await WebeepService.siteInfo(token: token)
+        } catch WebeepServiceError.invalidToken {
+            // SOLO qui il token è davvero morto (Moodle l'ha detto):
+            // prima QUALSIASI fallimento — anche un timeout in treno —
+            // buttava il token dal Keychain e costringeva al ri-login.
             WebeepService.signOut()
             webeepToken = nil
+            webeepSiteInfo = nil
+        } catch {
+            // Rete giù o risposta in una forma nuova: il token si
+            // CONSERVA e si dice che WeBeep non è raggiungibile.
+            webeepSiteInfo = nil
+            webeepUnreachable = true
         }
     }
 
@@ -125,7 +165,7 @@ struct ProfileView: View {
             HStack(spacing: DesignSpace.s4) {
                 PhotosPicker(selection: $photosPickerItem, matching: .images) {
                     ZStack {
-                        Circle().fill(DesignColor.surfaceSunken).frame(width: 64, height: 64)
+                        Circle().fill(DesignColor.surfacePage).frame(width: 64, height: 64)
                         if let photoImage {
                             photoImage.resizable().scaledToFill().frame(width: 64, height: 64).clipShape(Circle())
                         } else {
@@ -144,18 +184,21 @@ struct ProfileView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                    TextField("Nome", text: $name)
-                        .textFieldStyle(.plain)
-                        .padding(DesignSpace.s2)
-                        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm))
-                    TextField("Cognome", text: $surname)
-                        .textFieldStyle(.plain)
-                        .padding(DesignSpace.s2)
-                        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm))
+                VStack(alignment: .leading, spacing: 8) {
+                    profileField("Nome", text: $name)
+                    profileField("Cognome", text: $surname)
                 }
             }
         }
+    }
+
+    private func profileField(_ placeholder: String, text: Binding<String>) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13.5))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
     }
 
     // "Sviluppo": le manopole che si toccano di rado e che vanno capite
@@ -207,12 +250,12 @@ struct ProfileView: View {
                     .foregroundStyle(DesignColor.textPrimary)
                 Text(subtitle)
                     .font(.system(size: 12))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
             }
             Spacer()
             Image(systemName: "chevron.right")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DesignColor.textTertiary)
+                .foregroundStyle(DesignColor.textSecondary)
         }
         .contentShape(Rectangle())
     }
@@ -234,29 +277,22 @@ struct ProfileView: View {
                             NoteArchiveService.removeFolder()
                             archiveConfigured = false
                         }
-                        .font(.system(size: 12))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(DesignColor.danger)
+                        .buttonStyle(.plain)
                     }
                     Text("Ogni nota, quando la chiudi, lascia nella cartella il suo pacchetto .boostnote: se perdi l'iPad, reimporti i pacchetti e le note tornano modificabili identiche. La scrittura avviene in background e non tocca mai la penna.")
                         .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.textTertiary)
+                        .foregroundStyle(DesignColor.textSecondary)
                     HStack(spacing: DesignSpace.s3) {
-                        Button {
+                        toneButton("Archivia tutte adesso", icon: "arrow.up.doc") {
                             let count = NoteArchiveService.archiveAll(in: modelContext)
                             archiveMessage = "In archiviazione: \(count) note."
-                        } label: {
-                            Label("Archivia tutte adesso", systemImage: "arrow.up.doc")
-                                .font(.system(size: 13, weight: .medium))
                         }
-                        .buttonStyle(.bordered)
-                        Button {
+                        toneButton("Ripristina da pacchetto", icon: "arrow.down.doc") {
                             archivePickerTarget = .restore
                             showingArchivePicker = true
-                        } label: {
-                            Label("Ripristina da pacchetto", systemImage: "arrow.down.doc")
-                                .font(.system(size: 13, weight: .medium))
                         }
-                        .buttonStyle(.bordered)
                     }
                     if let archiveMessage {
                         Text(archiveMessage)
@@ -266,24 +302,16 @@ struct ProfileView: View {
                 } else {
                     Text("Scegli una cartella su OneDrive (1TB gratuito con l'account Polimi, dall'app File) o su qualunque altro provider: ogni nota chiusa ci lascerà una copia ripristinabile. Il database dell'app resta sul dispositivo — nella cartella vanno solo copie.")
                         .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.textTertiary)
+                        .foregroundStyle(DesignColor.textSecondary)
                     HStack(spacing: DesignSpace.s3) {
-                        Button {
+                        toneButton("Scegli cartella", icon: "folder.badge.plus", tone: .filled) {
                             archivePickerTarget = .folder
                             showingArchivePicker = true
-                        } label: {
-                            Label("Scegli cartella", systemImage: "folder.badge.plus")
-                                .font(.system(size: 13, weight: .semibold))
                         }
-                        .buttonStyle(.borderedProminent)
-                        Button {
+                        toneButton("Ripristina da pacchetto", icon: "arrow.down.doc") {
                             archivePickerTarget = .restore
                             showingArchivePicker = true
-                        } label: {
-                            Label("Ripristina da pacchetto", systemImage: "arrow.down.doc")
-                                .font(.system(size: 13, weight: .medium))
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
             }
@@ -323,24 +351,32 @@ struct ProfileView: View {
         }
     }
 
+    // Niente interruttori finti: il toggle iCloud non pilotava nulla (il
+    // container CloudKit si decide al lancio, in StudioApp) e quello
+    // Obsidian accendeva una funzione che non esiste. Qui si DESCRIVE lo
+    // stato vero, non si finge di controllarlo.
     private var syncSection: some View {
         sectionCard(title: "Sincronizzazioni") {
-            VStack(spacing: DesignSpace.s3) {
-                Toggle(isOn: $syncICloud) {
-                    Label("iCloud", systemImage: "icloud")
-                }
-                Text("Richiede la capability iCloud/CloudKit attiva sul progetto Xcode per sincronizzare davvero tra dispositivi.")
+            VStack(alignment: .leading, spacing: DesignSpace.s3) {
+                Label("iCloud", systemImage: "icloud")
+                    .font(.system(size: 14, weight: .medium))
+                Text("Le note si sincronizzano da sole tra i tuoi dispositivi quando l'iPad è connesso al tuo account iCloud: non c'è nulla da attivare qui. Senza iCloud, tutto resta comunque salvato sul dispositivo.")
                     .font(.system(size: 12))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
 
                 Divider()
 
-                Toggle(isOn: $syncObsidian) {
+                HStack {
                     Label("Obsidian", systemImage: "note.text")
+                        .font(.system(size: 14, weight: .medium))
+                    Spacer()
+                    Text("In arrivo")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DesignColor.textTertiary)
                 }
-                Text("Collegamento a un vault Obsidian — non ancora disponibile, in arrivo.")
+                Text("Collegamento a un vault Obsidian — non ancora disponibile.")
                     .font(.system(size: 12))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
             }
         }
     }
@@ -350,7 +386,7 @@ struct ProfileView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 Text("WeBeep gira su Moodle: il login avviene sulla vera pagina Polimi in un browser incorporato, l'app non vede mai la password. Integrazione non ufficiale — può smettere di funzionare se Polimi cambia configurazione.")
                     .font(.system(size: 13))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
 
                 if let webeepSiteInfo {
                     Label("Connesso come \(webeepSiteInfo.fullname)", systemImage: "checkmark.circle.fill")
@@ -358,20 +394,31 @@ struct ProfileView: View {
                         .foregroundStyle(DesignColor.success)
                     Text("Sfoglia corsi e file dalla scheda WeBeep nella barra laterale.")
                         .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.textTertiary)
-                    Button("Disconnetti", role: .destructive) {
+                        .foregroundStyle(DesignColor.textSecondary)
+                    Button("Disconnetti") {
                         WebeepService.signOut()
                         webeepToken = nil
                         self.webeepSiteInfo = nil
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.boostDestructive)
                 } else if isConnectingWebeep {
                     ProgressView("Verifica connessione…")
+                } else if webeepUnreachable, let token = webeepToken {
+                    Label("WeBeep non risponde in questo momento", systemImage: "wifi.exclamationmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(DesignColor.attention)
+                    Text("Il collegamento resta attivo: probabilmente è la rete, o WeBeep è giù. Riprova tra poco.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textSecondary)
+                    Button("Riprova") {
+                        Task { await loadWebeepSiteInfo(token: token) }
+                    }
+                    .buttonStyle(.boostOutlined)
                 } else {
                     Button("Accedi con WeBeep") {
                         showingWebeepAuth = true
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.boostFilled)
                 }
             }
         }
@@ -384,21 +431,36 @@ struct ProfileView: View {
     private var aiSection: some View {
         sectionCard(title: "AI per lo Studio") {
             VStack(alignment: .leading, spacing: DesignSpace.s3) {
-                Text("Genera riassunti, esercizi, esercizi teorici e flashcard nell'ambiente Studio. Senza provider configurato vengono mostrati contenuti d'esempio.")
+                Text("Genera riassunti, esercizi, esercizi teorici e flashcard nell'ambiente Studio. Senza provider configurato la generazione si ferma con il motivo, e puoi riprovare dopo averlo impostato.")
                     .font(.system(size: 13))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
 
-                Picker("Provider", selection: $aiProviderRaw) {
+                HStack(spacing: 0) {
                     ForEach(AIProviderKind.allCases, id: \.rawValue) { kind in
-                        Text(kind.label).tag(kind.rawValue)
+                        let isOn = aiProviderRaw == kind.rawValue
+                        Button {
+                            aiProviderRaw = kind.rawValue
+                        } label: {
+                            Text(kind.label)
+                                .font(.system(size: 12.5, weight: isOn ? .semibold : .medium))
+                                .foregroundStyle(isOn ? DesignColor.brandPrimary : DesignColor.textSecondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                                .background(
+                                    isOn ? DesignColor.brandPrimarySubtle : .clear,
+                                    in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .pickerStyle(.segmented)
+                .padding(3)
+                .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
 
                 if let kind = AIProviderKind(rawValue: aiProviderRaw) {
                     Text(kind.hint)
                         .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.textTertiary)
+                        .foregroundStyle(DesignColor.textSecondary)
                 }
 
                 if aiProviderRaw == AIProviderKind.gemini.rawValue {
@@ -409,7 +471,7 @@ struct ProfileView: View {
                     // Lettura dei materiali: qui basta la chiave.
                     Label("Quale modello Gemini usare per lettura e generazione si sceglie in Sviluppo › Lettura dei materiali.", systemImage: "slider.horizontal.3")
                         .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.textTertiary)
+                        .foregroundStyle(DesignColor.textSecondary)
 
                     credentialEditor(
                         placeholder: "Chiave API Gemini",
@@ -423,6 +485,29 @@ struct ProfileView: View {
                         onRemove: {
                             AIService.saveGeminiKey("")
                             geminiSaved = false
+                        }
+                    )
+                }
+
+                if aiProviderRaw == AIProviderKind.claude.rawValue {
+                    Divider()
+
+                    Text("La stessa chiave la usa la penna magica per l'azione \"Spiega\". Si crea su console.anthropic.com.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textSecondary)
+
+                    credentialEditor(
+                        placeholder: "Chiave API Anthropic",
+                        isSaved: anthropicSaved,
+                        isEditing: $anthropicEditing,
+                        draft: $anthropicDraft,
+                        onSave: {
+                            AIService.saveClaudeKey(anthropicDraft)
+                            anthropicSaved = AIService.claudeKey != nil
+                        },
+                        onRemove: {
+                            AIService.saveClaudeKey("")
+                            anthropicSaved = false
                         }
                     )
                 }
@@ -457,13 +542,13 @@ struct ProfileView: View {
                     draft.wrappedValue = ""
                     isEditing.wrappedValue = false
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.boostFilled)
                 .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Annulla") {
                     draft.wrappedValue = ""
                     isEditing.wrappedValue = false
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.boostOutlined)
             }
         } else if isSaved {
             HStack(spacing: DesignSpace.s3) {
@@ -472,9 +557,9 @@ struct ProfileView: View {
                     .foregroundStyle(DesignColor.success)
                 Spacer()
                 Button("Sostituisci") { isEditing.wrappedValue = true }
-                    .buttonStyle(.bordered)
-                Button("Rimuovi", role: .destructive, action: onRemove)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.boostOutlined)
+                Button("Rimuovi", action: onRemove)
+                    .buttonStyle(.boostDestructive)
             }
         } else {
             Button {
@@ -482,7 +567,7 @@ struct ProfileView: View {
             } label: {
                 Label("Aggiungi chiave", systemImage: "plus.circle.fill")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.boostFilled)
         }
     }
 
@@ -491,38 +576,19 @@ struct ProfileView: View {
             VStack(alignment: .leading, spacing: DesignSpace.s2) {
                 Text("Usata dalla penna magica (azione \"Wolfram\") per risolvere le espressioni cerchiate, e dallo strumento Wolfram del pannello laterale della nota.")
                     .font(.system(size: 13))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
                 credentialEditor(
                     placeholder: "AppID",
-                    savedLabel: "AppID salvato",
-                    isSaved: !wolframAppID.isEmpty,
+                    isSaved: wolframSaved,
                     isEditing: $wolframEditing,
                     draft: $wolframDraft,
-                    onSave: { wolframAppID = wolframDraft.trimmingCharacters(in: .whitespacesAndNewlines) },
-                    onRemove: { wolframAppID = "" }
-                )
-            }
-        }
-    }
-
-    private var anthropicSection: some View {
-        sectionCard(title: "Anthropic (Claude)") {
-            VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                Text("Usata dalla penna magica (azione \"Spiega\") per spiegare un'espressione cerchiata. Crea una chiave su console.anthropic.com.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(DesignColor.textTertiary)
-                credentialEditor(
-                    placeholder: "Chiave API",
-                    isSaved: anthropicSaved,
-                    isEditing: $anthropicEditing,
-                    draft: $anthropicDraft,
                     onSave: {
-                        AIService.saveClaudeKey(anthropicDraft)
-                        anthropicSaved = AIService.claudeKey != nil
+                        AIService.saveWolframAppID(wolframDraft)
+                        wolframSaved = AIService.wolframAppID != nil
                     },
                     onRemove: {
-                        AIService.saveClaudeKey("")
-                        anthropicSaved = false
+                        AIService.saveWolframAppID("")
+                        wolframSaved = false
                     }
                 )
             }
@@ -536,22 +602,38 @@ struct ProfileView: View {
                     Text("BoostNote").font(.system(size: 14, weight: .semibold))
                     Text("Versione 0.1 — app di note per iPad con Apple Pencil.")
                         .font(.system(size: 13))
-                        .foregroundStyle(DesignColor.textTertiary)
+                        .foregroundStyle(DesignColor.textSecondary)
                 }
 
             }
         }
     }
 
+    private enum ButtonTone { case filled, outlined, destructive }
+
+    private func toneButton(_ title: String, icon: String? = nil, tone: ButtonTone = .outlined, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon {
+                    Image(systemName: icon).font(.system(size: 13, weight: .semibold))
+                }
+                Text(title)
+            }
+        }
+        .buttonStyle(tone == .filled ? .boostFilled : (tone == .destructive ? .boostDestructive : .boostOutlined))
+    }
+
     @ViewBuilder
     private func sectionCard(title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: DesignSpace.s3) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased())
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(0.6)
                 .foregroundStyle(DesignColor.textTertiary)
+                .padding(.leading, 2)
             content()
-                .padding(DesignSpace.s4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
                 .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.lg, style: .continuous))
         }
     }
@@ -590,7 +672,7 @@ private struct MaterialReadingPage: View {
             VStack(alignment: .leading, spacing: DesignSpace.s5) {
                 Text("Lettura e generazione sono separate perché hanno profili opposti: trascrivere pagine costa tante chiamate su un compito semplice, generare ne costa poche ma è lì che serve un modello capace.")
                     .font(.system(size: 13))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
 
                 modelTierPicker(for: .reading, selection: $readingTierRaw)
                 modelTierPicker(for: .generation, selection: $generationTierRaw)
@@ -618,20 +700,18 @@ private struct MaterialReadingPage: View {
             Text(purpose.label.uppercased())
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(0.6)
-                .foregroundStyle(DesignColor.textTertiary)
+                .foregroundStyle(DesignColor.textSecondary)
             Text(purpose.explanation)
                 .font(.system(size: 12))
-                .foregroundStyle(DesignColor.textTertiary)
-            Picker(purpose.label, selection: selection) {
-                ForEach(GeminiModelTier.allCases, id: \.rawValue) { tier in
-                    Text(tier.label).tag(tier.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
+                .foregroundStyle(DesignColor.textSecondary)
+            BoostSegmented(
+                options: GeminiModelTier.allCases.map { ($0.rawValue, $0.label) },
+                selection: selection
+            )
             if let tier = GeminiModelTier(rawValue: selection.wrappedValue) {
                 Text(tier.hint)
                     .font(.system(size: 11))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
             }
         }
     }
@@ -654,7 +734,7 @@ private struct PenTuningControls: View {
             HStack {
                 Text("Come risponde la penna alla pressione e quanto viene levigato il tratto.")
                     .font(.system(size: 13))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 if floor != InkPressure.defaultFloor || gamma != InkPressure.defaultGamma
@@ -701,7 +781,7 @@ private struct PenTuningControls: View {
             Spacer()
             Text(value)
                 .font(.system(size: 13, design: .monospaced))
-                .foregroundStyle(DesignColor.textTertiary)
+                .foregroundStyle(DesignColor.textSecondary)
         }
     }
 
@@ -712,19 +792,19 @@ private struct PenTuningControls: View {
             Text(trailing)
         }
         .font(.system(size: 10))
-        .foregroundStyle(DesignColor.textTertiary)
+        .foregroundStyle(DesignColor.textSecondary)
     }
 
     private func previewStroke(_ label: String, width: CGFloat) -> some View {
         VStack(spacing: 2) {
-            Capsule()
+            RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                 .fill(DesignColor.textPrimary)
                 .frame(height: max(1, min(width, 26)))
                 .frame(maxWidth: .infinity)
                 .animation(.easeOut(duration: 0.12), value: width)
             Text(label)
                 .font(.system(size: 10))
-                .foregroundStyle(DesignColor.textTertiary)
+                .foregroundStyle(DesignColor.textSecondary)
         }
     }
 }

@@ -15,6 +15,9 @@ struct VaultView: View {
     @State private var showingPDFImporter = false
     @State private var showingWebeepPicker = false
     @State private var importError: String?
+    // Rimozione in attesa di conferma: le pagine lette sono lavoro
+    // pagato in chiamate API, e prima bastava una voce di menu.
+    @State private var documentPendingDelete: VaultDocument?
 
     private var activity = VaultActivity.shared
 
@@ -33,8 +36,10 @@ struct VaultView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: DesignSpace.s5) {
+                VStack(alignment: .leading, spacing: 18) {
                     header
+
+                    addButtons
 
                     if documents.isEmpty {
                         emptyState
@@ -45,10 +50,8 @@ struct VaultView: View {
                             }
                         }
                     }
-
-                    addButtons
                 }
-                .padding(DesignSpace.s6)
+                .padding(24)
                 .frame(maxWidth: 640, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
@@ -72,10 +75,32 @@ struct VaultView: View {
         .fileImporter(isPresented: $showingPDFImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
             importPDFs(result)
         }
-        .alert("Aggiunta al Vault non riuscita", isPresented: .constant(importError != nil)) {
-            Button("OK") { importError = nil }
+        // Binding vero, non `.constant`: con la costante SwiftUI non può
+        // scrivere false alla chiusura e una dismissal di sistema
+        // (rotazione, cambio scena) lasciava lo stato incoerente.
+        .alert("Aggiunta al Vault non riuscita", isPresented: Binding(
+            get: { importError != nil },
+            set: { if !$0 { importError = nil } }
+        )) {
+            Button("OK", role: .cancel) { importError = nil }
         } message: {
             Text(importError ?? "")
+        }
+        .alert(
+            "Rimuovere dal Vault?",
+            isPresented: Binding(
+                get: { documentPendingDelete != nil },
+                set: { if !$0 { documentPendingDelete = nil } }
+            ),
+            presenting: documentPendingDelete
+        ) { document in
+            Button("Rimuovi", role: .destructive) {
+                documentPendingDelete = nil
+                context.delete(document)
+            }
+            Button("Annulla", role: .cancel) { documentPendingDelete = nil }
+        } message: { document in
+            Text("“\(document.title)” e le sue \(document.pages.count) pagine lette verranno rimossi dal Vault. Gli studi già generati non vengono toccati.")
         }
     }
 
@@ -93,22 +118,31 @@ struct VaultView: View {
                         ProgressView().controlSize(.small)
                         Text("Leggo…")
                             .font(.system(size: 12))
-                            .foregroundStyle(DesignColor.textTertiary)
+                            .foregroundStyle(DesignColor.textSecondary)
                     }
                 } else if !documents.isEmpty {
                     Button {
                         Task { await VaultIngestionService.ensureFresh(for: folder, in: context) }
                     } label: {
+                        // Bordata col raggio dei bottoni, non una capsula:
+                        // nel Vault le stondature sono una scala sola.
                         Label("Aggiorna", systemImage: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(DesignColor.textPrimary)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 7)
+                            .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                                    .strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+                            }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                 }
             }
             Text("Il Vault è la memoria del corso: tutto il materiale viene letto una volta sola, pagina per pagina, e resta pronto per studi, esercizi e ripassi. Le note restano collegate: quando le modifichi, si rileggono solo le pagine cambiate.")
                 .font(.system(size: 12))
-                .foregroundStyle(DesignColor.textTertiary)
+                .foregroundStyle(DesignColor.textSecondary)
         }
     }
 
@@ -134,7 +168,7 @@ struct VaultView: View {
                             .foregroundStyle(DesignColor.insight)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(DesignColor.insightBg, in: Capsule())
+                            .background(DesignColor.insightBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                     if document.isExamPaper {
                         Text("Tema d'esame")
@@ -142,7 +176,7 @@ struct VaultView: View {
                             .foregroundStyle(DesignColor.attention)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(DesignColor.attentionBg, in: Capsule())
+                            .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                 }
                 statusLine(document)
@@ -159,7 +193,7 @@ struct VaultView: View {
                 Label(document.isExamPaper ? "Non è un tema d'esame" : "Segna come tema d'esame", systemImage: "doc.questionmark")
             }
             Button(role: .destructive) {
-                context.delete(document)
+                documentPendingDelete = document
             } label: {
                 Label("Rimuovi dal vault", systemImage: "trash")
             }
@@ -172,9 +206,9 @@ struct VaultView: View {
         let read = document.readCount
         let failed = document.failedCount
         if total == 0 {
-            Text("In attesa di lettura…")
+            Label("In attesa di lettura…", systemImage: "clock")
                 .font(.system(size: 12))
-                .foregroundStyle(DesignColor.textTertiary)
+                .foregroundStyle(DesignColor.textSecondary)
         } else if read == total {
             VStack(alignment: .leading, spacing: 4) {
                 let characters = document.fullText.count
@@ -193,21 +227,25 @@ struct VaultView: View {
                 } else if isIngesting {
                     Text("Costruisco l'indice degli argomenti…")
                         .font(.system(size: 11))
-                        .foregroundStyle(DesignColor.textTertiary)
+                        .foregroundStyle(DesignColor.textSecondary)
                 }
             }
         } else {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    if isIngesting { ProgressView().controlSize(.mini) }
+                    if isIngesting {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "clock").font(.system(size: 12))
+                    }
                     Text("\(read) di \(total) pagine lette")
                         .font(.system(size: 12))
-                        .foregroundStyle(DesignColor.textSecondary)
                 }
+                .foregroundStyle(DesignColor.attention)
                 if failed > 0 {
                     Text("\(failed) pagine non lette: si ritenteranno al prossimo aggiornamento.")
                         .font(.system(size: 11))
-                        .foregroundStyle(DesignColor.attention)
+                        .foregroundStyle(DesignColor.textSecondary)
                 }
             }
         }
@@ -215,28 +253,31 @@ struct VaultView: View {
 
     private var addButtons: some View {
         HStack(spacing: DesignSpace.s3) {
-            Button {
-                showingNotePicker = true
-            } label: {
-                Label("Aggiungi nota", systemImage: "note.text.badge.plus")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-            Button {
-                showingPDFImporter = true
-            } label: {
-                Label("Aggiungi PDF", systemImage: "doc.badge.plus")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-            Button {
-                showingWebeepPicker = true
-            } label: {
-                Label("Da WeBeep", systemImage: "graduationcap")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .buttonStyle(.bordered)
+            addAction("Aggiungi PDF", icon: "doc.badge.plus", filled: true) { showingPDFImporter = true }
+            addAction("Aggiungi nota", icon: "note.text.badge.plus") { showingNotePicker = true }
+            addAction("Da WeBeep", icon: "graduationcap") { showingWebeepPicker = true }
         }
+    }
+
+    private func addAction(_ title: String, icon: String, filled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: icon).font(.system(size: 15))
+                Text(title).font(.system(size: 13.5, weight: .semibold))
+            }
+            .foregroundStyle(filled ? DesignColor.textOnBrand : DesignColor.textPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .background(
+                filled ? DesignColor.brandPrimary : DesignColor.surfacePage,
+                in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                    .strokeBorder(filled ? .clear : DesignColor.borderDefault, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func addWebeepFile(data: Data, name: String) {
@@ -262,7 +303,7 @@ struct VaultView: View {
                 .foregroundStyle(DesignColor.textPrimary)
             Text("Metti qui tutto il materiale del corso: note, dispense, temi d'esame, file WeBeep. Verrà letto una volta e resterà pronto per studi, esercizi e ripassi.")
                 .font(.system(size: 12))
-                .foregroundStyle(DesignColor.textTertiary)
+                .foregroundStyle(DesignColor.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
         }

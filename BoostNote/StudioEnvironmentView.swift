@@ -86,6 +86,10 @@ struct StudioEnvironmentView: View {
     }
 
     private func delete(_ study: Study) {
+        // Una generazione in corso va annullata PRIMA di eliminare: il
+        // suo task, tornando sul MainActor, scriverebbe stato su moduli
+        // eliminati (le guardie nel servizio coprono la finestra residua).
+        StudioGenerationService.cancelGeneration(for: study.id)
         selectedStudy = nil
         selectedModule = nil
         context.delete(study)

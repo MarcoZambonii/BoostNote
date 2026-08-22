@@ -154,7 +154,7 @@ struct NoteSearchSheet: View {
                     .foregroundStyle(DesignColor.textTertiary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(DesignColor.surfaceSunken, in: Capsule())
+                    .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
             .foregroundStyle(DesignColor.textSecondary)
             .padding(.horizontal, DesignSpace.s3)

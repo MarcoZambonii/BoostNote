@@ -628,7 +628,7 @@ private struct PaperRow: View {
                             .foregroundStyle(origin.tint)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(origin.tintBackground, in: Capsule())
+                            .background(origin.tintBackground, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                     }
                     if !subtitle.isEmpty {
                         Text(subtitle)
@@ -686,7 +686,7 @@ private struct PaperActionStyle: ButtonStyle {
             .padding(.vertical, 6)
             .background(
                 isEnabled ? DesignColor.brandPrimarySubtle : DesignColor.surfaceSunken,
-                in: Capsule()
+                in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
             )
             .opacity(configuration.isPressed ? 0.6 : 1)
     }

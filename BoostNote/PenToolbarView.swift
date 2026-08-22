@@ -531,10 +531,10 @@ struct PenToolbarView: View {
     }
 
     // Il lazo, come la gomma: un tocco lo seleziona, un secondo spiega
-    // cosa ci si può fare. Le operazioni sulla selezione (taglia, copia,
-    // duplica, elimina) le offre PencilKit nel proprio menu quando la
-    // selezione è attiva: non le rifacciamo qui, sarebbe un secondo menu
-    // che dice le stesse cose in un posto diverso.
+    // cosa ci si può fare. Le operazioni sulla selezione (duplica,
+    // copia, taglia, elimina) vivono nella barretta che compare sopra il
+    // recinto — il lasso è NOSTRO (LiveInkCaptureOverlay), PencilKit non
+    // partecipa più: le istruzioni qui sotto descrivono quello vero.
     @ViewBuilder
     private var lassoButton: some View {
         Button {
@@ -553,10 +553,10 @@ struct PenToolbarView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(DesignColor.textTertiary)
                 lassoStep("1", "Cerchia quello che ti interessa.")
-                lassoStep("2", "Trascinalo per spostarlo, o pizzica per ridimensionarlo.")
-                lassoStep("3", "Toccalo di nuovo per taglia, copia, duplica ed elimina.")
+                lassoStep("2", "Trascina la selezione per spostarla.")
+                lassoStep("3", "Usa la barretta sopra la selezione per duplicare, copiare, tagliare o eliminare.")
                 Divider()
-                Text("Funziona su inchiostro e formule, non sulle caselle di testo: quelle si spostano trascinandole direttamente.")
+                Text("Con qualcosa negli appunti, un tocco su un punto vuoto lo incolla lì. Funziona sull'inchiostro, non sulle caselle di testo: quelle si spostano trascinandole direttamente.")
                     .font(.system(size: 11))
                     .foregroundStyle(DesignColor.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -12,7 +12,6 @@ import SwiftData
 // contenuti stanno dove si guarda dopo aver cliccato.
 struct StudioHomeView: View {
     @Environment(\.modelContext) private var context
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Binding var selectedStudy: Study?
     @Binding var showingProgress: Bool
@@ -26,6 +25,12 @@ struct StudioHomeView: View {
     @State private var vaultFolder: StudyFolder?
     @State private var renamingStudy: Study?
     @State private var renameText = ""
+
+    // Eliminazioni in attesa di conferma: un Vault si porta via ore di
+    // letture pagate in chiamate API, uno studio i suoi moduli generati —
+    // prima bastava una voce di menu senza nessuna domanda.
+    @State private var folderPendingDelete: StudyFolder?
+    @State private var studyPendingDelete: Study?
 
     private var looseStudies: [Study] { studies.filter { $0.folder == nil } }
 
@@ -76,6 +81,33 @@ struct StudioHomeView: View {
             Button("Annulla", role: .cancel) { renamingStudy = nil }
             Button("Salva") { applyRename() }
         }
+        .alert(
+            "Eliminare il Vault?",
+            isPresented: Binding(
+                get: { folderPendingDelete != nil },
+                set: { if !$0 { folderPendingDelete = nil } }
+            ),
+            presenting: folderPendingDelete
+        ) { folder in
+            Button("Elimina", role: .destructive) { deleteFolder(folder) }
+            Button("Annulla", role: .cancel) { folderPendingDelete = nil }
+        } message: { folder in
+            let documents = folder.vaultDocuments.count
+            return Text("“\(folder.name)” verrà eliminata con \(documents == 1 ? "il documento del Vault e le sue pagine lette" : "i \(documents) documenti del Vault e le loro pagine lette"). Gli studi dentro non vengono eliminati: tornano alla radice.")
+        }
+        .alert(
+            "Eliminare lo studio?",
+            isPresented: Binding(
+                get: { studyPendingDelete != nil },
+                set: { if !$0 { studyPendingDelete = nil } }
+            ),
+            presenting: studyPendingDelete
+        ) { study in
+            Button("Elimina", role: .destructive) { deleteStudy(study) }
+            Button("Annulla", role: .cancel) { studyPendingDelete = nil }
+        } message: { study in
+            Text("“\(study.name)”, i suoi moduli generati e i tentativi registrati nell'analisi dei progressi verranno eliminati.")
+        }
     }
 
     // Titolo a sinistra, azioni di CORNICE a destra: creare un Vault e
@@ -85,23 +117,32 @@ struct StudioHomeView: View {
     // e portava a un flusso che poteva anche non passare dal Vault.
     @ViewBuilder
     private var header: some View {
-        // Su iPhone titolo e azioni si impilano: sulla stessa riga i
-        // pulsanti andavano a capo lettera per lettera.
-        if horizontalSizeClass == .compact {
-            VStack(alignment: .leading, spacing: DesignSpace.s4) {
-                headerTitle
+        // `ViewThatFits` misura lo spazio disponibile invece di dedurlo
+        // dal dispositivo: `horizontalSizeClass`, che c'era prima, è lo
+        // stesso segnale sbagliato già corretto sulla testata della Home
+        // — un iPad in verticale con la barra laterale aperta resta
+        // `.regular` con una larghezza da iPhone. La variante affiancata
+        // porta il sottotitolo NON comprimibile, così quando non entra si
+        // passa davvero alla variante impilata.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: DesignSpace.s4) {
+                headerTitle(compactSubtitle: true)
+                Spacer(minLength: DesignSpace.s4)
                 headerButtons
             }
-        } else {
-            HStack(alignment: .top, spacing: DesignSpace.s4) {
-                headerTitle
-                Spacer(minLength: 0)
-                headerButtons
+            VStack(alignment: .leading, spacing: DesignSpace.s4) {
+                headerTitle(compactSubtitle: false)
+                // I due pulsanti insieme possono superare la larghezza di
+                // un iPhone: la riga scorre invece di schiacciarli.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    headerButtons
+                }
+                .scrollClipDisabled()
             }
         }
     }
 
-    private var headerTitle: some View {
+    private func headerTitle(compactSubtitle: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text("Studio")
@@ -113,6 +154,8 @@ struct StudioHomeView: View {
             Text(subtitleText)
                 .font(.system(size: 14))
                 .foregroundStyle(DesignColor.textTertiary)
+                .lineLimit(compactSubtitle ? 1 : nil)
+                .fixedSize(horizontal: compactSubtitle, vertical: false)
         }
     }
 
@@ -209,7 +252,7 @@ struct StudioHomeView: View {
                     .foregroundStyle(DesignColor.textTertiary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
-                    .background(DesignColor.surfaceSunken, in: Capsule())
+                    .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 Spacer()
                 if let folder {
                     // Accesso rapido al vault: se ha già materiale si vede
@@ -223,7 +266,7 @@ struct StudioHomeView: View {
                                 .foregroundStyle(DesignColor.brandPrimary)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background(DesignColor.brandPrimarySubtle, in: Capsule())
+                                .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
@@ -239,7 +282,7 @@ struct StudioHomeView: View {
                             Label("Rinomina / colore", systemImage: "pencil")
                         }
                         Button(role: .destructive) {
-                            context.delete(folder)
+                            folderPendingDelete = folder
                         } label: {
                             Label("Elimina Vault e cartella", systemImage: "trash")
                         }
@@ -312,7 +355,7 @@ struct StudioHomeView: View {
                         Label("Gestisci Vault", systemImage: "archivebox")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.boostOutlined)
                     .controlSize(.small)
                 }
                 Menu {
@@ -322,7 +365,7 @@ struct StudioHomeView: View {
                         Label("Rinomina / colore", systemImage: "pencil")
                     }
                     Button(role: .destructive) {
-                        context.delete(folder)
+                        folderPendingDelete = folder
                     } label: {
                         Label("Elimina Vault e cartella", systemImage: "trash")
                     }
@@ -379,7 +422,7 @@ struct StudioHomeView: View {
                                 .foregroundStyle(DesignColor.textOnBrand)
                                 .padding(.horizontal, DesignSpace.s4)
                                 .padding(.vertical, DesignSpace.s2)
-                                .background(DesignColor.brandPrimary, in: Capsule())
+                                .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
@@ -459,7 +502,7 @@ struct StudioHomeView: View {
                         .foregroundStyle(DesignColor.brandPrimary)
                         .padding(.horizontal, DesignSpace.s4)
                         .padding(.vertical, DesignSpace.s2 + 2)
-                        .background(DesignColor.brandPrimarySubtle, in: Capsule())
+                        .background(DesignColor.brandPrimarySubtle, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -541,7 +584,7 @@ struct StudioHomeView: View {
                                 .padding(.vertical, 4)
                                 .background(
                                     (module.status == .failed ? DesignColor.danger : kind.color).opacity(0.1),
-                                    in: Capsule()
+                                    in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
                                 )
                             }
                         }
@@ -561,7 +604,7 @@ struct StudioHomeView: View {
                     .foregroundStyle(newPages == 0 ? DesignColor.success : DesignColor.attention)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(newPages == 0 ? DesignColor.successBg : DesignColor.attentionBg, in: Capsule())
+                    .background(newPages == 0 ? DesignColor.successBg : DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 }
             }
             .padding(DesignSpace.s4)
@@ -598,8 +641,7 @@ struct StudioHomeView: View {
             }
             Divider()
             Button(role: .destructive) {
-                if selectedStudy == study { selectedStudy = nil }
-                context.delete(study)
+                studyPendingDelete = study
             } label: {
                 Label("Elimina studio", systemImage: "trash")
             }
@@ -632,6 +674,26 @@ struct StudioHomeView: View {
             folder.name = trimmed
             folder.folderColor = color
         }
+    }
+
+    private func deleteFolder(_ folder: StudyFolder) {
+        folderPendingDelete = nil
+        // Il Vault della cartella sta venendo letto? Il servizio ha le
+        // sue guardie sui modelli eliminati, ma se la sheet del Vault è
+        // aperta su questa cartella va chiusa: resterebbe su un morto.
+        if vaultFolder?.persistentModelID == folder.persistentModelID {
+            vaultFolder = nil
+        }
+        context.delete(folder)
+    }
+
+    private func deleteStudy(_ study: Study) {
+        studyPendingDelete = nil
+        // Una generazione in corso su questo studio va fermata: il suo
+        // task, al completamento, scriverebbe su moduli eliminati.
+        StudioGenerationService.cancelGeneration(for: study.id)
+        if selectedStudy == study { selectedStudy = nil }
+        context.delete(study)
     }
 }
 

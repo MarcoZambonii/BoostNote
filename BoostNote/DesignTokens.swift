@@ -108,3 +108,86 @@ extension Color {
         self.init(.sRGB, red: r, green: g, blue: b, opacity: 1)
     }
 }
+
+
+// Le tre varianti di bottone dell'app, dagli handoff di design: piena,
+// bordata, distruttiva. Esistono per sostituire .borderedProminent e
+// .bordered di sistema, che disegnano una CAPSULA e un raggio loro —
+// accanto ai blocchi da 10/14 sembravano di un'altra app. Regola unica di
+// tutta l'interfaccia: nessuna capsula, raggi solo dai token.
+struct BoostButtonStyle: ButtonStyle {
+    enum Tone { case filled, outlined, destructive }
+    var tone: Tone = .outlined
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(ink)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 7)
+            .background(face, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                    .strokeBorder(tone == .filled ? .clear : DesignColor.borderDefault, lineWidth: 1)
+            }
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+
+    private var ink: Color {
+        switch tone {
+        case .filled: DesignColor.textOnBrand
+        case .outlined: DesignColor.textPrimary
+        case .destructive: DesignColor.danger
+        }
+    }
+
+    private var face: Color {
+        tone == .filled ? DesignColor.brandPrimary : DesignColor.surfacePage
+    }
+}
+
+extension ButtonStyle where Self == BoostButtonStyle {
+    static var boostFilled: BoostButtonStyle { BoostButtonStyle(tone: .filled) }
+    static var boostOutlined: BoostButtonStyle { BoostButtonStyle(tone: .outlined) }
+    static var boostDestructive: BoostButtonStyle { BoostButtonStyle(tone: .destructive) }
+}
+
+
+// Selettore a segmenti dell'app: fondo `surface-page`, opzione scelta su
+// `brand-primary-subtle` col testo in brand. Sostituisce
+// .pickerStyle(.segmented), che porta il grigio e il raggio di iOS e
+// accanto ai blocchi da 14 sembra di un'altra app.
+struct BoostSegmented<Value: Hashable>: View {
+    let options: [(value: Value, label: String)]
+    @Binding var selection: Value
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.value) { option in
+                let isOn = selection == option.value
+                Button {
+                    selection = option.value
+                } label: {
+                    Text(option.label)
+                        .font(.system(size: 12.5, weight: isOn ? .semibold : .medium))
+                        .foregroundStyle(isOn ? DesignColor.brandPrimary : DesignColor.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(
+                            isOn ? DesignColor.brandPrimarySubtle : .clear,
+                            in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                .strokeBorder(DesignColor.borderSubtle, lineWidth: 1)
+        }
+    }
+}

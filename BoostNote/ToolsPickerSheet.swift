@@ -194,7 +194,7 @@ struct ToolsPickerSheet: View {
                 .frame(width: 64, height: 64)
                 Text("Avvia").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
                     .padding(.horizontal, DesignSpace.s3).padding(.vertical, 4)
-                    .background(DesignColor.brandPrimary, in: Capsule())
+                    .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
             }
 
         case .todo:

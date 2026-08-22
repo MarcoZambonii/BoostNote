@@ -83,9 +83,13 @@ enum GeminiModelTier: String, CaseIterable {
     //
     // Su `.lite` non cambia niente: chi sceglie quel tier ha scelto la
     // quota, e comunque gli esercizi passano da `.full` esplicito.
+    // Il secondo modello capace, per chi deve evitare la porta d'ingresso
+    // principale (vedi `chainStart` in AIService.generate).
+    static let alternateCapableModel = "gemini-3-flash-preview"
+
     func modelChain(qualityFirst: Bool = false) -> [String] {
         let lite = ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"]
-        let capable = ["gemini-flash-latest", "gemini-3-flash-preview"]
+        let capable = ["gemini-flash-latest", Self.alternateCapableModel]
         let slow = ["gemini-3.5-flash"]
         switch self {
         case .lite: return lite + capable + slow
@@ -324,6 +328,37 @@ enum AIService {
         }
     }
 
+    // L'AppID Wolfram Alpha segue la stessa regola delle altre chiavi:
+    // Keychain, non UserDefaults — è una credenziale. Viveva in
+    // @AppStorage("wolframAlphaAppID") duplicato in cinque file: questo è
+    // l'UNICO punto di accesso, con la migrazione una tantum dal vecchio
+    // valore in chiaro (che viene rimosso, come per la chiave Anthropic).
+    private static let wolframKeychainKey = "wolframAlphaAppID.keychain"
+    private static let wolframLegacyDefaultsKey = "wolframAlphaAppID"
+
+    static var wolframAppID: String? {
+        if let key = KeychainStore.get(wolframKeychainKey), !key.isEmpty {
+            return key
+        }
+        let legacy = UserDefaults.standard.string(forKey: wolframLegacyDefaultsKey) ?? ""
+        guard !legacy.isEmpty else { return nil }
+        KeychainStore.set(legacy, forKey: wolframKeychainKey)
+        UserDefaults.standard.removeObject(forKey: wolframLegacyDefaultsKey)
+        return legacy
+    }
+
+    static func saveWolframAppID(_ key: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        // La copia legacy va rimossa in ogni caso: altrimenti dopo un
+        // "Rimuovi" la migrazione la resusciterebbe.
+        UserDefaults.standard.removeObject(forKey: wolframLegacyDefaultsKey)
+        if trimmed.isEmpty {
+            KeychainStore.remove(wolframKeychainKey)
+        } else {
+            KeychainStore.set(trimmed, forKey: wolframKeychainKey)
+        }
+    }
+
     // Il provider selezionato è utilizzabile adesso? (chiave presente /
     // modello locale disponibile). Usato per decidere se tentare la
     // generazione reale o restare sul mock.
@@ -366,13 +401,14 @@ enum AIService {
         schema: [String: Any]? = nil,
         thinkingBudget: Int = 0,
         qualityFirst: Bool = false,
+        chainStart: String? = nil,
         onAttempt: (@Sendable (_ modelID: String, _ position: Int, _ total: Int, _ previousFailure: String?) -> Void)? = nil
     ) async -> Result<AIReply, AIServiceError> {
         switch selectedProvider {
         case .appleLocal:
             return await generateWithAppleLocal(prompt: prompt).map { AIReply(text: $0, modelID: nil) }
         case .gemini:
-            return await generateWithGemini(prompt: prompt, purpose: purpose, tier: tier, schema: schema, thinkingBudget: thinkingBudget, qualityFirst: qualityFirst, onAttempt: onAttempt)
+            return await generateWithGemini(prompt: prompt, purpose: purpose, tier: tier, schema: schema, thinkingBudget: thinkingBudget, qualityFirst: qualityFirst, chainStart: chainStart, onAttempt: onAttempt)
         case .claude:
             return await generateWithClaude(prompt: prompt, purpose: purpose, schema: schema).map { AIReply(text: $0, modelID: "claude-haiku") }
         }
@@ -498,12 +534,28 @@ enum AIService {
         }
     }
 
-    private static func generateWithGemini(prompt: String, purpose: AIPurpose, tier: GeminiModelTier? = nil, schema: [String: Any]? = nil, thinkingBudget: Int = 0, qualityFirst: Bool = false, onAttempt: (@Sendable (String, Int, Int, String?) -> Void)? = nil) async -> Result<AIReply, AIServiceError> {
+    private static func generateWithGemini(prompt: String, purpose: AIPurpose, tier: GeminiModelTier? = nil, schema: [String: Any]? = nil, thinkingBudget: Int = 0, qualityFirst: Bool = false, chainStart: String? = nil, onAttempt: (@Sendable (String, Int, Int, String?) -> Void)? = nil) async -> Result<AIReply, AIServiceError> {
         guard geminiKey != nil else {
             return .failure(.notConfigured("Nessuna chiave Gemini: creane una gratuita su aistudio.google.com e salvala nel Profilo."))
         }
 
-        let chain = tier?.modelChain(qualityFirst: qualityFirst) ?? geminiModelChain(for: purpose)
+        var chain = tier?.modelChain(qualityFirst: qualityFirst) ?? geminiModelChain(for: purpose)
+        // CHI PARTE DA DOVE. I moduli di uno studio girano in parallelo, e
+        // da quando anche i teorici usano i modelli capaci partivano dallo
+        // STESSO primo modello degli esercizi, nello stesso istante: due
+        // richieste sulla stessa porta, e il ledger non può proteggere
+        // nessuno dei due perché la quarantena si impara da un fallimento
+        // che deve prima arrivare (22-26s per un 503).
+        //
+        // Ruotare la catena costa niente e toglie la collisione: i capaci
+        // sono due, con quote giornaliere SEPARATE, quindi partire da
+        // quello meno conteso non è un ripiego — è anche il modo di non
+        // svuotare una quota lasciando l'altra intonsa. Gli altri modelli
+        // restano tutti in coda nell'ordine di prima.
+        if let chainStart, let position = chain.firstIndex(of: chainStart) {
+            chain.remove(at: position)
+            chain.insert(chainStart, at: 0)
+        }
         var lastError: AIServiceError = .badResponse(nil)
         var attemptedAny = false
         var skippedBusy = false
@@ -572,14 +624,21 @@ enum AIService {
                         // moduli in parallelo non devono ripagare la
                         // stessa attesa sullo stesso modello intasato.
                         await GeminiModelLedger.shared.markOverloaded(modelID)
-                    case .badResponse:
-                        previousFailure = "ha dato una risposta non valida"
+                    case .badResponse(let detail):
                         // MAX_TOKENS, SAFETY, risposta vuota: è un guasto
                         // di QUEL modello su QUESTO prompt, non della
                         // richiesta — il successivo risponde quasi sempre.
                         // Prima interrompeva la catena come un errore di
                         // rete, uccidendo il modulo con quattro modelli
                         // liberi mai provati.
+                        //
+                        // Il MOTIVO però va detto: "risposta non valida"
+                        // mette nello stesso mucchio un modello che ha
+                        // scritto troppo (c'era del lavoro, è finito
+                        // tagliato) e uno che non ha prodotto niente
+                        // (non c'era niente da salvare). Sono due storie
+                        // diverse e portano a rimedi diversi.
+                        previousFailure = shortFailure(from: detail)
                         break
                     // Rete giù, chiave sbagliata, annullamento: cambiare
                     // modello non aiuta.
@@ -862,6 +921,23 @@ enum AIService {
             repaired.append(open == "[" ? "]" : "}")
         }
         return repaired
+    }
+
+    // Versione corta di `reason(for:)`, per la riga di avanzamento. Il
+    // confronto è su testi che scriviamo NOI qui sotto, quindi regge —
+    // stesso patto già in uso per distinguere timeout da sovraccarico.
+    private static func shortFailure(from detail: String?) -> String {
+        guard let detail else { return "ha dato una risposta non valida" }
+        if detail.localizedCaseInsensitiveContains("lunghezza massima") {
+            return "ha scritto oltre la lunghezza massima"
+        }
+        if detail.localizedCaseInsensitiveContains("sicurezza") {
+            return "l'ha bloccata per i filtri di sicurezza"
+        }
+        if detail.localizedCaseInsensitiveContains("copyright") {
+            return "l'ha interrotta per il copyright"
+        }
+        return "ha dato una risposta non valida"
     }
 
     private static func reason(for finishReason: String?) -> String? {
@@ -1149,6 +1225,11 @@ enum AIService {
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Il default di URLRequest è 60 secondi: per una generazione
+        // non-streaming da 16k token è meno del tempo che il modello
+        // impiega a SCRIVERLA — la richiesta moriva a risposta sana in
+        // corso. Stessa taglia dei tetti Gemini (vedi AIPurpose).
+        request.timeoutInterval = purpose == .generation ? 240 : 120
         var body: [String: Any] = [
             "model": "claude-haiku-4-5-20251001",
             "max_tokens": claudeMaxOutputTokens(for: purpose),
@@ -1293,7 +1374,13 @@ enum AIService {
                         shortestRetry = min(shortestRetry ?? retryAfter, retryAfter)
                     case .modelUnavailable:
                         await GeminiModelLedger.shared.markOverloaded(modelID)
-                    case .network, .notConfigured, .badResponse, .cancelled:
+                    // Risposta vuota/filtrata: guasto di QUEL modello su
+                    // QUESTA immagine, non della richiesta — il percorso
+                    // testuale prosegue sulla catena per lo stesso motivo,
+                    // e qui fermarsi lasciava modelli liberi mai provati.
+                    case .badResponse:
+                        break
+                    case .network, .notConfigured, .cancelled:
                         return .failure(error)
                     }
                 }
@@ -1413,6 +1500,9 @@ enum AIService {
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Stesso tetto generoso del percorso immagine Gemini: una pagina
+        // di appunti da trascrivere può richiedere più dei 60s di default.
+        request.timeoutInterval = 120
         let body: [String: Any] = [
             "model": "claude-haiku-4-5-20251001",
             "max_tokens": 1000,
@@ -1446,8 +1536,10 @@ enum AIService {
            let message = apiError["message"] as? String {
             return .failure(.network(message))
         }
+        // Come nel percorso testuale: il primo blocco di tipo "text", non
+        // il primo blocco qualunque (che può essere di un altro tipo).
         guard let content = json["content"] as? [[String: Any]],
-              let text = content.first?["text"] as? String else {
+              let text = content.first(where: { $0["type"] as? String == "text" })?["text"] as? String else {
             return .failure(.badResponse(nil))
         }
         return .success(text)

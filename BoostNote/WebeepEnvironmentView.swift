@@ -15,6 +15,9 @@ struct WebeepEnvironmentView: View {
     @State private var sections: [WebeepSection] = []
     @State private var isLoading = false
     @State private var showingAuth = false
+    // WeBeep irraggiungibile (rete, servizio giù): il token resta valido
+    // e si mostra un errore con Riprova, non la schermata di login.
+    @State private var loadError: String?
 
     @State private var pendingFile: WebeepFile?
     // Presentazione separata dai dati: il Binding calcolato che azzerava
@@ -42,6 +45,25 @@ struct WebeepEnvironmentView: View {
                     connectPrompt
                 } else if isLoading && courses.isEmpty && selectedCourse == nil {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let loadError {
+                    VStack(spacing: DesignSpace.s3) {
+                        ContentUnavailableView(
+                            "WeBeep non risponde",
+                            systemImage: "wifi.exclamationmark",
+                            description: Text(loadError)
+                        )
+                        Button("Riprova") {
+                            Task {
+                                if let course = selectedCourse {
+                                    await loadSections(course)
+                                } else {
+                                    await refresh()
+                                }
+                            }
+                        }
+                        .buttonStyle(.boostFilled)
+                        .padding(.bottom, DesignSpace.s6)
+                    }
                 } else if let selectedCourse {
                     fileList(for: selectedCourse)
                 } else {
@@ -112,8 +134,8 @@ struct WebeepEnvironmentView: View {
                         .foregroundStyle(DesignColor.textPrimary)
                         .padding(.horizontal, DesignSpace.s3 + 2)
                         .frame(height: 36)
-                        .background(.regularMaterial, in: Capsule())
-                        .overlay(Capsule().stroke(DesignColor.borderDefault, lineWidth: 1))
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous).stroke(DesignColor.borderDefault, lineWidth: 1))
                         .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
                     }
                     .padding(.top, 16)
@@ -152,6 +174,17 @@ struct WebeepEnvironmentView: View {
                 }
             }
             Spacer()
+            if isImporting {
+                // L'import scarica il file: senza questo, dopo il tocco
+                // su "In una nuova nota" non si vedeva succedere niente
+                // (anteprima e download avevano già il loro spinner).
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Importo…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesignColor.textTertiary)
+                }
+            }
             if isLoading {
                 ProgressView()
             }
@@ -178,7 +211,7 @@ struct WebeepEnvironmentView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
             Button("Accedi con WeBeep") { showingAuth = true }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.boostFilled)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -358,6 +391,7 @@ struct WebeepEnvironmentView: View {
                     .foregroundStyle(isPDF(file) || isImage(file) ? DesignColor.textTertiary : DesignColor.textTertiary.opacity(0.4))
             }
             .buttonStyle(.plain)
+            .disabled(isImporting)
             .accessibilityLabel("Aggiungi a una nota")
         }
         .padding(.horizontal, DesignSpace.s3 + 2)
@@ -367,22 +401,36 @@ struct WebeepEnvironmentView: View {
     private func refresh() async {
         guard let token else { return }
         isLoading = true
+        loadError = nil
         defer { isLoading = false }
-        guard let info = await WebeepService.siteInfo(token: token) else {
-            // Token salvato ma non più valido: torna alla schermata di connessione.
+        do {
+            let info = try await WebeepService.siteInfo(token: token)
+            siteInfo = info
+            courses = try await WebeepService.courses(token: token, userID: info.userid)
+        } catch WebeepServiceError.invalidToken {
+            // SOLO quando Moodle dichiara il token morto si torna al
+            // login: prima anche un errore di rete disconnetteva WeBeep
+            // buttando un token valido dal Keychain.
             WebeepService.signOut()
             self.token = nil
-            return
+        } catch {
+            loadError = "Controlla la connessione e riprova: il collegamento a WeBeep resta attivo."
         }
-        siteInfo = info
-        courses = await WebeepService.courses(token: token, userID: info.userid)
     }
 
     private func loadSections(_ course: WebeepCourse) async {
         guard let token else { return }
         isLoading = true
+        loadError = nil
         defer { isLoading = false }
-        sections = await WebeepService.contents(token: token, courseID: course.id)
+        do {
+            sections = try await WebeepService.contents(token: token, courseID: course.id)
+        } catch WebeepServiceError.invalidToken {
+            WebeepService.signOut()
+            self.token = nil
+        } catch {
+            loadError = "Controlla la connessione e riprova: il collegamento a WeBeep resta attivo."
+        }
     }
 
     private func isPDF(_ file: WebeepFile) -> Bool {
@@ -453,6 +501,7 @@ struct WebeepEnvironmentView: View {
     }
 
     private func importFile(_ file: WebeepFile, target: ImportTarget) async {
+        guard !isImporting else { return }
         guard let token else {
             importErrorMessage = "Non sei collegato a WeBeep: riaccedi e riprova."
             return
@@ -488,8 +537,10 @@ struct WebeepEnvironmentView: View {
                 return
             }
         } else if isImage(file) {
-            let media = NoteMedia(x: 60, y: 60, kind: .image, data: data, note: note)
+            // Aggancio dal lato genitore (media.append): vedi Note.attach.
+            let media = NoteMedia(x: 60, y: 60, kind: .image, data: data)
             context.insert(media)
+            note.media.append(media)
         } else {
             if case .newNote = target { context.delete(note) }
             importErrorMessage = "\"\(WebeepService.stripMultilang(file.filename))\" non è un PDF né un'immagine: per ora puoi solo scaricarlo o vederne l'anteprima, non aggiungerlo direttamente alla nota."

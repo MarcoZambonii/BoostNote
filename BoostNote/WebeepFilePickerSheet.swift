@@ -66,6 +66,8 @@ struct WebeepFilePickerSheet: View {
                         }
                     }
                     .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .background(DesignColor.surfacePage)
                 }
             }
             .navigationTitle("PDF da WeBeep")
@@ -170,16 +172,18 @@ struct WebeepFilePickerSheet: View {
 
     private func loadCourses() async {
         guard let token else { isLoading = false; return }
-        guard let info = await WebeepService.siteInfo(token: token) else {
-            errorMessage = "WeBeep non risponde: controlla la connessione o ricollega l'account dal Profilo."
-            isLoading = false
-            return
+        defer { isLoading = false }
+        do {
+            let info = try await WebeepService.siteInfo(token: token)
+            courses = try await WebeepService.courses(token: token, userID: info.userid)
+            if courses.isEmpty {
+                errorMessage = "Nessun corso trovato sull'account."
+            }
+        } catch WebeepServiceError.invalidToken {
+            errorMessage = "La sessione WeBeep è scaduta: ricollega l'account dal Profilo."
+        } catch {
+            errorMessage = "WeBeep non risponde: controlla la connessione e riprova."
         }
-        courses = await WebeepService.courses(token: token, userID: info.userid)
-        if courses.isEmpty {
-            errorMessage = "Nessun corso trovato sull'account."
-        }
-        isLoading = false
     }
 }
 
@@ -221,6 +225,8 @@ private struct WebeepCourseFilesView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .background(DesignColor.surfacePage)
             }
         }
         .navigationTitle(WebeepService.stripMultilang(course.shortname ?? course.fullname))
@@ -237,8 +243,12 @@ private struct WebeepCourseFilesView: View {
         }
         .task {
             guard let token = WebeepService.savedToken else { isLoading = false; return }
-            sections = await WebeepService.contents(token: token, courseID: course.id)
-            isLoading = false
+            defer { isLoading = false }
+            do {
+                sections = try await WebeepService.contents(token: token, courseID: course.id)
+            } catch {
+                errorMessage = "Non riesco a caricare i file del corso: controlla la connessione e riprova."
+            }
         }
     }
 

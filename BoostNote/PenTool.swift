@@ -206,7 +206,8 @@ extension PenTool {
         case .pen: "Tratto pieno e uniforme, sensibile alla pressione."
         case .marker: "Punta tonda: evidenzia senza coprire il testo e senza assottigliarsi in curva."
         case .text: "Aggiunge caselle di testo digitate."
-        case .eraser: "Cancella per tratto intero o per pixel."
+        // Coerente col popover della gomma: la parziale è disattivata.
+        case .eraser: "Cancella il tratto intero che tocchi."
         case .lasso: "Cerchia per spostare o cancellare una selezione."
         case .pointer: "Disattiva il disegno: scorri e tocca senza scrivere."
         }

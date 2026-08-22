@@ -71,40 +71,29 @@ struct NoteSettingsSheet: View {
                 }
 
                 Section("Dimensione pagina") {
-                    Picker("Dimensione", selection: $note.pageSize) {
-                        ForEach(PageSize.allCases, id: \.self) { size in
-                            Text(size.label).tag(size)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    BoostSegmented(
+                        options: PageSize.allCases.map { ($0, $0.label) },
+                        selection: $note.pageSize
+                    )
                 }
 
                 Section("Pattern") {
-                    // Finché la nota ha uno sfondo PDF importato, quello
-                    // copre il pattern: cambiarlo qui non aveva alcun
-                    // effetto visibile e non c'era modo di tornare
-                    // indietro. Ora si vede il perché e si può rimuovere.
-                    if note.pdfBackgroundData != nil {
-                        VStack(alignment: .leading, spacing: DesignSpace.s2) {
-                            Text("Questa nota ha un PDF importato come sfondo: il pattern resta nascosto finché non lo rimuovi.")
-                                .font(.caption)
-                                .foregroundStyle(DesignColor.textSecondary)
-                            Button(role: .destructive) {
-                                note.pdfBackgroundData = nil
-                                note.updatedAt = .now
-                            } label: {
-                                Label("Rimuovi sfondo PDF", systemImage: "doc.badge.minus")
-                            }
-                        }
+                    // Il vecchio banner "Rimuovi sfondo PDF" era legato al
+                    // campo LEGACY pdfBackgroundData: dopo la migrazione al
+                    // modello a pagine il PDF vive nelle singole pagine
+                    // (e il campo viene svuotato), quindi il banner mentiva
+                    // — restava acceso per sempre e il pulsante azzerava il
+                    // campo sbagliato. Qui resta solo l'informazione vera.
+                    if note.sortedPages.contains(where: { $0.pdfPageData != nil }) {
+                        Text("Sulle pagine importate da un PDF il pattern resta coperto dal documento: qui scegli quello delle pagine bianche.")
+                            .font(.caption)
+                            .foregroundStyle(DesignColor.textSecondary)
                     }
 
-                    Picker("Pattern", selection: $note.template) {
-                        ForEach(NoteTemplate.allCases) { option in
-                            Text(option.label).tag(option)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(note.pdfBackgroundData != nil)
+                    BoostSegmented(
+                        options: NoteTemplate.allCases.map { ($0, $0.label) },
+                        selection: $note.template
+                    )
 
                     if note.template != .blank {
                         VStack(alignment: .leading, spacing: 4) {
@@ -115,10 +104,14 @@ struct NoteSettingsSheet: View {
                                 .foregroundStyle(DesignColor.textSecondary)
                             Slider(value: $note.patternScale, in: 0.5...2.0, step: 0.1)
                         }
-                        .disabled(note.pdfBackgroundData != nil)
                     }
                 }
             }
+            // Il fondo grigio di sistema sotto il Form non è di
+            // quest'app: sotto ci va il foglio bianco come nel resto
+            // delle schermate.
+            .scrollContentBackground(.hidden)
+            .background(DesignColor.surfacePage)
             .navigationTitle("Impostazioni foglio")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

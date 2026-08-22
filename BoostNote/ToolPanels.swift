@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 // Timer.publish(...).autoconnect() vive in Combine: senza questo import
 // il pannello Pomodoro non compila.
 import Combine
@@ -62,7 +63,7 @@ struct GraphPanelContent: View {
                         Label("Riprova", systemImage: "arrow.clockwise")
                             .font(.system(size: 13, weight: .medium))
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.boostOutlined)
                 }
             }
         }
@@ -176,7 +177,13 @@ struct PomodoroPanelContent: View {
             Spacer()
             Text(timeLabel)
                 .font(.system(size: 56, weight: .bold, design: .monospaced))
-                .foregroundStyle(DesignColor.brandPrimary)
+                .foregroundStyle(remainingSeconds == 0 ? DesignColor.success : DesignColor.brandPrimary)
+
+            if remainingSeconds == 0 {
+                Text("Tempo scaduto — pausa!")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DesignColor.success)
+            }
 
             HStack(spacing: DesignSpace.s3) {
                 stepButton("minus") {
@@ -191,7 +198,7 @@ struct PomodoroPanelContent: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, DesignSpace.s5)
                 .padding(.vertical, DesignSpace.s2)
-                .background(DesignColor.brandPrimary, in: Capsule())
+                .background(DesignColor.brandPrimary, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
                 .buttonStyle(.plain)
 
                 stepButton("plus") {
@@ -213,6 +220,13 @@ struct PomodoroPanelContent: View {
         .onReceive(timer) { _ in
             guard isRunning, remainingSeconds > 0 else { return }
             remainingSeconds -= 1
+            // Allo zero il timer si FERMA e lo dice: prima restava
+            // "in esecuzione" col pulsante su Pausa, senza nessun
+            // segnale che il tempo fosse finito.
+            if remainingSeconds == 0 {
+                isRunning = false
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            }
         }
     }
 
@@ -350,7 +364,9 @@ struct WolframPanelContent: View {
         ])
     ]
 
-    @AppStorage("wolframAlphaAppID") private var wolframAppID = ""
+    // Dal Keychain via AIService, unico punto di accesso (era una
+    // @AppStorage in chiaro duplicata in cinque file).
+    private var wolframAppID: String { AIService.wolframAppID ?? "" }
     @State private var expression = ""
     @State private var resultText: String?
     @State private var resultImageURLs: [URL] = []
@@ -359,38 +375,24 @@ struct WolframPanelContent: View {
     // Una categoria aperta per volta: nel pannello laterale, stretto,
     // aprirle tutte renderebbe l'elenco impraticabile da scorrere.
     @State private var expandedCapability: String?
-    @State private var showingCatalog = true
+    @State private var showingCatalog = false
+    @FocusState private var fieldFocused: Bool
+
+    // Simboli e verbi sopra la tastiera: i primi sono quelli della
+    // calcolatrice, i secondi sono INGLESI E OBBLIGATORI — da una casella
+    // vuota nessuno indovina che si scrive "derivative of", ed è la
+    // ragione per cui questo strumento sembrava non funzionare.
+    private static let symbolKeys = ["√(", "^2", "^", "(", ")", "/", ",", "pi", "infinity"]
+    private static let verbKeys = ["solve", "integrate", "derivative of", "limit of", "plot", "simplify", "laplace transform", "eigenvalues"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s3) {
             if wolframAppID.isEmpty {
                 Text("Aggiungi la tua chiave AppID nel Profilo per usare questo strumento.")
                     .font(.system(size: 13))
-                    .foregroundStyle(DesignColor.textTertiary)
+                    .foregroundStyle(DesignColor.textSecondary)
             } else {
-                HStack(spacing: 6) {
-                    TextField("Espressione da risolvere", text: $expression)
-                        .font(.system(size: 14, design: .monospaced))
-                        .textFieldStyle(.plain)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .padding(DesignSpace.s3)
-                        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md))
-                        .onSubmit { Task { await solve() } }
-                    if isLoading {
-                        ProgressView().frame(width: 28, height: 28)
-                    } else {
-                        Button {
-                            Task { await solve() }
-                        } label: {
-                            Image(systemName: "arrow.right.circle.fill")
-                                .font(.system(size: 26))
-                                .foregroundStyle(DesignColor.toolWolfram)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(expression.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
+                mathField
 
                 if let errorMessage {
                     Text(errorMessage)
@@ -398,52 +400,16 @@ struct WolframPanelContent: View {
                         .foregroundStyle(DesignColor.danger)
                 }
 
-                // Il catalogo resta raggiungibile anche dopo un risultato
-                // o un errore: è il modo per scoprire la query giusta per
-                // la prossima domanda, non una schermata di benvenuto che
-                // sparisce per sempre al primo tentativo.
-                if !showingCatalog || hasResult {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) { showingCatalog.toggle() }
-                    } label: {
-                        Label(
-                            showingCatalog ? "Nascondi cosa sa fare" : "Cosa sa fare Wolfram",
-                            systemImage: showingCatalog ? "chevron.up" : "list.bullet.rectangle"
-                        )
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(DesignColor.toolWolfram)
-                    }
-                    .buttonStyle(.plain)
-                }
-
                 ScrollView {
                     VStack(alignment: .leading, spacing: DesignSpace.s3) {
-                        if showingCatalog {
-                            capabilityCatalog
-                        }
-
-                        if let resultText {
-                            // Wolfram risponde con frazioni, integrali e
-                            // matrici: AttributedString le lasciava come
-                            // testo grezzo. KaTeX le compone davvero.
-                            RichTextBlock(text: resultText)
-                        }
-                        ForEach(resultImageURLs, id: \.self) { url in
-                            AsyncImage(url: url) { phase in
-                                if case .success(let image) = phase {
-                                    image.resizable().scaledToFit()
-                                } else {
-                                    Color.clear.frame(height: 1)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
+                        if hasResult { resultBlock }
+                        capabilityCatalog
                     }
                 }
             }
             Spacer(minLength: 0)
         }
-        .padding(DesignSpace.s4)
+        .padding(DesignSpace.s3)
         .onAppear {
             if let prefill, !prefill.isEmpty, expression.isEmpty {
                 expression = prefill
@@ -454,75 +420,212 @@ struct WolframPanelContent: View {
         }
     }
 
+    // Il campo mostra la formula COMPOSTA mentre si scrive — radice col
+    // vinculum, esponenti in alto, frazioni impilate — ma quello che parte
+    // verso Wolfram resta l'ASCII digitato, che è ciò che lui capisce.
+    private var mathField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !expression.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    MathDisplayView(node: MathLayout.nodes(from: expression), size: 17, color: DesignColor.textPrimary, weight: .regular)
+                        .frame(minHeight: 26, alignment: .leading)
+                }
+                .defaultScrollAnchor(.trailing)
+            }
+
+            HStack(spacing: 6) {
+                TextField("Espressione da risolvere", text: $expression)
+                    .font(.system(size: 13, design: .monospaced))
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .focused($fieldFocused)
+                    .onSubmit { Task { await solve() } }
+
+                if isLoading {
+                    ProgressView().controlSize(.small).frame(width: 18, height: 18)
+                } else {
+                    Button {
+                        Task { await solve() }
+                    } label: {
+                        Image(systemName: "arrow.right.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(DesignColor.toolWolfram)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(expression.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 8)
+            .padding(.vertical, 7)
+            .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous)
+                    .strokeBorder(fieldFocused ? DesignColor.brandPrimary : .clear, lineWidth: 1)
+            }
+            .toolbar {
+                // Barra accessoria sopra la tastiera di sistema. Resta
+                // utile anche il giorno in cui il campo avrà una tastiera
+                // sua: con la Magic Keyboard collegata l'inputView non
+                // compare, e questa è l'unica via ai simboli.
+                ToolbarItemGroup(placement: .keyboard) {
+                    if fieldFocused {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 4) {
+                                ForEach(Self.symbolKeys, id: \.self) { key in
+                                    keyboardKey(key, monospaced: false) { insert(key) }
+                                }
+                                Divider().frame(height: 18)
+                                ForEach(Self.verbKeys, id: \.self) { verb in
+                                    keyboardKey(verb, monospaced: true) { insert(verb + " ") }
+                                }
+                            }
+                        }
+                        Spacer()
+                        Button("Esegui") {
+                            fieldFocused = false
+                            Task { await solve() }
+                        }
+                        .font(.system(size: 12.5, weight: .semibold))
+                    }
+                }
+            }
+        }
+    }
+
+    private func keyboardKey(_ label: String, monospaced: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label.replacingOccurrences(of: "(", with: ""))
+                .font(.system(size: monospaced ? 11.5 : 13, weight: .medium, design: monospaced ? .monospaced : .default))
+                .foregroundStyle(DesignColor.textPrimary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(DesignColor.surfacePage, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                        .strokeBorder(DesignColor.borderDefault, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func insert(_ text: String) {
+        expression += text
+    }
+
+    private var resultBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("RISULTATO")
+                .font(.system(size: 10.5, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(DesignColor.textTertiary)
+            if let resultText {
+                // Wolfram risponde con frazioni, integrali e matrici:
+                // AttributedString le lasciava come testo grezzo, KaTeX le
+                // compone davvero.
+                RichTextBlock(text: resultText)
+            }
+            ForEach(resultImageURLs, id: \.self) { url in
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFit()
+                    } else {
+                        Color.clear.frame(height: 1)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DesignSpace.s3)
+        .background(DesignColor.surfaceSunken, in: RoundedRectangle(cornerRadius: DesignRadius.md, style: .continuous))
+    }
+
     private var hasResult: Bool {
         resultText != nil || !resultImageURLs.isEmpty
     }
 
-    // Catalogo a fisarmonica: la categoria mostra cosa Wolfram sa fare,
-    // la voce aperta mostra COME chiederglielo — ed è già la query da
-    // eseguire, così l'esempio non va ricopiato a mano.
+    // Catalogo compatto: sei categorie come chip più un "+8" che apre le
+    // altre. Aperta una per volta, le sue voci mostrano il NOME in
+    // italiano e sotto LA QUERY VERA — così il catalogo insegna anche la
+    // sintassi, invece di limitarsi a eseguire.
     @ViewBuilder
     private var capabilityCatalog: some View {
         VStack(alignment: .leading, spacing: DesignSpace.s2) {
-            Text("COSA SA FARE WOLFRAM")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
+            Text("COSA SA FARE · QUERY PRONTE")
+                .font(.system(size: 10.5, weight: .bold))
+                .tracking(0.8)
                 .foregroundStyle(DesignColor.textTertiary)
 
-            ForEach(Self.capabilities) { capability in
-                VStack(alignment: .leading, spacing: 0) {
+            let visible = showingCatalog ? Self.capabilities : Array(Self.capabilities.prefix(6))
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 86), spacing: 4)], alignment: .leading, spacing: 4) {
+                ForEach(visible) { capability in
+                    let isOpen = expandedCapability == capability.id
                     Button {
                         withAnimation(.easeInOut(duration: 0.18)) {
-                            expandedCapability = expandedCapability == capability.id ? nil : capability.id
+                            expandedCapability = isOpen ? nil : capability.id
                         }
                     } label: {
-                        HStack(spacing: DesignSpace.s2) {
-                            Image(systemName: capability.icon)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(DesignColor.toolWolfram)
-                                .frame(width: 18)
-                            Text(capability.title)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(DesignColor.textPrimary)
-                            Spacer(minLength: 4)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(DesignColor.textTertiary)
-                                .rotationEffect(.degrees(expandedCapability == capability.id ? 90 : 0))
-                        }
-                        .padding(.vertical, 7)
-                        .contentShape(Rectangle())
+                        Text(capability.title)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(isOpen ? DesignColor.toolWolfram : DesignColor.textSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                            .background(
+                                isOpen ? DesignColor.attentionBg : DesignColor.surfaceSunken,
+                                in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous)
+                            )
                     }
                     .buttonStyle(.plain)
+                }
 
-                    if expandedCapability == capability.id {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(capability.examples) { example in
-                                Button {
-                                    expression = example.query
-                                    Task { await solve() }
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(example.label)
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(DesignColor.textSecondary)
-                                        Text(example.query)
-                                            .font(.system(size: 11, design: .monospaced))
-                                            .foregroundStyle(DesignColor.toolWolfram)
-                                            .lineLimit(2)
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.vertical, 5)
-                                    .contentShape(Rectangle())
+                if Self.capabilities.count > 6 {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) { showingCatalog.toggle() }
+                    } label: {
+                        Text(showingCatalog ? "meno" : "+\(Self.capabilities.count - 6)")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(DesignColor.toolWolfram)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                            .background(DesignColor.attentionBg, in: RoundedRectangle(cornerRadius: DesignRadius.sm, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if let openID = expandedCapability,
+               let capability = Self.capabilities.first(where: { $0.id == openID }) {
+                VStack(spacing: 0) {
+                    ForEach(capability.examples) { example in
+                        Button {
+                            expression = example.query
+                            Task { await solve() }
+                        } label: {
+                            HStack(alignment: .top, spacing: 8) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(example.label)
+                                        .font(.system(size: 12.5, weight: .medium))
+                                        .foregroundStyle(DesignColor.textPrimary)
+                                    Text(example.query)
+                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .foregroundStyle(DesignColor.textSecondary)
+                                        .lineLimit(2)
                                 }
-                                .buttonStyle(.plain)
+                                Spacer(minLength: 4)
+                                Image(systemName: "return")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(DesignColor.toolWolfram)
                             }
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.leading, 18 + DesignSpace.s2)
-                        .padding(.bottom, DesignSpace.s2)
+                        .buttonStyle(.plain)
                     }
                 }
-                Divider().opacity(0.35)
             }
         }
     }

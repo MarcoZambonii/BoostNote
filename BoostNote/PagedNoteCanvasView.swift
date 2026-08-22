@@ -58,12 +58,24 @@ final class TiledPDFPageView: UIView {
         let tiled = layer as! CATiledLayer
         // Tessere in PIXEL. 512pt @2x: abbastanza grandi da non
         // frammentare il disegno, abbastanza piccole da buttarne poche
-        // quando escono dallo schermo.
-        tiled.tileSize = CGSize(width: 512 * UIScreen.main.scale, height: 512 * UIScreen.main.scale)
+        // quando escono dallo schermo. La scala vera arriva in
+        // didMoveToWindow (UIScreen.main è deprecato e con Stage Manager
+        // lo schermo giusto è quello della finestra, non "il principale").
+        tiled.tileSize = CGSize(width: 512 * UITraitCollection.current.displayScale, height: 512 * UITraitCollection.current.displayScale)
         // Fino a 4 livelli verso lo zoom-out (il foglio si può ridurre a
         // 0,25×) e 2 raddoppi verso lo zoom-in (fino a 4×).
         tiled.levelsOfDetail = 3
         tiled.levelsOfDetailBias = 2
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let scale = window?.screen.scale, scale > 0 else { return }
+        let side = 512 * scale
+        let tiled = layer as! CATiledLayer
+        if tiled.tileSize.width != side {
+            tiled.tileSize = CGSize(width: side, height: side)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
@@ -212,8 +224,11 @@ final class PageInkView: UIView {
     // detta la scala della tessera (LOD), non una scala imposta da fuori.
     var renderScale: CGFloat = 1
 
-    // Letta nei draw su thread CA: UIScreen si interroga solo qui, sul main.
-    private let screenScale = UIScreen.main.scale
+    // Letta nei draw su thread CA: si aggiorna solo sul main (in
+    // didMoveToWindow, dalla finestra vera — UIScreen.main è deprecato e
+    // sbaglia scala su un display esterno) e si legge sotto lo stesso
+    // lock dei tratti.
+    private var screenScale = UITraitCollection.current.displayScale
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -227,6 +242,18 @@ final class PageInkView: UIView {
         }
     }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let scale = window?.screen.scale, scale > 0 else { return }
+        strokesLock.lock()
+        let changed = screenScale != scale
+        screenScale = scale
+        strokesLock.unlock()
+        if changed, let tiled = layer as? CATiledLayer {
+            tiled.tileSize = CGSize(width: 512 * scale, height: 512 * scale)
+        }
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
 
     override func draw(_ rect: CGRect) {
@@ -234,6 +261,7 @@ final class PageInkView: UIView {
         strokesLock.lock()
         let snapshot = lockedStrokes
         let generation = strokesGeneration
+        let screenScale = self.screenScale
         strokesLock.unlock()
         // La scala vera della tessera (LOD × densità schermo) sta nella
         // CTM: a zoom alto arrivano tessere più dense e il campionamento
@@ -438,6 +466,13 @@ final class NotePageView: UIView {
     // devono ridisegnare al travaso.
     private var activeDirtyRegion = CGRect.null
     private(set) var pdfPageData: Data?
+    // Identità della NotePage che questa vista sta mostrando (il
+    // PersistentIdentifier, opaco per questo livello). È la chiave con
+    // cui il salvataggio differito attribuisce l'inchiostro: prima si
+    // salvava PER INDICE, e un riordino delle pagine (undo di un import
+    // PDF) tra il tratto e il flush scriveva il disegno sulla pagina
+    // sbagliata o lo perdeva.
+    var pageID: AnyHashable?
     // Ultimi dati-disegno applicati/salvati per questa pagina: permette a
     // sync() di saltare il confronto via dataRepresentation() (serializza
     // l'intero disegno, per ogni pagina, a ogni aggiornamento).
@@ -658,7 +693,8 @@ final class NotePageView: UIView {
             return
         }
         pendingRenderZoom = zoomScale
-        let target = min(max(zoomScale, 1), 3) * UIScreen.main.scale
+        let deviceScale = window?.screen.scale ?? traitCollection.displayScale
+        let target = min(max(zoomScale, 1), 3) * deviceScale
         guard abs(lastAppliedRenderTarget - target) > 0.01 else { return }
         lastAppliedRenderTarget = target
         zoomForInk = min(max(zoomScale, 1), 3)
@@ -1650,7 +1686,7 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
     // verticale con uno spazio tra una pagina e l'altra, applica pattern e
     // scala del pattern a ogni pagina (la mancata propagazione era uno dei
     // bug del primo tentativo).
-    func sync(pages: [(drawingData: Data?, pdfPageData: Data?)], defaultHeight: CGFloat, template: NoteTemplate, patternScale: CGFloat) -> [NotePageView] {
+    func sync(pages: [(id: AnyHashable, drawingData: Data?, pdfPageData: Data?)], defaultHeight: CGFloat, template: NoteTemplate, patternScale: CGFloat) -> [NotePageView] {
         while pageViews.count < pages.count {
             let page = NotePageView(pageWidth: pageWidth, pageHeight: defaultHeight)
             pageViews.append(page)
@@ -1658,6 +1694,9 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         }
         while pageViews.count > pages.count {
             let removed = pageViews.removeLast()
+            // Prima di buttare la vista, i suoi tratti non ancora scritti
+            // vanno su disco (se la loro pagina esiste ancora).
+            flushPendingSave(of: removed)
             if lastActivePageView === removed { lastActivePageView = nil }
             removed.removeFromSuperview()
         }
@@ -1665,6 +1704,16 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         var y: CGFloat = 0
         for (index, pageData) in pages.enumerated() {
             let view = pageViews[index]
+            // La vista sta cambiando pagina (le pagine si sono spostate:
+            // undo di un import, riordino): l'inchiostro non salvato
+            // appartiene alla pagina di PRIMA e va scritto adesso, con la
+            // SUA identità — poi la vista riparte pulita per la nuova.
+            if view.pageID != pageData.id {
+                flushPendingSave(of: view)
+                view.pageID = pageData.id
+                view.appliedDrawingData = nil
+                view.setStrokes([])
+            }
             view.backgroundView.template = template
             view.backgroundView.patternScale = patternScale
             view.setPDFPage(pageData.pdfPageData)
@@ -1739,8 +1788,10 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
     // vero delle modifiche invece di due pile che si ignorano.
     var inkUndoManager = UndoManager()
     // Impostati dal coordinatore: portano il dato a SwiftData e chiedono
-    // pagine nuove quando si scrive vicino al fondo.
-    var onPageDataChanged: ((Int, Data) -> Void)?
+    // pagine nuove quando si scrive vicino al fondo. La chiave è
+    // l'IDENTITÀ della pagina (via NotePageView.pageID), non l'indice:
+    // vedi il commento su pageID.
+    var onPageDataChanged: ((AnyHashable, Data) -> Void)?
     var onNeedsMorePages: (() -> Void)?
 
     func commitStrokes(_ strokes: [PKStroke], previous explicitPrevious: [PKStroke]? = nil, on page: NotePageView, invalidating rect: CGRect? = nil, appended: PKStroke? = nil) {
@@ -1837,11 +1888,23 @@ final class PagedCanvasContainer: UIScrollView, UIScrollViewDelegate {
         let pages = pendingSaves
         pendingSaves.removeAll()
         for page in pages {
-            guard let index = pageViews.firstIndex(where: { $0 === page }) else { continue }
+            guard let id = page.pageID else { continue }
             let data = PKDrawing(strokes: page.strokes).dataRepresentation()
             page.appliedDrawingData = data
-            onPageDataChanged?(index, data)
+            onPageDataChanged?(id, data)
         }
+    }
+
+    // Travasa SUBITO i tratti non salvati di una singola vista, con
+    // l'identità della pagina che sta mostrando ora: lo chiama sync()
+    // prima di riassegnare la vista a un'altra pagina o di rimuoverla.
+    private func flushPendingSave(of page: NotePageView) {
+        guard let index = pendingSaves.firstIndex(where: { $0 === page }) else { return }
+        pendingSaves.remove(at: index)
+        guard let id = page.pageID else { return }
+        let data = PKDrawing(strokes: page.strokes).dataRepresentation()
+        page.appliedDrawingData = data
+        onPageDataChanged?(id, data)
     }
 
     func currentPageIndex() -> Int {
@@ -2112,11 +2175,16 @@ struct PagedNoteCanvasView: UIViewRepresentable {
             container.liveInkOverlay.onStrokeBegan = { [weak self] in self?.select(nil) }
             container.liveInkOverlay.onLassoFinished = { [weak self] in self?.parent.onLassoFinished() }
             // Il commit del contenitore porta i dati a SwiftData e chiede
-            // pagine nuove quando si scrive vicino al fondo. `index` e
-            // non riferimento: le NotePage possono essere ricreate.
-            container.onPageDataChanged = { [weak self] index, data in
-                guard let self, self.parent.pages.indices.contains(index) else { return }
-                self.parent.onPageDrawingChanged(self.parent.pages[index], data)
+            // pagine nuove quando si scrive vicino al fondo. La chiave è
+            // il PersistentIdentifier della pagina: per INDICE, un
+            // riordino tra il tratto e il salvataggio differito scriveva
+            // sulla pagina sbagliata.
+            container.onPageDataChanged = { [weak self] id, data in
+                guard let self,
+                      let pageID = id.base as? PersistentIdentifier,
+                      let page = self.parent.pages.first(where: { $0.persistentModelID == pageID }),
+                      !page.isDeleted else { return }
+                self.parent.onPageDrawingChanged(page, data)
             }
             container.liveInkOverlay.onEraseFinished = { [weak self] in
                 guard let self, self.parent.tool == .eraser else { return }
@@ -2129,7 +2197,7 @@ struct PagedNoteCanvasView: UIViewRepresentable {
                 container.addInteraction(interaction)
                 pencilInteractionInstalled = true
             }
-            let pageData = parent.pages.map { (drawingData: $0.drawingData, pdfPageData: $0.pdfPageData) }
+            let pageData = parent.pages.map { (id: AnyHashable($0.persistentModelID), drawingData: $0.drawingData, pdfPageData: $0.pdfPageData) }
             _ = container.sync(pages: pageData, defaultHeight: parent.defaultPageHeight, template: parent.template, patternScale: parent.patternScale)
         }
 
@@ -2427,7 +2495,7 @@ struct PagedNoteCanvasView: UIViewRepresentable {
                 width: rect.width,
                 height: rect.height
             )
-            let scale = UIScreen.main.scale
+            let scale = container.window?.screen.scale ?? container.traitCollection.displayScale
             let format = UIGraphicsImageRendererFormat()
             format.scale = scale
             let renderer = UIGraphicsImageRenderer(size: rect.size, format: format)

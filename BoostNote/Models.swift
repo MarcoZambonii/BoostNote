@@ -357,12 +357,24 @@ extension Note {
                 attach(page, in: context)
                 created.append(page)
             }
+            finishLegacyMigration()
             return created
         }
 
         let page = NotePage(order: 0, drawingData: drawingData)
         attach(page, in: context)
+        finishLegacyMigration()
         return [page]
+    }
+
+    // La migrazione è COMPIUTA solo quando i campi legacy si svuotano:
+    // lasciarli pieni faceva credere alle Impostazioni foglio che la nota
+    // avesse ancora uno "sfondo PDF" da rimuovere — un banner perpetuo su
+    // ogni nota migrata, e un pulsante che azzerava il campo sbagliato
+    // (il PDF vero ormai vive nelle pagine).
+    private func finishLegacyMigration() {
+        drawingData = nil
+        pdfBackgroundData = nil
     }
 
     // Aggiunge una pagina per ciascuna pagina del PDF in coda alle pagine
